@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
+/*import {
   MeetingRecord,
   deleteMeetingByCode,
   findByCode,
   markMeetingClosed,
+} from "@/lib/meetings";*/
+
+import {
+  MeetingRecord,
+  findByCode,
+  markMeetingClosed,
 } from "@/lib/meetings";
+
 
 function toClientPayload(meeting: MeetingRecord) {
   return {
@@ -70,8 +77,9 @@ export async function DELETE(
       return NextResponse.json({ deleted: false }, { status: 200 });
     }
 
+    /*await markMeetingClosed(code);
+    await deleteMeetingByCode(code);  I did this*/
     await markMeetingClosed(code);
-    await deleteMeetingByCode(code);
 
     return NextResponse.json({ deleted: true });
   } catch (error) {

@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import pool from "./db";
+import { add } from "date-fns";
 
 export type MeetingStatus = "scheduled" | "live" | "closed";
 
@@ -114,12 +115,32 @@ export interface CreateMeetingPayload {
   notes?: string;
 }
 
+function generateMeetingCode(): string {
+  return Math.random()
+    .toString(36)
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 8);
+}
+
+
 export async function createMeeting(
   payload: CreateMeetingPayload
 ): Promise<MeetingRecord> {
   await ensureTable();
 
-  const code = Math.random().toString(36).slice(2, 10);
+  let code = "";
+  let attempts = 0;
+
+  while (attempts < 5) {
+    code = generateMeetingCode();
+    const existing = await findByCode(code);
+    if (!existing) break;
+    attempts++;
+  }
+
+  if (!code) {
+    throw new Error("Failed to generate unique meeting code");
+  }
 
   const result = await pool.query(
     `INSERT INTO meeting_rooms (
@@ -139,4 +160,20 @@ export async function createMeeting(
   );
 
   return mapRow(result.rows[0]);
+}
+
+/*-----this I add------*/
+
+export async function markMeetingClosed(code: string): Promise<void> {
+  await ensureTable();
+  await pool.query(
+    `
+    UPDATE meeting_rooms
+    SET status = 'closed',
+        is_active = false,
+        updated_at = NOW()
+    WHERE meeting_code = $1
+    `,
+    [code]
+  );
 }
