@@ -43,16 +43,43 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    if (!body.title || !body.scheduledFor) {
+    /*---if (!body.title || !body.scheduledFor) {
       return NextResponse.json(
         { success: false, error: "Invalid payload" },
         { status: 400 }
       );
-    }
+    } replaced by me with down below---*/
+
+    const title =
+  typeof body.title === "string" ? body.title.trim() : "";
+
+if (title.length < 3) {
+  return NextResponse.json(
+    { success: false, error: "Title must be at least 3 characters long" },
+    { status: 400 }
+  );
+}
+
+const scheduledDate = new Date(body.scheduledFor);
+if (isNaN(scheduledDate.getTime())) {
+  return NextResponse.json(
+    { success: false, error: "Invalid scheduled date" },
+    { status: 400 }
+  );
+}
+
+if (scheduledDate.getTime() <= Date.now()) {
+  return NextResponse.json(
+    { success: false, error: "Meeting must be scheduled in the future" },
+    { status: 400 }
+  );
+}
+    /*---end replaced by me---*/
 
     const meeting = await createMeeting({
-      title: body.title.trim(),
-      scheduledFor: new Date(body.scheduledFor),
+      /*title: body.title.trim(),(changed)*/
+      title,
+      scheduledFor: scheduledDate,
       attendees: Array.isArray(body.attendees) ? body.attendees : [],
       notes: body.notes,
     });
