@@ -18,14 +18,14 @@ function toClientPayload(meeting: MeetingRecord) {
     id: meeting.id,
     code: meeting.code,
     title: meeting.title,
-    scheduledFor: meeting.scheduledFor,
+    scheduledFor: meeting.scheduledFor.toISOString(),
     attendees: meeting.attendees,
     notes: meeting.notes,
     status: meeting.status,
     isActive: meeting.isActive,
     link: `/meeting/${meeting.code}`,
-    createdAt: meeting.createdAt,
-    updatedAt: meeting.updatedAt,
+    createdAt: meeting.createdAt.toISOString(),
+    updatedAt: meeting.updatedAt.toISOString(),
   };
 }
 
