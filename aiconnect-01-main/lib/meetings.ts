@@ -75,6 +75,13 @@ function parseAttendees(value: unknown): string[] {
   return [];
 }
 
+function normalizeStatus(status: unknown): MeetingStatus {
+  if (status === "scheduled" || status === "live" || status === "closed") {
+    return status;
+  }
+  return "scheduled"; // safe default
+}
+
 function mapRow(row: MeetingRow): MeetingRecord {
   return {
     id: row.id,
@@ -83,7 +90,7 @@ function mapRow(row: MeetingRow): MeetingRecord {
     scheduledFor: new Date(row.scheduled_for),   // ✅ Date
     attendees: parseAttendees(row.attendees),
     notes: row.notes ?? null,
-    status: (row.status ?? "scheduled") as MeetingStatus,
+    status: normalizeStatus(row.status),
     isActive: row.is_active,
     createdAt: new Date(row.created_at),         // ✅ Date
     updatedAt: new Date(row.updated_at),         // ✅ Date
@@ -99,14 +106,41 @@ export async function listMeetings(): Promise<MeetingRecord[]> {
   return result.rows.map(mapRow);
 }
 
-export async function findByCode(code: string): Promise<MeetingRecord | null> {
+export async function findByCode(
+  code: string
+): Promise<MeetingRecord | null> {
   await ensureTable();
+
   const res = await pool.query(
-    "SELECT * FROM meeting_rooms WHERE meeting_code = $1 LIMIT 1",
+    `
+    SELECT * FROM meeting_rooms
+    WHERE meeting_code = $1
+    LIMIT 1
+    `,
     [code]
   );
+
   return res.rows[0] ? mapRow(res.rows[0]) : null;
 }
+
+export async function findActiveByCode(
+  code: string
+): Promise<MeetingRecord | null> {
+  await ensureTable();
+
+  const res = await pool.query(
+    `
+    SELECT * FROM meeting_rooms
+    WHERE meeting_code = $1
+      AND is_active = true
+    LIMIT 1
+    `,
+    [code]
+  );
+
+  return res.rows[0] ? mapRow(res.rows[0]) : null;
+}
+
 
 export interface CreateMeetingPayload {
   title: string;
