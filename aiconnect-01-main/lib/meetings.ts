@@ -200,14 +200,23 @@ export async function createMeeting(
 
 export async function markMeetingClosed(code: string): Promise<void> {
   await ensureTable();
+
+  const status: MeetingStatus = "closed";
+  const isActive = deriveIsActiveFromStatus(status);
+
   await pool.query(
     `
     UPDATE meeting_rooms
-    SET status = 'closed',
-        is_active = false,
+    SET status = $2,
+        is_active = $3,
         updated_at = NOW()
     WHERE meeting_code = $1
     `,
-    [code]
+    [code, status, isActive]
   );
+}
+
+
+function deriveIsActiveFromStatus(status: MeetingStatus): boolean {
+  return status !== "closed";
 }
