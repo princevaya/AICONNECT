@@ -1,78 +1,75 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import { AccessToken } from "livekit-server-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
 export async function GET(req: NextRequest) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Unauthorized - Please sign in" },
-      { status: 401 }
-    );
-  }
-
-  const room = req.nextUrl.searchParams.get("room");
-  const username = req.nextUrl.searchParams.get("username");
-
-  if (!room || !username) {
-    return NextResponse.json(
-      { error: "Missing room or username parameter" },
-      { status: 400 }
-    );
-  }
-
-  // SECURITY: Validate room name to prevent injection attacks
-  const roomRegex = /^[a-zA-Z0-9_-]{1,100}$/;
-  if (!roomRegex.test(room)) {
-    return NextResponse.json(
-      { error: "Invalid room name format" },
-      { status: 400 }
-    );
-  }
-
-  // SECURITY: Sanitize username to prevent XSS
-  if (username.length > 100) {
-    return NextResponse.json({ error: "Username too long" }, { status: 400 });
-  }
-
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
-
-  if (!apiKey || !apiSecret) {
-    return NextResponse.json(
-      { error: "Server misconfigured - LiveKit credentials missing" },
-      { status: 500 }
-    );
-  }
-
   try {
-    // Use Clerk userId as identity to ensure uniqueness
-    const at = new AccessToken(apiKey, apiSecret, {
+    console.log("Token route called");
+    const { userId } = await auth();
+    console.log("Auth result - userId:", userId);
+
+    if (!userId) {
+      console.error("No userId from Clerk");
+      return NextResponse.json(
+        { error: "Unauthorized - Clerk user not found" },
+        { status: 401 }
+      );
+    }
+
+    const room = req.nextUrl.searchParams.get("room");
+    const username = req.nextUrl.searchParams.get("username");
+    console.log("Request params - room:", room, "username:", username);
+
+    if (!room || !username) {
+      console.error("Missing parameters - room:", room, "username:", username);
+      return NextResponse.json(
+        { error: "Missing room or username" },
+        { status: 400 }
+      );
+    }
+
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
+      console.error("LiveKit credentials missing - API_KEY:", !!apiKey, "API_SECRET:", !!apiSecret);
+      return NextResponse.json(
+        { error: "LiveKit credentials missing" },
+        { status: 500 }
+      );
+    }
+
+    const token = new AccessToken(apiKey, apiSecret, {
       identity: userId,
-      name: username, // Display name
-      ttl: "4h", // SECURITY: Reduced from 10h to limit exposure window
-      metadata: JSON.stringify({
-        createdAt: Date.now(),
-        room: room,
-      }),
+      name: username,
+      ttl: "4h",
     });
 
-    at.addGrant({
+    token.addGrant({
       room,
       roomJoin: true,
       canPublish: true,
-      canPublishData: true,
       canSubscribe: true,
+      canPublishData: true,
     });
 
-    const token = await at.toJwt();
+    const jwtToken = await token.toJwt();
+    console.log("Token generated successfully, length:", jwtToken.length);
 
-    return NextResponse.json({ token });
+    return NextResponse.json({
+      token: jwtToken,
+    });
   } catch (error) {
-    console.error("Error generating token:", error);
+    console.error("LiveKit token route crashed:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error("Error stack:", errorStack);
+    
     return NextResponse.json(
-      { error: "Failed to generate token" },
+      { error: `Internal server error: ${errorMessage}` },
       { status: 500 }
     );
   }
