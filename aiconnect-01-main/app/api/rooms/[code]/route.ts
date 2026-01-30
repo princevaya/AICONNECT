@@ -1,19 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-/*import {
-  MeetingRecord,
-  deleteMeetingByCode,
-  findByCode,
-  markMeetingClosed,
-} from "@/lib/meetings";*/
-
+import { success, failure } from "@/app/api/_utils/response";
+import { NextRequest } from "next/server";
 import {
   MeetingRecord,
-  findActiveByCode,
+  findByCode,
   markMeetingClosed,
 } from "@/lib/meetings";
 
-
-
+/* ---------- helper ---------- */
 function toClientPayload(meeting: MeetingRecord) {
   return {
     id: meeting.id,
@@ -21,7 +14,7 @@ function toClientPayload(meeting: MeetingRecord) {
     title: meeting.title,
     scheduledFor: meeting.scheduledFor.toISOString(),
     attendees: meeting.attendees,
-    notes: meeting.notes,
+    notes: meeting.notes ?? null,
     status: meeting.status,
     isActive: meeting.isActive,
     link: `/meeting/${meeting.code}`,
@@ -30,73 +23,48 @@ function toClientPayload(meeting: MeetingRecord) {
   };
 }
 
-
+/* ---------- GET ---------- */
 export async function GET(
   _: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
   const { code } = await params;
 
-  if (!process.env.DATABASE_URL) {
-    return NextResponse.json(
-  { success: false, error: "DATABASE_URL is not configured" },
-  { status: 500 }
-);
-  }
-
   try {
-    const meeting = await findActiveByCode(code);
+    const meeting = await findByCode(code);
 
     if (!meeting) {
-  return NextResponse.json(
-    { success: false, error: "Meeting not found" },
-    { status: 404 }
-  );
-}
+      return failure("Meeting not found", 404);
+    }
 
-    return NextResponse.json({
-  success: true,
-  meeting: toClientPayload(meeting),
-});
+    return success({
+      meeting: toClientPayload(meeting),
+    });
   } catch (error) {
-    console.error("Failed to load meeting", error);
-    return NextResponse.json(
-      { error: "Unable to load meeting" },
-      { status: 500 }
-    );
+    console.error("GET /api/rooms/[code] error:", error);
+    return failure("Unable to load meeting", 500);
   }
 }
 
+/* ---------- DELETE ---------- */
 export async function DELETE(
   _: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
   const { code } = await params;
 
-  if (!process.env.DATABASE_URL) {
-    return NextResponse.json(
-      { error: "DATABASE_URL is not configured" },
-      { status: 500 }
-    );
-  }
-
   try {
-    const meeting = await findActiveByCode(code);
+    const meeting = await findByCode(code);
 
     if (!meeting) {
-      return NextResponse.json({ deleted: false }, { status: 200 });
+      return success({ deleted: false });
     }
 
-    /*await markMeetingClosed(code);
-    await deleteMeetingByCode(code);  I did this*/
     await markMeetingClosed(code);
 
-    return NextResponse.json({ deleted: true });
+    return success({ deleted: true });
   } catch (error) {
-    console.error("Failed to delete meeting", error);
-    return NextResponse.json(
-      { error: "Unable to remove meeting" },
-      { status: 500 }
-    );
+    console.error("DELETE /api/rooms/[code] error:", error);
+    return failure("Unable to remove meeting", 500);
   }
 }
