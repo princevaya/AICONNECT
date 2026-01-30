@@ -2,6 +2,8 @@ import { randomUUID } from "crypto";
 import pool from "./db";
 import { add } from "date-fns";
 
+
+
 export type MeetingStatus = "scheduled" | "live" | "closed";
 
 export interface MeetingRecord {
@@ -176,4 +178,23 @@ export async function markMeetingClosed(code: string): Promise<void> {
     `,
     [code]
   );
+}
+
+
+export async function findActiveByCode(
+  code: string
+): Promise<MeetingRecord | null> {
+  await ensureTable();
+
+  const res = await pool.query(
+    `
+    SELECT * FROM meeting_rooms
+    WHERE meeting_code = $1
+      AND is_active = true
+    LIMIT 1
+    `,
+    [code]
+  );
+
+  return res.rows[0] ? mapRow(res.rows[0]) : null;
 }
