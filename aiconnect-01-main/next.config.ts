@@ -1,12 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  images: {
-    qualities: [100, 25, 50, 75],
-  },
-  typescript: {
-    ignoreBuildErrors: true,
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb", // Set this to 10mb or whatever fits your needs
+    },
   },
 };
 

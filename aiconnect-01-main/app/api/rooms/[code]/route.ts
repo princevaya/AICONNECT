@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { success, failure } from "@/app/api/_utlis/response";
 import {
   MeetingRecord,
-  findActiveByCode,
+  findByCode,
   markMeetingClosed,
 } from "@/lib/meetings";
-
 
 /* ---------- helper ---------- */
 function toClientPayload(meeting: MeetingRecord) {
@@ -31,36 +31,26 @@ export async function GET(
   const { code } = params;
 
   if (!process.env.DATABASE_URL) {
-    return NextResponse.json(
-      { success: false, error: "DATABASE_URL is not configured" },
-      { status: 500 }
-    );
+    return failure("DATABASE_URL is not configured", 500);
   }
 
   try {
-    const meeting = await findActiveByCode(code);
+    const meeting = await findByCode(code);
 
     if (!meeting) {
-      return NextResponse.json(
-        { success: false, error: "Meeting not found or has been closed" },
-        { status: 404 }
-      );
+      return failure("Meeting not found", 404);
     }
 
-    return NextResponse.json({
-      success: true,
+    return success({
       meeting: toClientPayload(meeting),
     });
   } catch (error) {
-    console.error("Failed to load meeting", error);
-    return NextResponse.json(
-      { success: false, error: "Unable to load meeting" },
-      { status: 500 }
-    );
+    console.error("GET /api/rooms/[code] error:", error);
+    return failure("Unable to load meeting", 500);
   }
 }
 
-/* ---------- DELETE (soft delete) ---------- */
+/* ---------- DELETE ---------- */
 export async function DELETE(
   _: NextRequest,
   { params }: { params: { code: string } }
@@ -68,30 +58,21 @@ export async function DELETE(
   const { code } = params;
 
   if (!process.env.DATABASE_URL) {
-    return NextResponse.json(
-      { success: false, error: "DATABASE_URL is not configured" },
-      { status: 500 }
-    );
+    return failure("DATABASE_URL is not configured", 500);
   }
 
   try {
-    const meeting = await findActiveByCode(code);
+    const meeting = await findByCode(code);
 
     if (!meeting) {
-      return NextResponse.json(
-        { success: false, deleted: false },
-        { status: 404 }
-      );
+      return success({ deleted: false });
     }
 
     await markMeetingClosed(code);
 
-    return NextResponse.json({ success: true, deleted: true });
+    return success({ deleted: true });
   } catch (error) {
-    console.error("Failed to delete meeting", error);
-    return NextResponse.json(
-      { success: false, error: "Unable to remove meeting" },
-      { status: 500 }
-    );
+    console.error("DELETE /api/rooms/[code] error:", error);
+    return failure("Unable to remove meeting", 500);
   }
 }

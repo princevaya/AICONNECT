@@ -1,0 +1,78 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = [] // driverAdapters is now stable/automatic
+  output          = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  name      String?
+  email     String?
+  imageUrl  String?
+  role      String   @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Meeting {
+  id           String        @id @default(cuid())
+  code         String        @unique
+  title        String
+  date         DateTime
+  // Mapping this to ensure Postgres finds the column regardless of casing
+  scheduledFor DateTime      @map("scheduled_for") @db.Timestamptz(6)
+  startTime    DateTime      @map("start_time")
+  endTime      DateTime      @map("end_time")
+  durationMins Int           @map("duration_mins")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  MeetingNote  MeetingNote[]
+  recordings   Recording[]
+
+  @@map("meetings")
+}
+
+model Recording {
+  id        String   @id @default(cuid())
+  meetingId String   @map("meeting_id")
+  title     String
+  s3Url     String   @map("s3_url")
+  duration  Int?
+  createdAt DateTime @default(now()) @map("created_at")
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@map("recordings")
+}
+
+model MeetingNote {
+  id        String   @id @default(cuid())
+  meetingId String   @map("meeting_id")
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  Meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@map("meeting_notes")
+}
+
+model meeting_rooms {
+  id           String   @id @db.Uuid
+  meeting_code String   @unique
+  title        String
+  // This matches your error: mapping the code's scheduledFor to DB's scheduled_for
+  scheduledFor DateTime @map("scheduled_for") @db.Timestamptz(6)
+  attendees    Json     @default("[]")
+  notes        String?
+  status       String   @default("scheduled")
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([scheduledFor], map: "idx_meeting_rooms_schedule")
+}

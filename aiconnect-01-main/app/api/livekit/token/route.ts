@@ -2,77 +2,67 @@ import { AccessToken } from "livekit-server-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json(
-      { error: "Unauthorized - Please sign in" },
-      { status: 401 }
-    );
-  }
-
-  const room = req.nextUrl.searchParams.get("room");
-  const username = req.nextUrl.searchParams.get("username");
-
-  if (!room || !username) {
-    return NextResponse.json(
-      { error: "Missing room or username parameter" },
-      { status: 400 }
-    );
-  }
-
-  // SECURITY: Validate room name to prevent injection attacks
-  const roomRegex = /^[a-zA-Z0-9_-]{1,100}$/;
-  if (!roomRegex.test(room)) {
-    return NextResponse.json(
-      { error: "Invalid room name format" },
-      { status: 400 }
-    );
-  }
-
-  // SECURITY: Sanitize username to prevent XSS
-  if (username.length > 100) {
-    return NextResponse.json({ error: "Username too long" }, { status: 400 });
-  }
-
-  const apiKey = process.env.LIVEKIT_API_KEY;
-  const apiSecret = process.env.LIVEKIT_API_SECRET;
-
-  if (!apiKey || !apiSecret) {
-    return NextResponse.json(
-      { error: "Server misconfigured - LiveKit credentials missing" },
-      { status: 500 }
-    );
-  }
-
   try {
-    // Use Clerk userId as identity to ensure uniqueness
-    const at = new AccessToken(apiKey, apiSecret, {
-      identity: userId,
-      name: username, // Display name
-      ttl: "4h", // SECURITY: Reduced from 10h to limit exposure window
-      metadata: JSON.stringify({
-        createdAt: Date.now(),
-        room: room,
-      }),
+    // 1. Authenticate with Clerk
+    const { userId } = await auth();
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    // 2. Extract Query Params
+    const { searchParams } = new URL(req.url);
+    const room = searchParams.get("room");
+    const username = searchParams.get("username");
+
+    if (!room || !username) {
+      return NextResponse.json(
+        { error: "Missing room or username parameters" },
+        { status: 400 }
+      );
+    }
+
+    // 3. Validate Env Variables
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
+      return NextResponse.json(
+        { error: "Server configuration error (Keys missing)" },
+        { status: 500 }
+      );
+    }
+
+    // 4. Generate Token
+    const token = new AccessToken(apiKey, apiSecret, {
+      identity: userId, // Using Clerk ID for unique identity
+      name: username,   // Display name in the room
+      ttl: "4h",
     });
 
-    at.addGrant({
+    token.addGrant({
       room,
       roomJoin: true,
       canPublish: true,
-      canPublishData: true,
       canSubscribe: true,
+      canPublishData: true,
     });
 
-    const token = await at.toJwt();
+    const jwtToken = await token.toJwt();
 
-    return NextResponse.json({ token });
+    return NextResponse.json({ token: jwtToken });
+
   } catch (error) {
-    console.error("Error generating token:", error);
+    console.error("LiveKit Route Error:", error);
     return NextResponse.json(
-      { error: "Failed to generate token" },
+      { error: "Internal Server Error" },
       { status: 500 }
     );
   }

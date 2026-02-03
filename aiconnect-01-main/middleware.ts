@@ -1,11 +1,8 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { clerkMiddleware } from "@clerk/nextjs/server";
 
-export function middleware(req: NextRequest) {
-  // 🔓 No auth, no redirect, no blocking
-  return NextResponse.next();
-}
+export default clerkMiddleware();
 
 export const config = {
   matcher: ["/((?!_next|.*\\..*).*)"],
 };
+

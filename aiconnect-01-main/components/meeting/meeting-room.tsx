@@ -62,20 +62,36 @@ export default function MeetingRoom({
         setIsLoading(true);
         const response = await fetch(
           `/api/livekit/token?room=${encodeURIComponent(
-            roomName
-          )}&username=${encodeURIComponent(participantName)}`
+            roomName,
+          )}&username=${encodeURIComponent(participantName)}`,
         );
 
         if (!response.ok) {
-          throw new Error("Failed to fetch token");
+          const errorData = await response
+            .json()
+            .catch(() => ({ error: "Unknown error" }));
+          console.error("Token fetch failed:", response.status, errorData);
+          throw new Error(
+            errorData.error || `Failed to fetch token: ${response.status}`,
+          );
         }
 
         const data = await response.json();
+
+        if (!data.token) {
+          console.error("No token in response:", data);
+          throw new Error("Token not found in response");
+        }
+
         setToken(data.token);
         setError("");
       } catch (err) {
         console.error("Error fetching token:", err);
-        setError("Failed to connect to meeting. Please try again.");
+        const errorMessage =
+          err instanceof Error
+            ? err.message
+            : "Failed to connect to meeting. Please try again.";
+        setError(errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -174,7 +190,7 @@ function MeetingLayout({ roomName }: { roomName: string }) {
       { source: Track.Source.Camera, withPlaceholder: true },
       { source: Track.Source.ScreenShare, withPlaceholder: false },
     ],
-    { onlySubscribed: false }
+    { onlySubscribed: false },
   );
 
   return (
@@ -251,7 +267,7 @@ function RecordingControls({ roomName }: { roomName: string }) {
     try {
       const res = await fetch(
         `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
-        { cache: "no-store" }
+        { cache: "no-store" },
       );
 
       if (!res.ok) {
@@ -316,13 +332,17 @@ function RecordingControls({ roomName }: { roomName: string }) {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isRecording]);
 
+  // Browser recording removed — using LiveKit RoomComposite egress only
+
+  // Browser recording removed — using LiveKit RoomComposite egress only
+
   const toggleRecording = async () => {
     if (isProcessing) return;
     setIsProcessing(true);
 
     try {
       if (isRecording && egressId) {
-        // Stop recording
+        // Stop server-side recording
         const res = await fetch("/api/livekit/recordings/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -334,12 +354,12 @@ function RecordingControls({ roomName }: { roomName: string }) {
           setEgressId(null);
           await checkActiveRecording();
         } else {
-          const errorText = await res.text();
+          const errorText = await res.text().catch(() => "");
           console.error("Failed to stop recording:", res.status, errorText);
           alert(`Failed to stop recording: ${errorText || res.statusText}`);
         }
       } else {
-        // Start recording
+        // Start server-side recording
         const res = await fetch("/api/livekit/recordings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -360,6 +380,7 @@ function RecordingControls({ roomName }: { roomName: string }) {
       }
     } catch (error) {
       console.error("Error toggling recording:", error);
+      alert("An error occurred while processing the recording request.");
     } finally {
       setIsProcessing(false);
     }
@@ -386,15 +407,9 @@ function RecordingControls({ roomName }: { roomName: string }) {
         }`}
       >
         <div
-          className={`w-3 h-3 rounded-full ${
-            isRecording ? "bg-white" : "bg-red-500"
-          }`}
+          className={`w-3 h-3 rounded-full ${isRecording ? "bg-white" : "bg-red-500"}`}
         />
-        {isProcessing
-          ? "Processing..."
-          : isRecording
-          ? "Recording"
-          : "Start Recording"}
+        {isProcessing ? "Processing..." : isRecording ? "Recording" : "Start Recording"}
       </button>
       <button
         onClick={copyLink}

@@ -121,6 +121,9 @@ export async function POST(req: NextRequest) {
     const info = await client.startRoomCompositeEgress(roomName, fileOutput, {
       layout: "grid",
       encodingOptions: EncodingOptionsPreset.H264_1080P_30,
+      // Ensure we capture both audio and video (explicitly set)
+      audioOnly: false,
+      videoOnly: false,
     });
 
     return NextResponse.json({

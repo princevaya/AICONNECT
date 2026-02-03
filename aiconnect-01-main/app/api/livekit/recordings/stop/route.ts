@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { EgressInfo, EgressStatus } from "livekit-server-sdk";
-
 import { getEgressClient, mapStatusToLegacyCode } from "@/lib/livekit-server";
 
 export const runtime = "nodejs";
@@ -27,21 +26,22 @@ export async function POST(req: NextRequest) {
   const client = getEgressClient();
 
   try {
-    const info = await client.stopEgress(egressId);
-    return NextResponse.json(formatEgressResponse(info));
-  } catch (error) {
-    console.error("Failed to stop LiveKit recording", error);
+    // 1️⃣ Send stop signal (does NOT finalize yet)
+    await client.stopEgress(egressId);
 
-    if (isTerminalStatusError(error)) {
-      const resolved = await resolveExistingEgress(client, egressId);
-      if (resolved) {
-        return NextResponse.json({
-          ...resolved,
-          message: "Recording already finalized",
-        });
-      }
+    // 2️⃣ Wait until LiveKit finishes encoding & upload
+    const finalInfo = await waitForTerminalEgress(client, egressId);
+
+    if (!finalInfo) {
+      return NextResponse.json(
+        { error: "Recording stop timed out" },
+        { status: 504 }
+      );
     }
 
+    return NextResponse.json(formatEgressResponse(finalInfo));
+  } catch (error) {
+    console.error("Failed to stop LiveKit recording", error);
     return NextResponse.json(
       {
         error:
@@ -52,6 +52,8 @@ export async function POST(req: NextRequest) {
   }
 }
 
+/* ---------- helpers ---------- */
+
 function formatEgressResponse(info: EgressInfo) {
   return {
     egressId: info.egressId,
@@ -60,35 +62,31 @@ function formatEgressResponse(info: EgressInfo) {
   };
 }
 
-function isTerminalStatusError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const err = error as { code?: string; status?: number; message?: string };
-  const message = err.message || "";
-
-  if (err.code === "failed_precondition" || err.status === 412) {
-    return (
-      message.includes("cannot be stopped") ||
-      message.includes("EGRESS_COMPLETE") ||
-      message.includes("EGRESS_ABORTED")
-    );
-  }
-
-  return false;
-}
-
-async function resolveExistingEgress(
+async function waitForTerminalEgress(
   client: ReturnType<typeof getEgressClient>,
-  egressId: string
-) {
-  try {
-    const existing = await client.listEgress({ egressId });
-    const info = existing[0];
-    return info ? formatEgressResponse(info) : null;
-  } catch (error) {
-    console.error("Failed to resolve LiveKit egress state", error);
-    return null;
+  egressId: string,
+  // Increase timeout to allow LiveKit time to finish encodes and S3 uploads
+  timeoutMs = 120_000
+): Promise<EgressInfo | null> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const list = await client.listEgress({ egressId });
+    const info = list[0];
+
+    if (!info) return null;
+
+    if (
+      info.status === EgressStatus.EGRESS_COMPLETE ||
+      info.status === EgressStatus.EGRESS_FAILED ||
+      info.status === EgressStatus.EGRESS_ABORTED
+    ) {
+      return info;
+    }
+
+    // wait before polling again
+    await new Promise((r) => setTimeout(r, 2000));
   }
+
+  return null;
 }

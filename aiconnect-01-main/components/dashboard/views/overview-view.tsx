@@ -98,31 +98,34 @@ export default function OverviewView({
     }
   };
 
-  const fetchUpcomingMeetings = useCallback(async () => {
-    setIsLoadingUpcoming(true);
-    setUpcomingError(null);
-    try {
-      const response = await fetch("/api/schedule", { cache: "no-store" });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to load upcoming meetings");
-      }
-      setUpcomingMeetings(payload.map(normalizeMeeting));
-    } catch (error) {
-      console.error("Failed to load upcoming meetings", error);
-      setUpcomingError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load upcoming meetings"
-      );
-    } finally {
-      setIsLoadingUpcoming(false);
-    }
-  }, []);
+const fetchUpcomingMeetings = useCallback(async () => {
+  setIsLoadingUpcoming(true);
+  setUpcomingError(null);
 
-  useEffect(() => {
-    fetchUpcomingMeetings();
-  }, [fetchUpcomingMeetings]);
+  try {
+    const response = await fetch("/api/schedule", { cache: "no-store" });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload?.error || "Failed to load upcoming meetings");
+    }
+
+    if (!Array.isArray(payload?.data)) {
+      throw new Error("Invalid upcoming meetings response");
+    }
+
+    setUpcomingMeetings(payload.data.map(normalizeMeeting));
+  } catch (error) {
+    console.error("Failed to load upcoming meetings", error);
+    setUpcomingError(
+      error instanceof Error
+        ? error.message
+        : "Unable to load upcoming meetings"
+    );
+  } finally {
+    setIsLoadingUpcoming(false);
+  }
+}, []);
 
   const upcomingPreview = useMemo(
     () => upcomingMeetings.slice(0, 3),
