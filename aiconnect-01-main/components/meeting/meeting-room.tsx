@@ -8,6 +8,7 @@ import {
   ParticipantTile,
   RoomAudioRenderer,
   useTracks,
+  useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Loader2, MessageSquare, X } from "lucide-react";
@@ -16,23 +17,23 @@ import ChatPanel from "./chat-panel";
 import LiveCodePanel from "./live-code-panel";
 import { Button } from "@/components/ui/button";
 
+/* ================= PROPS ================= */
+
 interface MeetingRoomProps {
   roomName: string;
   participantName: string;
   videoEnabled?: boolean;
   audioEnabled?: boolean;
-  videoDeviceId?: string;
-  audioDeviceId?: string;
   onLeave: () => void;
 }
+
+/* ================= MAIN ================= */
 
 export default function MeetingRoom({
   roomName,
   participantName,
   videoEnabled = true,
   audioEnabled = true,
-  videoDeviceId,
-  audioDeviceId,
   onLeave,
 }: MeetingRoomProps) {
   const [token, setToken] = useState("");
@@ -96,13 +97,20 @@ export default function MeetingRoom({
   );
 }
 
+/* ================= LAYOUT ================= */
+
 function MeetingLayout() {
+  const room = useRoomContext();
+  const encoder = new TextEncoder();
+
   const [showChat, setShowChat] = useState(false);
   const [showLiveCode, setShowLiveCode] = useState(false);
-
-  /* 🔴 LIVE CAPTION STATES (ADDED) */
   const [showCaption, setShowCaption] = useState(false);
   const [captionText, setCaptionText] = useState("");
+
+  const [handRaised, setHandRaised] = useState(false);
+  const [reactions, setReactions] = useState<string[]>([]);
+  const [showReactions, setShowReactions] = useState(false);
 
   const [code, setCode] = useState(`export default function App() {
   return <h1>Hello Live Coding 🚀</h1>;
@@ -116,7 +124,8 @@ function MeetingLayout() {
     { onlySubscribed: false }
   );
 
-  /* 🔴 LIVE CAPTION LOGIC (ADDED) */
+  /* ================= LIVE CAPTION ================= */
+
   useEffect(() => {
     if (!showCaption) return;
 
@@ -132,7 +141,7 @@ function MeetingLayout() {
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = "en-US"; // hi-IN for Hindi
+    recognition.lang = "en-US";
 
     recognition.onresult = (event: any) => {
       let text = "";
@@ -146,28 +155,94 @@ function MeetingLayout() {
     return () => recognition.stop();
   }, [showCaption]);
 
+  /* ================= RAISE HAND ================= */
+
+  const toggleRaiseHand = () => {
+    if (!room) return;
+
+    const value = !handRaised;
+    setHandRaised(value);
+
+    room.localParticipant.publishData(
+      encoder.encode(
+        JSON.stringify({
+          type: "hand",
+          value,
+          name: room.localParticipant.identity,
+        })
+      ),
+      { reliable: true }
+    );
+  };
+
+  /* ================= SEND REACTION ================= */
+
+  const sendReaction = (emoji: string) => {
+    if (!room) return;
+
+    room.localParticipant.publishData(
+      encoder.encode(JSON.stringify({ type: "reaction", emoji })),
+      { reliable: false }
+    );
+
+    // local feedback
+    setReactions((prev) => [...prev, emoji]);
+    setTimeout(() => {
+      setReactions((prev) => prev.slice(1));
+    }, 2000);
+
+    setShowReactions(false);
+  };
+
+  /* ================= RECEIVE DATA ================= */
+
+  useEffect(() => {
+    if (!room) return;
+
+    const handler = (payload: Uint8Array) => {
+      const data = JSON.parse(new TextDecoder().decode(payload));
+
+      if (data.type === "reaction") {
+        setReactions((prev) => [...prev, data.emoji]);
+        setTimeout(() => {
+          setReactions((prev) => prev.slice(1));
+        }, 2000);
+      }
+    };
+
+    room.on("dataReceived", handler);
+    return () => room.off("dataReceived", handler);
+  }, [room]);
+
   return (
     <div className="h-full flex flex-col bg-black">
       <RoomAudioRenderer />
 
-      {/* ✅ LIVE CODE OVERLAY (UNCHANGED) */}
+      {/* LIVE CODE */}
       {showLiveCode && (
-        <LiveCodePanel
-          code={code}
-          onChange={setCode}
-        />
+        <LiveCodePanel code={code} onChange={setCode} />
       )}
 
-      {/* 🔴 LIVE CAPTION UI (ADDED) */}
+      {/* LIVE CAPTION */}
       {showCaption && (
-        <div className="absolute bottom-36 left-1/2 -translate-x-1/2 
-        bg-black/70 text-white px-4 py-2 rounded-lg text-sm 
-        max-w-xl text-center z-50">
+        <div className="fixed bottom-36 left-1/2 -translate-x-1/2
+        bg-black/70 text-white px-4 py-2 rounded-lg text-sm z-[9999]">
           {captionText || "Listening..."}
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden relative">
+      {/* FLOATING REACTIONS */}
+      {reactions.map((emoji, i) => (
+        <div
+          key={i}
+          className="fixed bottom-40 left-1/2 -translate-x-1/2 
+          text-4xl animate-bounce z-[9999]"
+        >
+          {emoji}
+        </div>
+      ))}
+
+      <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 p-2">
           <GridLayout tracks={tracks} style={{ height: "100%" }}>
             <ParticipantTile />
@@ -181,8 +256,6 @@ function MeetingLayout() {
 
       {/* CONTROLS */}
       <div className="relative">
-        <RecordingControls />
-
         <div className="absolute top-4 right-4 z-50">
           <Button
             size="lg"
@@ -193,61 +266,56 @@ function MeetingLayout() {
           </Button>
         </div>
 
-        <ExtraMeetingControls
-          onLiveCode={() => setShowLiveCode(v => !v)}
-          onLiveCaption={() => setShowCaption(v => !v)} /* 🔴 ADDED */
-        />
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 flex gap-3">
+          <button
+            onClick={() => setShowLiveCode(v => !v)}
+            className="px-4 py-2 rounded-full bg-white/10 text-white"
+          >
+            💻 Live Code
+          </button>
+
+          <button
+            onClick={toggleRaiseHand}
+            className={`px-4 py-2 rounded-full text-white transition
+            ${handRaised ? "bg-yellow-500" : "bg-white/10"}`}
+          >
+            ✋ {handRaised ? "Hand Raised" : "Raise Hand"}
+          </button>
+
+          <div className="relative">
+            <button
+              onClick={() => setShowReactions(v => !v)}
+              className="px-4 py-2 rounded-full bg-white/10 text-white"
+            >
+              😀 Reactions
+            </button>
+
+            {showReactions && (
+              <div className="absolute bottom-12 left-1/2 -translate-x-1/2
+              bg-black/80 px-3 py-2 rounded-full flex gap-2 z-[9999]">
+                {["❤️", "😀", "😂", "😢", "👍"].map((e) => (
+                  <button
+                    key={e}
+                    onClick={() => sendReaction(e)}
+                    className="text-2xl hover:scale-125 transition"
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => setShowCaption(v => !v)}
+            className="px-4 py-2 rounded-full bg-white/10 text-white"
+          >
+            📝 Live Caption
+          </button>
+        </div>
 
         <ControlBar />
       </div>
-    </div>
-  );
-}
-
-function RecordingControls() {
-  return (
-    <div className="absolute top-4 left-4 z-50 flex gap-2">
-      <button className="px-4 py-2 rounded-full bg-white/10 text-white">
-        Start Recording
-      </button>
-      <button className="px-4 py-2 rounded-full bg-white/10 text-white">
-        Copy Link
-      </button>
-    </div>
-  );
-}
-
-function ExtraMeetingControls({
-  onLiveCode,
-  onLiveCaption,
-}: {
-  onLiveCode: () => void;
-  onLiveCaption: () => void;
-}) {
-  return (
-    <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 flex gap-3">
-      <button
-        onClick={onLiveCode}
-        className="px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white"
-      >
-        💻 Live Code
-      </button>
-
-      <button className="px-4 py-2 rounded-full bg-white/10 text-white">
-        ✋ Raise Hand
-      </button>
-
-      <button className="px-4 py-2 rounded-full bg-white/10 text-white">
-        😀 Reactions
-      </button>
-
-      {/* 🔴 LIVE CAPTION BUTTON (CONNECTED) */}
-      <button
-        onClick={onLiveCaption}
-        className="px-4 py-2 rounded-full bg-white/10 text-white"
-      >
-        📝 Live Caption
-      </button>
     </div>
   );
 }
