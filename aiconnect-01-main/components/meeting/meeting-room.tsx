@@ -8,10 +8,11 @@ import {
   ParticipantTile,
   RoomAudioRenderer,
   useTracks,
+  useLocalParticipant,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Loader2, MessageSquare, X } from "lucide-react";
-import { Track } from "livekit-client";
+import { Track, ParticipantEvent } from "livekit-client";
 import ChatPanel from "./chat-panel";
 import { Button } from "@/components/ui/button";
 
@@ -263,6 +264,34 @@ function RecordingControls({ roomName }: { roomName: string }) {
   const [egressId, setEgressId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Show which screen (if any) is being shared by the local participant
+  const { localParticipant } = useLocalParticipant();
+  const [screenLabel, setScreenLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!localParticipant) {
+      setScreenLabel(null);
+      return;
+    }
+    const update = () => {
+      try {
+        const pubs = localParticipant.getTrackPublications?.() ?? [];
+        const screenPub = pubs.find((p) => p.source === Track.Source.ScreenShare);
+        const label = screenPub?.track?.mediaStreamTrack?.label ?? null;
+        setScreenLabel(label);
+      } catch {
+        setScreenLabel(null);
+      }
+    };
+    update();
+    localParticipant.on(ParticipantEvent.LocalTrackPublished, update);
+    localParticipant.on(ParticipantEvent.LocalTrackUnpublished, update);
+    return () => {
+      localParticipant.off(ParticipantEvent.LocalTrackPublished, update);
+      localParticipant.off(ParticipantEvent.LocalTrackUnpublished, update);
+    };
+  }, [localParticipant]);
+
   const checkActiveRecording = useCallback(async () => {
     try {
       const res = await fetch(
@@ -417,6 +446,10 @@ function RecordingControls({ roomName }: { roomName: string }) {
       >
         {copied ? "Copied!" : "Copy Link"}
       </button>
+
+      {/* <div className="flex items-center gap-2 px-3 py-2 rounded-full bg-white/5 text-xs text-white/80">
+        {screenLabel ? `Sharing: ${screenLabel}` : "No screen share active"}
+      </div> */}
     </div>
   );
 }

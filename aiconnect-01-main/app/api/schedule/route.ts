@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { success, failure } from "@/app/api/_utils/response";
+import { success, failure } from "@/app/api/_utlis/response";
 import {
   MeetingRecord,
   listMeetings,

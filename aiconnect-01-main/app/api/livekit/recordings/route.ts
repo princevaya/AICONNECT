@@ -9,6 +9,7 @@ import {
   EgressInfo,
   EgressStatus,
   S3Upload,
+  AudioCodec,
 } from "livekit-server-sdk";
 
 import {
@@ -124,6 +125,7 @@ export async function POST(req: NextRequest) {
       // Ensure we capture both audio and video (explicitly set)
       audioOnly: false,
       videoOnly: false,
+      audioCodecs: [AudioCodec.OPUS],
     });
 
     return NextResponse.json({
