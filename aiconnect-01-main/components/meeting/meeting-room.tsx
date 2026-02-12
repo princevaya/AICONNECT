@@ -111,6 +111,9 @@ function MeetingLayout() {
   const [handRaised, setHandRaised] = useState(false);
   const [reactions, setReactions] = useState<string[]>([]);
   const [showReactions, setShowReactions] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [egressId, setEgressId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const [code, setCode] = useState(`export default function App() {
   return <h1>Hello Live Coding 🚀</h1>;
@@ -194,6 +197,111 @@ function MeetingLayout() {
     setShowReactions(false);
   };
 
+  /* ================= RECORDING ================= */
+
+  const checkActiveRecording = useCallback(async () => {
+    try {
+      const roomName = room?.name || "";
+      const res = await fetch(
+        `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
+        { cache: "no-store" },
+      );
+
+      if (!res.ok) {
+        throw new Error("Unable to list recordings");
+      }
+
+      const data = await res.json();
+      const list: any[] = Array.isArray(data) ? data : [];
+
+      const active = list.find((recording) => {
+        if (recording.roomName && recording.roomName !== roomName) {
+          return false;
+        }
+
+        const status = recording.status;
+        if (typeof status === "string") {
+          return (
+            status !== "EGRESS_COMPLETE" &&
+            status !== "EGRESS_ABORTED" &&
+            status !== "EGRESS_FAILED"
+          );
+        }
+        if (typeof status === "number") {
+          return status >= 0 && status <= 2;
+        }
+
+        if (typeof recording.statusCode === "number") {
+          return recording.statusCode === 1 || recording.statusCode === 2;
+        }
+
+        return false;
+      });
+
+      if (active) {
+        setIsRecording(true);
+        setEgressId(active.egressId ?? active.id ?? null);
+      } else {
+        setIsRecording(false);
+        setEgressId(null);
+      }
+    } catch (error) {
+      console.error("Failed to check active recording", error);
+    }
+  }, [room?.name]);
+
+  useEffect(() => {
+    checkActiveRecording();
+    const interval = setInterval(checkActiveRecording, 10000);
+    return () => clearInterval(interval);
+  }, [checkActiveRecording]);
+
+  const toggleRecording = async () => {
+    if (isProcessing || !room) return;
+    setIsProcessing(true);
+
+    try {
+      if (isRecording && egressId) {
+        const res = await fetch("/api/livekit/recordings/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ egressId, roomName: room.name }),
+        });
+
+        if (res.ok) {
+          setIsRecording(false);
+          setEgressId(null);
+          await checkActiveRecording();
+        } else {
+          const errorText = await res.text().catch(() => "");
+          alert(`Failed to stop recording: ${errorText || res.statusText}`);
+        }
+      } else {
+        const res = await fetch("/api/livekit/recordings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomName: room.name }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setEgressId(data.egressId);
+          setIsRecording(true);
+          await checkActiveRecording();
+        } else {
+          const errorData = await res.json().catch(() => null);
+          const message = errorData?.error || "Unknown error";
+          alert(`Failed to start recording: ${message}`);
+        }
+      }
+    } catch (error) {
+      console.error("Error toggling recording:", error);
+      alert("An error occurred while processing the recording request.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   /* ================= RECEIVE DATA ================= */
 
   useEffect(() => {
@@ -270,6 +378,21 @@ function MeetingLayout() {
         </div>
 
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 flex gap-3">
+          <button
+            onClick={toggleRecording}
+            disabled={isProcessing}
+            className={`px-4 py-2 rounded-full font-medium transition-colors ${
+              isRecording
+                ? "bg-red-500 hover:bg-red-600 text-white animate-pulse"
+                : "bg-white/10 hover:bg-white/20 text-white"
+            }`}
+          >
+            <span className={`w-3 h-3 rounded-full inline-block mr-2 ${
+              isRecording ? "bg-white" : "bg-red-500"
+            }`} />
+            {isProcessing ? "Processing..." : isRecording ? "Recording" : "Start Recording"}
+          </button>
+
           <button
             onClick={() => setShowLiveCode(v => !v)}
             className="px-4 py-2 rounded-full bg-white/10 text-white"
