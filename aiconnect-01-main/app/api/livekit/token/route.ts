@@ -7,43 +7,44 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
-    // 1. Authenticate with Clerk
+    console.log("Token route called");
     const { userId } = await auth();
-    
+    console.log("Auth result - userId:", userId);
+
     if (!userId) {
+      console.error("No userId from Clerk");
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { error: "Unauthorized - Clerk user not found" },
         { status: 401 }
       );
     }
 
-    // 2. Extract Query Params
-    const { searchParams } = new URL(req.url);
-    const room = searchParams.get("room");
-    const username = searchParams.get("username");
+    const room = req.nextUrl.searchParams.get("room");
+    const username = req.nextUrl.searchParams.get("username");
+    console.log("Request params - room:", room, "username:", username);
 
     if (!room || !username) {
+      console.error("Missing parameters - room:", room, "username:", username);
       return NextResponse.json(
-        { error: "Missing room or username parameters" },
+        { error: "Missing room or username" },
         { status: 400 }
       );
     }
 
-    // 3. Validate Env Variables
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
 
     if (!apiKey || !apiSecret) {
+      console.error("LiveKit credentials missing - API_KEY:", !!apiKey, "API_SECRET:", !!apiSecret);
       return NextResponse.json(
-        { error: "Server configuration error (Keys missing)" },
+        { error: "LiveKit credentials missing" },
         { status: 500 }
       );
     }
 
-    // 4. Generate Token
     const token = new AccessToken(apiKey, apiSecret, {
-      identity: userId, // Using Clerk ID for unique identity
-      name: username,   // Display name in the room
+      identity: userId,
+      name: username,
       ttl: "4h",
     });
 
@@ -56,13 +57,19 @@ export async function GET(req: NextRequest) {
     });
 
     const jwtToken = await token.toJwt();
+    console.log("Token generated successfully, length:", jwtToken.length);
 
-    return NextResponse.json({ token: jwtToken });
-
+    return NextResponse.json({
+      token: jwtToken,
+    });
   } catch (error) {
-    console.error("LiveKit Route Error:", error);
+    console.error("LiveKit token route crashed:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error("Error stack:", errorStack);
+
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: `Internal server error: ${errorMessage}` },
       { status: 500 }
     );
   }

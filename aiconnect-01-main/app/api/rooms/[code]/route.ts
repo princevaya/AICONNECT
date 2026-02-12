@@ -1,5 +1,5 @@
+import { success, failure } from "@/app/api/_utils/response";
 import { NextRequest } from "next/server";
-import { success, failure } from "@/app/api/_utlis/response";
 import {
   MeetingRecord,
   findByCode,
@@ -26,13 +26,9 @@ function toClientPayload(meeting: MeetingRecord) {
 /* ---------- GET ---------- */
 export async function GET(
   _: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
-  const { code } = params;
-
-  if (!process.env.DATABASE_URL) {
-    return failure("DATABASE_URL is not configured", 500);
-  }
+  const { code } = await params;
 
   try {
     const meeting = await findByCode(code);
@@ -53,13 +49,9 @@ export async function GET(
 /* ---------- DELETE ---------- */
 export async function DELETE(
   _: NextRequest,
-  { params }: { params: { code: string } }
+  { params }: { params: Promise<{ code: string }> }
 ) {
-  const { code } = params;
-
-  if (!process.env.DATABASE_URL) {
-    return failure("DATABASE_URL is not configured", 500);
-  }
+  const { code } = await params;
 
   try {
     const meeting = await findByCode(code);

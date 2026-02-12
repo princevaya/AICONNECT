@@ -1,5 +1,4 @@
-import { NextRequest } from "next/server";
-import { success, failure } from "@/app/api/_utlis/response";
+import { success, failure } from "@/app/api/_utils/response";
 import {
   MeetingRecord,
   listMeetings,
@@ -16,7 +15,7 @@ function toClientPayload(meeting: MeetingRecord) {
     attendees: meeting.attendees,
     notes: meeting.notes ?? null,
     status: meeting.status,
-    link: `/meeting/${meeting.code}`, // relative link only
+    link: `/meeting/${meeting.code}`,
     createdAt: meeting.createdAt.toISOString(),
     updatedAt: meeting.updatedAt.toISOString(),
   };
@@ -26,7 +25,6 @@ function toClientPayload(meeting: MeetingRecord) {
 export async function GET() {
   try {
     const meetings = await listMeetings();
-
     return success({
       meetings: meetings.map(toClientPayload),
     });
@@ -37,7 +35,7 @@ export async function GET() {
 }
 
 /* ---------- POST /api/schedule ---------- */
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const body = await req.json();
 
