@@ -77,8 +77,6 @@ export default function MeetingPage() {
           participantName={participantName}
           videoEnabled={videoEnabled}
           audioEnabled={audioEnabled}
-          videoDeviceId={videoDeviceId}
-          audioDeviceId={audioDeviceId}
           onLeave={handleLeave}
         />
       )}

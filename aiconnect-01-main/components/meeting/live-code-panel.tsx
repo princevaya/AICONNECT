@@ -44,7 +44,6 @@ export default function App() {
           <SandpackCodeEditor
             showLineNumbers
             showInlineErrors
-            onChange={onChange}
             style={{ width: "50%" }}
           />
 

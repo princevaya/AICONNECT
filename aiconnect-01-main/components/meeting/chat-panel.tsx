@@ -108,8 +108,11 @@ export default function ChatPanel({ className, onNewMessage }: ChatPanelProps) {
     };
 
     room.on("dataReceived", handleDataReceived);
-    return () => room.off("dataReceived", handleDataReceived);
-  }, [room]);
+    
+    return () => {
+      room.off("dataReceived", handleDataReceived);
+    };
+  }, [room, localParticipant?.identity, onNewMessage]);
 
   /* -------------------- SEND TEXT -------------------- */
 

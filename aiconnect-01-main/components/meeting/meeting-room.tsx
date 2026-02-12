@@ -211,7 +211,10 @@ function MeetingLayout() {
     };
 
     room.on("dataReceived", handler);
-    return () => room.off("dataReceived", handler);
+    
+    return () => {
+      room.off("dataReceived", handler);
+    };
   }, [room]);
 
   return (
