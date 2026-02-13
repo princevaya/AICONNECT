@@ -11,7 +11,7 @@ import {
   useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Loader2, MessageSquare, X } from "lucide-react";
+import { Loader2, MessageSquare, X, Maximize2, Minimize2 } from "lucide-react";
 import { Track } from "livekit-client";
 import ChatPanel from "./chat-panel";
 import LiveCodePanel from "./live-code-panel";
@@ -107,6 +107,7 @@ function MeetingLayout() {
   const [showLiveCode, setShowLiveCode] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
   const [captionText, setCaptionText] = useState("");
+  const [fullscreenParticipantId, setFullscreenParticipantId] = useState<string | null>(null);
 
   const [handRaised, setHandRaised] = useState(false);
   const [reactions, setReactions] = useState<string[]>([]);
@@ -354,24 +355,82 @@ function MeetingLayout() {
       ))}
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 p-2">
-          <GridLayout tracks={tracks} style={{ height: "100%" }}>
-            <ParticipantTile />
-          </GridLayout>
-        </div>
+        {fullscreenParticipantId ? (
+          // Fullscreen View
+          <div className="flex-1 p-2 bg-black relative">
+            <GridLayout 
+              tracks={tracks.filter(t => t.participant?.identity === fullscreenParticipantId)} 
+              style={{ height: "100%" }}
+            >
+              <ParticipantTile />
+            </GridLayout>
+            <button
+              onClick={() => setFullscreenParticipantId(null)}
+              className="absolute top-4 right-4 z-50 px-4 py-2 rounded-full bg-red-600 hover:bg-red-700 text-white transition font-medium"
+            >
+              ✕ Exit Fullscreen
+            </button>
+          </div>
+        ) : (
+          // Grid View with Clickable Tiles
+          <>
+            <div className="flex-1 p-2">
+              <div 
+                className="h-full grid gap-2"
+                style={{ 
+                  gridTemplateColumns: tracks.length === 1 ? '1fr' : 'repeat(auto-fit, minmax(250px, 1fr))'
+                }}
+              >
+                {tracks.map((track) => (
+                  <div
+                    key={track.participant?.identity}
+                    onClick={() => setFullscreenParticipantId(track.participant?.identity || null)}
+                    className="relative cursor-pointer hover:opacity-90 transition-opacity bg-gray-900 rounded-lg overflow-hidden group"
+                  >
+                    <GridLayout tracks={[track]} style={{ height: "100%" }}>
+                      <ParticipantTile />
+                    </GridLayout>
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                      <span className="text-white opacity-0 group-hover:opacity-100 transition-opacity text-sm font-medium bg-black/50 px-3 py-1 rounded">
+                        Click to fullscreen
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <div className={`w-80 ${showChat ? "" : "hidden"}`}>
-          <ChatPanel />
-        </div>
+            <div className={`w-80 ${showChat ? "" : "hidden"}`}>
+              <ChatPanel />
+            </div>
+          </>
+        )}
+
+        {fullscreenParticipantId && (
+          <div className={`w-80 ${showChat ? "" : "hidden"}`}>
+            <ChatPanel />
+          </div>
+        )}
       </div>
 
       {/* CONTROLS */}
       <div className="relative">
-        <div className="absolute top-4 right-4 z-50">
+        <div className="absolute top-4 right-4 z-50 flex gap-2">
+          <Button
+            size="lg"
+            onClick={() => setFullscreenParticipantId(
+              fullscreenParticipantId ? null : (tracks[0]?.participant?.identity || null)
+            )}
+            className="rounded-full h-14 w-14 p-0 bg-white/10 hover:bg-white/20 text-white transition-colors"
+            title={fullscreenParticipantId ? "Exit fullscreen" : "Fullscreen"}
+          >
+            {fullscreenParticipantId ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
+          </Button>
+          
           <Button
             size="lg"
             onClick={() => setShowChat(!showChat)}
-            className="rounded-full h-14 w-14 p-0 bg-white/10 text-white"
+            className="rounded-full h-14 w-14 p-0 bg-white/10 hover:bg-white/20 text-white transition-colors"
           >
             {showChat ? <X /> : <MessageSquare />}
           </Button>
