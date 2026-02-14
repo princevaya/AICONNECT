@@ -1,0 +1,7 @@
+onlyBuiltDependencies:
+  - '@clerk/shared'
+  - '@prisma/engines'
+  - es5-ext
+  - prisma
+  - sharp
+  - unrs-resolver
