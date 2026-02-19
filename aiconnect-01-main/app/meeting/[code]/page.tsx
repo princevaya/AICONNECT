@@ -15,8 +15,6 @@ export default function MeetingPage() {
   const [participantName, setParticipantName] = useState("");
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
-  const [videoDeviceId, setVideoDeviceId] = useState<string>();
-  const [audioDeviceId, setAudioDeviceId] = useState<string>();
 
   const meetingCode = params.code as string;
 
@@ -31,9 +29,7 @@ export default function MeetingPage() {
     name: string,
     roomName?: string,
     video?: boolean,
-    audio?: boolean,
-    videoDev?: string,
-    audioDev?: string
+    audio?: boolean
   ) => {
     // Use authenticated user's name instead of provided name
     const userName =
@@ -41,8 +37,6 @@ export default function MeetingPage() {
     setParticipantName(userName);
     setVideoEnabled(video ?? true);
     setAudioEnabled(audio ?? true);
-    setVideoDeviceId(videoDev);
-    setAudioDeviceId(audioDev);
     setHasJoined(true);
   };
 

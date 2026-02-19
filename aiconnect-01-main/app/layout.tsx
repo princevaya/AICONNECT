@@ -27,14 +27,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const signInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL || "/auth/sign-in";
+  const signUpUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_UP_URL || "/auth/sign-up";
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-background text-foreground overflow-x-hidden`}
       >
         <ClerkProvider
-          signInUrl="/auth/sign-in"
-          signUpUrl="/auth/sign-up"
+          publishableKey={publishableKey}
+          signInUrl={signInUrl}
+          signUpUrl={signUpUrl}
           signInFallbackRedirectUrl="/dashboard"
           signUpFallbackRedirectUrl="/dashboard"
         >

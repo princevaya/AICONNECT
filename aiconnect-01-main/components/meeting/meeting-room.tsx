@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -7,17 +7,47 @@ import {
   GridLayout,
   ParticipantTile,
   RoomAudioRenderer,
+  useMaybeParticipantContext,
   useTracks,
   useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Loader2, MessageSquare, X } from "lucide-react";
-import { Track } from "livekit-client";
-import ChatPanel from "./chat-panel";
+import { Loader2, MessageSquare, Users, X } from "lucide-react";
+import { Participant, Track } from "livekit-client";
+import ChatWindow from "@/components/chat/ChatWindow";
+import ParticipantsPanel from "@/components/meeting/participants-panel";
 import LiveCodePanel from "./live-code-panel";
 import { Button } from "@/components/ui/button";
 
-/* ================= PROPS ================= */
+type SpeechRecognitionInstance = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<ArrayLike<{ transcript: string }>>;
+};
+
+type RecordingLike = {
+  roomName?: string;
+  status?: string | number;
+  statusCode?: number;
+  egressId?: string;
+  id?: string;
+};
+
+type SpeechRecognitionWindow = Window &
+  typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
 
 interface MeetingRoomProps {
   roomName: string;
@@ -26,8 +56,6 @@ interface MeetingRoomProps {
   audioEnabled?: boolean;
   onLeave: () => void;
 }
-
-/* ================= MAIN ================= */
 
 export default function MeetingRoom({
   roomName,
@@ -97,18 +125,19 @@ export default function MeetingRoom({
   );
 }
 
-/* ================= LAYOUT ================= */
-
 function MeetingLayout() {
   const room = useRoomContext();
   const encoder = new TextEncoder();
 
   const [showChat, setShowChat] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [showParticipants, setShowParticipants] = useState(false);
   const [showLiveCode, setShowLiveCode] = useState(false);
   const [showCaption, setShowCaption] = useState(false);
   const [captionText, setCaptionText] = useState("");
 
   const [handRaised, setHandRaised] = useState(false);
+  const [raisedHands, setRaisedHands] = useState<Record<string, boolean>>({});
   const [reactions, setReactions] = useState<string[]>([]);
   const [showReactions, setShowReactions] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -116,7 +145,7 @@ function MeetingLayout() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const [code, setCode] = useState(`export default function App() {
-  return <h1>Hello Live Coding 🚀</h1>;
+  return <h1>Hello Live Coding</h1>;
 }`);
 
   const tracks = useTracks(
@@ -127,14 +156,12 @@ function MeetingLayout() {
     { onlySubscribed: false }
   );
 
-  /* ================= LIVE CAPTION ================= */
-
   useEffect(() => {
     if (!showCaption) return;
 
+    const speechWindow = window as SpeechRecognitionWindow;
     const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       alert("Live Caption not supported in this browser");
@@ -146,7 +173,7 @@ function MeetingLayout() {
     recognition.interimResults = true;
     recognition.lang = "en-US";
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEventLike) => {
       let text = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         text += event.results[i][0].transcript;
@@ -158,27 +185,27 @@ function MeetingLayout() {
     return () => recognition.stop();
   }, [showCaption]);
 
-  /* ================= RAISE HAND ================= */
-
   const toggleRaiseHand = () => {
     if (!room) return;
 
     const value = !handRaised;
     setHandRaised(value);
+    setRaisedHands((prev) => ({
+      ...prev,
+      [room.localParticipant.identity]: value,
+    }));
 
     room.localParticipant.publishData(
       encoder.encode(
         JSON.stringify({
           type: "hand",
           value,
-          name: room.localParticipant.identity,
+          identity: room.localParticipant.identity,
         })
       ),
       { reliable: true }
     );
   };
-
-  /* ================= SEND REACTION ================= */
 
   const sendReaction = (emoji: string) => {
     if (!room) return;
@@ -188,7 +215,6 @@ function MeetingLayout() {
       { reliable: false }
     );
 
-    // local feedback
     setReactions((prev) => [...prev, emoji]);
     setTimeout(() => {
       setReactions((prev) => prev.slice(1));
@@ -197,22 +223,34 @@ function MeetingLayout() {
     setShowReactions(false);
   };
 
-  /* ================= RECORDING ================= */
-
   const checkActiveRecording = useCallback(async () => {
     try {
       const roomName = room?.name || "";
+      if (!roomName) {
+        setIsRecording(false);
+        setEgressId(null);
+        return;
+      }
       const res = await fetch(
         `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
-        { cache: "no-store" },
+        { cache: "no-store" }
       );
 
       if (!res.ok) {
-        throw new Error("Unable to list recordings");
+        setIsRecording(false);
+        setEgressId(null);
+        return;
+      }
+
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        setIsRecording(false);
+        setEgressId(null);
+        return;
       }
 
       const data = await res.json();
-      const list: any[] = Array.isArray(data) ? data : [];
+      const list: RecordingLike[] = Array.isArray(data) ? (data as RecordingLike[]) : [];
 
       const active = list.find((recording) => {
         if (recording.roomName && recording.roomName !== roomName) {
@@ -302,24 +340,42 @@ function MeetingLayout() {
     }
   };
 
-  /* ================= RECEIVE DATA ================= */
-
   useEffect(() => {
     if (!room) return;
 
-    const handler = (payload: Uint8Array) => {
-      const data = JSON.parse(new TextDecoder().decode(payload));
+    const handler = (payload: Uint8Array, participant?: Participant) => {
+      try {
+        const data = JSON.parse(new TextDecoder().decode(payload)) as {
+          type?: string;
+          emoji?: string;
+          value?: boolean;
+          identity?: string;
+          name?: string;
+        };
 
-      if (data.type === "reaction") {
-        setReactions((prev) => [...prev, data.emoji]);
-        setTimeout(() => {
-          setReactions((prev) => prev.slice(1));
-        }, 2000);
+        if (data.type === "reaction" && data.emoji) {
+          setReactions((prev) => [...prev, data.emoji as string]);
+          setTimeout(() => {
+            setReactions((prev) => prev.slice(1));
+          }, 2000);
+        }
+
+        if (data.type === "hand") {
+          const senderIdentity = participant?.identity || data.identity || data.name;
+          if (!senderIdentity) return;
+
+          setRaisedHands((prev) => ({
+            ...prev,
+            [senderIdentity]: Boolean(data.value),
+          }));
+        }
+      } catch {
+        // Ignore non-JSON payloads.
       }
     };
 
     room.on("dataReceived", handler);
-    
+
     return () => {
       room.off("dataReceived", handler);
     };
@@ -329,25 +385,18 @@ function MeetingLayout() {
     <div className="h-full flex flex-col bg-black">
       <RoomAudioRenderer />
 
-      {/* LIVE CODE */}
-      {showLiveCode && (
-        <LiveCodePanel code={code} onChange={setCode} />
-      )}
+      {showLiveCode && <LiveCodePanel code={code} onChange={setCode} />}
 
-      {/* LIVE CAPTION */}
       {showCaption && (
-        <div className="fixed bottom-36 left-1/2 -translate-x-1/2
-        bg-black/70 text-white px-4 py-2 rounded-lg text-sm z-[9999]">
+        <div className="fixed bottom-36 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-lg text-sm z-[9999]">
           {captionText || "Listening..."}
         </div>
       )}
 
-      {/* FLOATING REACTIONS */}
       {reactions.map((emoji, i) => (
         <div
-          key={i}
-          className="fixed bottom-40 left-1/2 -translate-x-1/2 
-          text-4xl animate-bounce z-[9999]"
+          key={`${emoji}-${i}`}
+          className="fixed bottom-40 left-1/2 -translate-x-1/2 text-4xl animate-bounce z-[9999]"
         >
           {emoji}
         </div>
@@ -356,69 +405,100 @@ function MeetingLayout() {
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 p-2">
           <GridLayout tracks={tracks} style={{ height: "100%" }}>
-            <ParticipantTile />
+            <ParticipantTile className="rounded-xl border-2 border-emerald-400/80">
+              <TileProfileBadge raisedHands={raisedHands} />
+            </ParticipantTile>
           </GridLayout>
         </div>
 
-        <div className={`w-80 ${showChat ? "" : "hidden"}`}>
-          <ChatPanel />
+        <div
+          className={`${
+            showParticipants ? "" : "hidden"
+          } fixed inset-y-0 right-0 z-40 w-[88vw] max-w-80 border-l bg-black/95 md:static md:w-80 md:bg-transparent`}
+        >
+          <ParticipantsPanel raisedHands={raisedHands} />
+        </div>
+
+        <div
+          className={`${
+            showChat ? "" : "hidden"
+          } fixed inset-y-0 right-0 z-40 w-[96vw] border-l bg-black/95 md:static md:w-[28rem] md:bg-transparent`}
+        >
+          <ChatWindow
+            roomId={room?.name || ""}
+            isOpen={showChat}
+            onUnreadCountChange={setUnreadChatCount}
+          />
         </div>
       </div>
 
-      {/* CONTROLS */}
       <div className="relative">
-        <div className="absolute top-4 right-4 z-50">
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
           <Button
             size="lg"
-            onClick={() => setShowChat(!showChat)}
-            className="rounded-full h-14 w-14 p-0 bg-white/10 text-white"
+            onClick={() => setShowParticipants((v) => !v)}
+            className="rounded-full h-11 w-11 p-0 bg-white/10 text-white md:h-14 md:w-14"
+          >
+            {showParticipants ? <X /> : <Users />}
+          </Button>
+          <Button
+            size="lg"
+            onClick={() => setShowChat((prev) => !prev)}
+            className="relative rounded-full h-11 w-11 p-0 bg-white/10 text-white md:h-14 md:w-14"
           >
             {showChat ? <X /> : <MessageSquare />}
+            {!showChat && unreadChatCount > 0 ? (
+              <span className="absolute -right-1 -top-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] leading-5 text-center">
+                {unreadChatCount > 99 ? "99+" : unreadChatCount}
+              </span>
+            ) : null}
           </Button>
         </div>
 
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 flex gap-3">
+        <div className="absolute bottom-24 left-1/2 z-50 flex max-w-[94vw] -translate-x-1/2 flex-wrap justify-center gap-2 md:gap-3">
           <button
             onClick={toggleRecording}
             disabled={isProcessing}
-            className={`px-4 py-2 rounded-full font-medium transition-colors ${
+            className={`rounded-full px-3 py-2 text-xs font-medium transition-colors md:px-4 md:text-sm ${
               isRecording
                 ? "bg-red-500 hover:bg-red-600 text-white animate-pulse"
                 : "bg-white/10 hover:bg-white/20 text-white"
             }`}
           >
-            <span className={`w-3 h-3 rounded-full inline-block mr-2 ${
-              isRecording ? "bg-white" : "bg-red-500"
-            }`} />
+            <span
+              className={`w-3 h-3 rounded-full inline-block mr-2 ${
+                isRecording ? "bg-white" : "bg-red-500"
+              }`}
+            />
             {isProcessing ? "Processing..." : isRecording ? "Recording" : "Start Recording"}
           </button>
 
           <button
-            onClick={() => setShowLiveCode(v => !v)}
-            className="px-4 py-2 rounded-full bg-white/10 text-white"
+            onClick={() => setShowLiveCode((v) => !v)}
+            className="rounded-full bg-white/10 px-3 py-2 text-xs text-white md:px-4 md:text-sm"
           >
-            💻 Live Code
+            Live Code
           </button>
 
           <button
             onClick={toggleRaiseHand}
-            className={`px-4 py-2 rounded-full text-white transition
-            ${handRaised ? "bg-yellow-500" : "bg-white/10"}`}
+            className={`rounded-full px-3 py-2 text-xs text-white transition md:px-4 md:text-sm ${
+              handRaised ? "bg-yellow-500" : "bg-white/10"
+            }`}
           >
-            ✋ {handRaised ? "Hand Raised" : "Raise Hand"}
+            {handRaised ? "Hand Raised" : "Raise Hand"}
           </button>
 
           <div className="relative">
             <button
-              onClick={() => setShowReactions(v => !v)}
-              className="px-4 py-2 rounded-full bg-white/10 text-white"
+              onClick={() => setShowReactions((v) => !v)}
+              className="rounded-full bg-white/10 px-3 py-2 text-xs text-white md:px-4 md:text-sm"
             >
-              😀 Reactions
+              Reactions
             </button>
 
             {showReactions && (
-              <div className="absolute bottom-12 left-1/2 -translate-x-1/2
-              bg-black/80 px-3 py-2 rounded-full flex gap-2 z-[9999]">
+              <div className="absolute bottom-12 left-1/2 -translate-x-1/2 bg-black/80 px-3 py-2 rounded-full flex gap-2 z-[9999]">
                 {["❤️", "😀", "😂", "😢", "👍"].map((e) => (
                   <button
                     key={e}
@@ -433,15 +513,82 @@ function MeetingLayout() {
           </div>
 
           <button
-            onClick={() => setShowCaption(v => !v)}
-            className="px-4 py-2 rounded-full bg-white/10 text-white"
+            onClick={() => setShowCaption((v) => !v)}
+            className="rounded-full bg-white/10 px-3 py-2 text-xs text-white md:px-4 md:text-sm"
           >
-            📝 Live Caption
+            Live Caption
           </button>
         </div>
 
         <ControlBar />
       </div>
+    </div>
+  );
+}
+
+function initialsFromName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "U";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
+function avatarColorClass(identity: string) {
+  const colors = [
+    "bg-rose-500",
+    "bg-orange-500",
+    "bg-amber-500",
+    "bg-lime-500",
+    "bg-emerald-500",
+    "bg-teal-500",
+    "bg-cyan-500",
+    "bg-sky-500",
+    "bg-blue-500",
+    "bg-indigo-500",
+    "bg-violet-500",
+    "bg-fuchsia-500",
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < identity.length; i++) {
+    hash = (hash * 31 + identity.charCodeAt(i)) >>> 0;
+  }
+
+  return colors[hash % colors.length];
+}
+
+function TileProfileBadge({
+  raisedHands,
+}: {
+  raisedHands: Record<string, boolean>;
+}) {
+  const participant = useMaybeParticipantContext();
+  if (!participant) return null;
+
+  const displayName = participant.name || participant.identity;
+  const initials = initialsFromName(displayName);
+  const avatarColor = avatarColorClass(participant.identity);
+  const isHandRaised = Boolean(raisedHands[participant.identity]);
+
+  return (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 pointer-events-none">
+      {isHandRaised && (
+        <span
+          className="absolute top-2 right-2 h-6 w-6 rounded-full bg-yellow-400/120 text-black text-xl leading-none flex items-center justify-center shadow backdrop-blur-sm"
+          title="Hand raised"
+        >
+          ✋
+        </span>
+      )}
+      <div
+        className={`relative h-28 w-28 rounded-full ${avatarColor} flex items-center justify-center text-4xl font-bold text-white shadow-2xl ring-4 ring-white/20`}
+        title={displayName}
+      >
+        {initials}
+      </div>
+      <span className="max-w-52 truncate rounded-full bg-black/60 px-4 py-1 text-sm font-semibold text-white backdrop-blur-sm">
+        {displayName}
+      </span>
     </div>
   );
 }

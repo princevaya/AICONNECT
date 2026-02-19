@@ -12,11 +12,9 @@ import Link from "next/link";
 import { useState } from 'react';
 
 type Tab = "monthly" | "yearly";
+const MotionTabTrigger = motion.create(TabsTrigger);
 
 const PricingCards = () => {
-
-    const MotionTabTrigger = motion(TabsTrigger);
-
     const [activeTab, setActiveTab] = useState<Tab>("monthly");
 
     return (
