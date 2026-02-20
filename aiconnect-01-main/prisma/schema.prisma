@@ -1,11 +1,16 @@
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = [] // driverAdapters is now stable/automatic
-  output          = "../src/generated/prisma"
+  engineType      = "binary"
+  previewFeatures = []
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+enum ParticipantRole {
+  host
+  participant
 }
 
 model User {
@@ -17,6 +22,12 @@ model User {
   role      String   @default("user")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  files     File[]        @relation("UploadedFiles")
+  messages  ChatMessage[]
+  participants Participant[]
+  chatRooms ChatRoom[]    @relation("ChatRoomHost")
+  sharedBy  FileShare[] @relation("Sender")
+  sharedTo  FileShare[] @relation("Receiver")
 
   @@map("users")
 }
@@ -75,4 +86,101 @@ model meeting_rooms {
   updated_at   DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([scheduledFor], map: "idx_meeting_rooms_schedule")
+}
+
+model File {
+  id          String   @id @default(cuid())
+  name        String
+  originalUrl String   @map("original_url")
+  fileSize    BigInt
+  fileType    String
+  uploadedBy  String   @map("uploaded_by")
+  roomId      String?  @map("room_id")
+  storageProvider String @default("local") @map("storage_provider")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  uploader    User     @relation("UploadedFiles", fields: [uploadedBy], references: [id], onDelete: Cascade)
+  room        ChatRoom? @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  message     ChatMessage?
+  shares      FileShare[]
+
+  @@index([uploadedBy], map: "idx_files_uploaded_by")
+  @@index([roomId, createdAt], map: "idx_files_room_created_at")
+  @@map("files")
+}
+
+model FileShare {
+  id        String   @id @default(cuid())
+  fileId    String   @map("file_id")
+  sharedBy  String   @map("shared_by")
+  sharedTo  String   @map("shared_to")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  sender    User     @relation("Sender", fields: [sharedBy], references: [id])
+  receiver  User     @relation("Receiver", fields: [sharedTo], references: [id])
+
+  @@map("file_shares")
+}
+
+model ChatRoom {
+  id          String        @id @default(cuid())
+  code        String        @unique
+  title       String
+  createdById String        @map("created_by_id")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  createdBy   User          @relation("ChatRoomHost", fields: [createdById], references: [id], onDelete: Cascade)
+  messages    ChatMessage[]
+  participants Participant[]
+  files       File[]
+
+  @@index([createdById], map: "idx_chat_rooms_created_by")
+  @@index([createdAt], map: "idx_chat_rooms_created_at")
+  @@map("chat_rooms")
+}
+
+model ChatMessage {
+  id         String    @id @default(cuid())
+  roomId     String    @map("room_id")
+  senderId   String    @map("sender_id")
+  content    String
+  fileId     String?   @unique @map("file_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  room       ChatRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender     User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  file       File?     @relation(fields: [fileId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt], map: "idx_chat_messages_room_created_at")
+  @@index([senderId], map: "idx_chat_messages_sender_id")
+  @@index([deletedAt], map: "idx_chat_messages_deleted_at")
+  @@map("chat_messages")
+}
+
+model Participant {
+  id           String          @id @default(cuid())
+  roomId       String          @map("room_id")
+  userId       String          @map("user_id")
+  role         ParticipantRole @default(participant)
+  micStatus    Boolean         @default(true) @map("mic_status")
+  cameraStatus Boolean         @default(true) @map("camera_status")
+  joinedAt     DateTime        @default(now()) @map("joined_at")
+  leftAt       DateTime?       @map("left_at")
+  removedAt    DateTime?       @map("removed_at")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  room         ChatRoom        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId], map: "uq_participants_room_user")
+  @@index([roomId, leftAt], map: "idx_participants_room_left_at")
+  @@index([roomId, role], map: "idx_participants_room_role")
+  @@map("participants")
 }

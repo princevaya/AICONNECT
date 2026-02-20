@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ export default function PreJoinScreen({
   onJoin,
   meetingCode,
 }: PreJoinScreenProps) {
-  const [participantName, setParticipantName] = useState("User"); // Default, will be overridden by auth
+  const participantName = "User"; // Replaced by authenticated user name before join
   const [roomName, setRoomName] = useState(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -45,8 +45,22 @@ export default function PreJoinScreen({
   const [selectedCamera, setSelectedCamera] = useState<string>("");
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>("");
   const [showSettings, setShowSettings] = useState(false);
+  const [mediaApiAvailable, setMediaApiAvailable] = useState(true);
 
-  const enumerateDevices = async () => {
+  const canUseMediaApi = () =>
+    typeof navigator !== "undefined" &&
+    !!navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function" &&
+    typeof navigator.mediaDevices.enumerateDevices === "function";
+
+  const enumerateDevices = useCallback(async () => {
+    if (!canUseMediaApi()) {
+      setMediaApiAvailable(false);
+      setAvailableCameras([]);
+      setAvailableMicrophones([]);
+      return;
+    }
+
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const cameras = devices.filter((device) => device.kind === "videoinput");
@@ -62,15 +76,18 @@ export default function PreJoinScreen({
         setSelectedMicrophone(microphones[0].deviceId);
     } catch (error) {
       console.error("Error enumerating devices:", error);
+      setMediaApiAvailable(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Just enumerate devices without requesting permissions
     (async () => {
       await enumerateDevices();
     })();
+  }, [enumerateDevices]);
 
+  useEffect(() => {
     return () => {
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -85,6 +102,12 @@ export default function PreJoinScreen({
   }, [stream]);
 
   const requestVideoAccess = async () => {
+    if (!canUseMediaApi()) {
+      setMediaApiAvailable(false);
+      alert("Media devices are not available in this browser/context.");
+      return;
+    }
+
     try {
       if (stream) {
         stream.getVideoTracks().forEach((track) => track.stop());
@@ -133,6 +156,12 @@ export default function PreJoinScreen({
   };
 
   const requestAudioAccess = async () => {
+    if (!canUseMediaApi()) {
+      setMediaApiAvailable(false);
+      alert("Media devices are not available in this browser/context.");
+      return;
+    }
+
     try {
       if (stream) {
         stream.getAudioTracks().forEach((track) => track.stop());
@@ -218,6 +247,11 @@ export default function PreJoinScreen({
 
   const changeCamera = async (deviceId: string) => {
     setSelectedCamera(deviceId);
+    if (!canUseMediaApi()) {
+      setMediaApiAvailable(false);
+      return;
+    }
+
     if (isVideoEnabled && stream) {
       try {
         stream.getVideoTracks().forEach((track) => track.stop());
@@ -251,6 +285,11 @@ export default function PreJoinScreen({
 
   const changeMicrophone = async (deviceId: string) => {
     setSelectedMicrophone(deviceId);
+    if (!canUseMediaApi()) {
+      setMediaApiAvailable(false);
+      return;
+    }
+
     if (isAudioEnabled && stream) {
       try {
         stream.getAudioTracks().forEach((track) => track.stop());
@@ -352,6 +391,7 @@ export default function PreJoinScreen({
                     size="lg"
                     variant={isVideoEnabled ? "default" : "outline"}
                     onClick={toggleVideo}
+                    disabled={!mediaApiAvailable}
                     className="rounded-full h-14 w-14 p-0"
                   >
                     {isVideoEnabled ? (
@@ -365,6 +405,7 @@ export default function PreJoinScreen({
                     size="lg"
                     variant={isAudioEnabled ? "default" : "outline"}
                     onClick={toggleAudio}
+                    disabled={!mediaApiAvailable}
                     className="rounded-full h-14 w-14 p-0"
                   >
                     {isAudioEnabled ? (
@@ -379,10 +420,17 @@ export default function PreJoinScreen({
                     variant="outline"
                     className="rounded-full h-14 w-14 p-0"
                     onClick={() => setShowSettings(!showSettings)}
+                    disabled={!mediaApiAvailable}
                   >
                     <Settings className="h-6 w-6" />
                   </Button>
                 </div>
+
+                {!mediaApiAvailable ? (
+                  <p className="mt-3 text-center text-xs text-red-500">
+                    Camera/microphone APIs are unavailable in this browser context.
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
           </div>

@@ -4,8 +4,7 @@ export default clerkMiddleware();
 
 export const config = {
   matcher: [
-    // protect all routes except static files
+    // Protect all routes except static files.
     "/((?!_next|.*\\..*).*)",
   ],
 };
-

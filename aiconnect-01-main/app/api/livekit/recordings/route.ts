@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   EncodedFileOutput,
   EncodedFileType,
@@ -9,7 +7,6 @@ import {
   EgressInfo,
   EgressStatus,
   S3Upload,
-  AudioCodec,
 } from "livekit-server-sdk";
 
 import {
@@ -22,8 +19,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ROOM_NAME_REGEX = /^[a-zA-Z0-9_-]{1,100}$/;
-
-let cachedS3Client: S3Client | null = null;
 
 interface RecordingResponse {
   id: string;
@@ -73,10 +68,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(normalized);
   } catch (error) {
     console.error("Failed to list LiveKit recordings", error);
-    return NextResponse.json(
-      { error: "Failed to load recordings" },
-      { status: 500 }
-    );
+    return NextResponse.json([]);
   }
 }
 
@@ -321,29 +313,21 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
     return null;
   }
 
-  const fallbackHttp = file.location?.startsWith("http") ? file.location : null;
-  const s3Client = getS3Client();
-
-  if (!s3Client) {
-    return fallbackHttp;
-  }
+  const fallbackHttp = file.location?.startsWith("http")
+    ? file.location
+    : null;
 
   const parsed =
     parseS3Location(file.location) ?? parseHttpS3Location(file.location);
-  const bucket = parsed?.bucket ?? process.env.AWS_S3_BUCKET;
-  const key = normalizeS3Key(parsed?.key ?? file.filename);
-
-  if (!bucket || !key) {
+  if (fallbackHttp) {
     return fallbackHttp;
   }
 
-  try {
-    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
-    return await getSignedUrl(s3Client, command, { expiresIn: 900 });
-  } catch (error) {
-    console.error("Failed to sign S3 recording URL", error);
-    return fallbackHttp;
+  if (parsed?.bucket && parsed?.key) {
+    return `s3://${parsed.bucket}/${normalizeS3Key(parsed.key)}`;
   }
+
+  return null;
 }
 
 function parseS3Location(location?: string | null) {
@@ -442,38 +426,6 @@ function getAwsConfig(): AwsConfig {
 
   if (!accessKeyId || !secretAccessKey || !region || !bucket) {
     throw new Error("AWS S3 is not configured for recordings");
-  }
-
-  return { accessKeyId, secretAccessKey, region, bucket };
-}
-
-function getS3Client() {
-  const aws = getOptionalAwsConfig();
-  if (!aws) {
-    return null;
-  }
-
-  if (!cachedS3Client) {
-    cachedS3Client = new S3Client({
-      region: aws.region,
-      credentials: {
-        accessKeyId: aws.accessKeyId,
-        secretAccessKey: aws.secretAccessKey,
-      },
-    });
-  }
-
-  return cachedS3Client;
-}
-
-function getOptionalAwsConfig(): AwsConfig | null {
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.AWS_REGION;
-  const bucket = process.env.AWS_S3_BUCKET;
-
-  if (!accessKeyId || !secretAccessKey || !region || !bucket) {
-    return null;
   }
 
   return { accessKeyId, secretAccessKey, region, bucket };
