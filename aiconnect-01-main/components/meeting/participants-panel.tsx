@@ -1,22 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useLocalParticipant, useParticipants, useRoomContext } from "@livekit/components-react";
-import { Participant, Track } from "livekit-client";
 import { Mic, MicOff, Radio, Video, VideoOff } from "lucide-react";
 
-function participantName(participant: Participant) {
-  return participant.name || participant.identity;
-}
+export type ParticipantEntry = {
+  id: string;
+  name: string;
+  isLocal?: boolean;
+  isSpeaking?: boolean;
+  micEnabled?: boolean;
+  cameraEnabled?: boolean;
+  screenShareEnabled?: boolean;
+};
 
-function micEnabled(participant: Participant) {
-  const publication = participant.getTrackPublication(Track.Source.Microphone);
-  return publication ? !publication.isMuted : false;
-}
-
-function cameraEnabled(participant: Participant) {
-  const publication = participant.getTrackPublication(Track.Source.Camera);
-  return publication ? !publication.isMuted : false;
+interface ParticipantsPanelProps {
+  participants: ParticipantEntry[];
+  raisedHands: Record<string, boolean>;
 }
 
 function initialsFromName(name: string) {
@@ -50,101 +48,49 @@ function avatarColorClass(identity: string) {
   return colors[hash % colors.length];
 }
 
-interface ParticipantsPanelProps {
-  raisedHands?: Record<string, boolean>;
-}
-
-export default function ParticipantsPanel({ raisedHands: raisedHandsFromRoom }: ParticipantsPanelProps) {
-  const room = useRoomContext();
-  const remoteParticipants = useParticipants();
-  const { localParticipant } = useLocalParticipant();
-  const [localRaisedHands, setLocalRaisedHands] = useState<Record<string, boolean>>({});
-
-  const participants = useMemo(() => {
-    const all = [localParticipant, ...remoteParticipants];
-    const unique = new Map<string, Participant>();
-    for (const participant of all) {
-      unique.set(participant.identity, participant);
-    }
-    return Array.from(unique.values());
-  }, [localParticipant, remoteParticipants]);
-
-  const speaking = useMemo(
-    () => participants.filter((participant) => participant.isSpeaking),
-    [participants]
-  );
-
-  useEffect(() => {
-    const handler = (payload: Uint8Array, participant?: Participant) => {
-      try {
-        const data = JSON.parse(new TextDecoder().decode(payload)) as {
-          type?: string;
-          value?: boolean;
-          identity?: string;
-          name?: string;
-        };
-
-        if (data.type !== "hand") return;
-
-        const senderIdentity = participant?.identity || data.identity || data.name;
-        if (!senderIdentity) return;
-
-        setLocalRaisedHands((prev) => ({
-          ...prev,
-          [senderIdentity]: Boolean(data.value),
-        }));
-      } catch {
-        // Ignore non-JSON/non-hand payloads
-      }
-    };
-
-    room.on("dataReceived", handler);
-    return () => {
-      room.off("dataReceived", handler);
-    };
-  }, [room]);
-
-  const raisedHands = raisedHandsFromRoom ?? localRaisedHands;
+export default function ParticipantsPanel({
+  participants,
+  raisedHands,
+}: ParticipantsPanelProps) {
+  const speaking = participants.filter((participant) => participant.isSpeaking);
 
   return (
-    <aside className="w-80 border-l bg-slate-950/95 text-slate-100 flex flex-col">
-      <div className="p-4 border-b border-white/10">
+    <aside className="flex w-80 flex-col border-l border-border bg-card/95 text-card-foreground">
+      <div className="border-b border-border p-4">
         <p className="text-sm font-semibold">Participants</p>
-        <p className="text-xs text-slate-400">{participants.length} in meeting</p>
+        <p className="text-xs text-muted-foreground">{participants.length} in meeting</p>
       </div>
 
-      <div className="px-4 py-3 border-b border-white/10">
-        <p className="text-[11px] uppercase tracking-wide text-slate-400 mb-2">Speaking now</p>
+      <div className="border-b border-border px-4 py-3">
+        <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+          Speaking now
+        </p>
         {speaking.length === 0 ? (
-          <p className="text-xs text-slate-500">No one is speaking</p>
+          <p className="text-xs text-muted-foreground">No one is speaking</p>
         ) : (
           <div className="space-y-1">
             {speaking.map((participant) => (
               <div
-                key={`speaker-${participant.identity}`}
+                key={`speaker-${participant.id}`}
                 className="flex items-center gap-2 text-xs text-emerald-300"
               >
                 <Radio className="h-3.5 w-3.5 animate-pulse" />
-                <span className="truncate">{participantName(participant)}</span>
+                <span className="truncate">{participant.name}</span>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {participants.map((participant) => {
-          const isSpeaking = participant.isSpeaking;
-          const hasMic = micEnabled(participant);
-          const hasCamera = cameraEnabled(participant);
-          const displayName = participantName(participant);
-          const initials = initialsFromName(displayName);
-          const avatarColor = avatarColorClass(participant.identity);
+          const initials = initialsFromName(participant.name);
+          const avatarColor = avatarColorClass(participant.id);
 
           return (
             <div
-              key={participant.identity}
-              className="rounded-lg border border-white/10 bg-white/5 p-3"
+              key={participant.id}
+              className="rounded-lg border border-border bg-background/60 p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-3">
@@ -154,28 +100,44 @@ export default function ParticipantsPanel({ raisedHands: raisedHandsFromRoom }: 
                     >
                       {initials}
                     </div>
-                    {raisedHands[participant.identity] && (
+                    {raisedHands[participant.id] ? (
                       <span
-                        className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-yellow-400 text-black text-xs flex items-center justify-center shadow"
+                        className="absolute -top-1 -right-1 h-5 w-5 rounded-full border border-yellow-100/40 bg-yellow-200/45 text-yellow-900 text-xs flex items-center justify-center shadow backdrop-blur-md"
                         title="Hand raised"
                       >
-                        ✋
+                        {"\u270B"}
                       </span>
-                    )}
+                    ) : null}
                   </div>
-                  <p className="text-sm font-medium truncate">{displayName}</p>
+                  <p className="text-sm font-medium truncate">
+                    {participant.name}
+                    {participant.isLocal ? " (You)" : ""}
+                  </p>
                 </div>
                 <span
                   className={`h-2.5 w-2.5 rounded-full ${
-                    isSpeaking ? "bg-emerald-400 animate-pulse" : "bg-slate-500"
+                    participant.isSpeaking ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/60"
                   }`}
-                  title={isSpeaking ? "Speaking" : "Not speaking"}
+                  title={participant.isSpeaking ? "Speaking" : "Not speaking"}
                 />
               </div>
 
-              <div className="mt-2 flex items-center gap-2 text-slate-300">
-                {hasMic ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                {hasCamera ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
+              <div className="mt-2 flex items-center gap-2 text-muted-foreground">
+                {participant.micEnabled ? (
+                  <Mic className="h-4 w-4" />
+                ) : (
+                  <MicOff className="h-4 w-4 text-red-400" />
+                )}
+                {participant.cameraEnabled ? (
+                  <Video className="h-4 w-4" />
+                ) : (
+                  <VideoOff className="h-4 w-4 text-red-400" />
+                )}
+                {participant.screenShareEnabled ? (
+                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                    Sharing
+                  </span>
+                ) : null}
               </div>
             </div>
           );
