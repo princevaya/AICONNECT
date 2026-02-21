@@ -15,6 +15,8 @@ export default function MeetingPage() {
   const [participantName, setParticipantName] = useState("");
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const [videoDeviceId, setVideoDeviceId] = useState<string | undefined>(undefined);
+  const [audioDeviceId, setAudioDeviceId] = useState<string | undefined>(undefined);
 
   const meetingCode = params.code as string;
 
@@ -29,20 +31,25 @@ export default function MeetingPage() {
     name: string,
     roomName?: string,
     video?: boolean,
-    audio?: boolean
+    audio?: boolean,
+    selectedVideoDeviceId?: string,
+    selectedAudioDeviceId?: string
   ) => {
-    // Use authenticated user's name instead of provided name
-    const userName =
+    const fallbackName =
       user?.fullName || user?.firstName || user?.username || "User";
-    setParticipantName(userName);
+    setParticipantName(name.trim() || fallbackName);
     setVideoEnabled(video ?? true);
     setAudioEnabled(audio ?? true);
+    setVideoDeviceId(selectedVideoDeviceId);
+    setAudioDeviceId(selectedAudioDeviceId);
     setHasJoined(true);
   };
 
   const handleLeave = () => {
     setHasJoined(false);
     setParticipantName("");
+    setVideoDeviceId(undefined);
+    setAudioDeviceId(undefined);
     router.push("/dashboard");
   };
 
@@ -71,6 +78,8 @@ export default function MeetingPage() {
           participantName={participantName}
           videoEnabled={videoEnabled}
           audioEnabled={audioEnabled}
+          videoDeviceId={videoDeviceId}
+          audioDeviceId={audioDeviceId}
           onLeave={handleLeave}
         />
       )}

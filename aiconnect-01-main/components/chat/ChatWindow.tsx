@@ -28,6 +28,7 @@ type ChatMessage = {
   poll: PollData | null;
   file: { id: string; name: string; fileType: string; fileSize: number; downloadUrl: string } | null;
 };
+type EditHistoryEntry = { content: string; editedAt: string; editedByName: string };
 
 type ChatWireMessage =
   | { type: "chat"; message: ChatMessage }
@@ -98,6 +99,10 @@ function applyPollVote(poll: PollData, optionId: string, voter: ChatUser) {
   return { ...poll, options: nextOptions };
 }
 
+function extractLinksFromText(text: string) {
+  return text.match(/https?:\/\/[^\s)]+/g) ?? [];
+}
+
 export default function ChatWindow({
   roomId,
   isOpen = true,
@@ -140,6 +145,13 @@ export default function ChatWindow({
   const [mentionQuery, setMentionQuery] = useState("");
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [editHistoryByMessage, setEditHistoryByMessage] = useState<
+    Record<string, EditHistoryEntry[]>
+  >({});
+  const [expandedEditHistoryId, setExpandedEditHistoryId] = useState<string | null>(null);
+  const [pinnedResourcesTab, setPinnedResourcesTab] = useState<
+    "messages" | "files" | "links"
+  >("messages");
 
   const meId = useMemo(
     () => participantId || user?.id || fallbackIdRef.current,
@@ -170,6 +182,54 @@ export default function ChatWindow({
     if (!q) return messages;
     return messages.filter((entry) => (`${entry.content} ${entry.file?.name ?? ""} ${entry.senderName} ${entry.poll ? `${entry.poll.question} ${entry.poll.options.map((o) => o.text).join(" ")}` : ""}`).toLowerCase().includes(q));
   }, [messages, searchQuery]);
+  const threadedMessages = useMemo(() => {
+    const sorted = [...filteredMessages].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const byParent = new Map<string, ChatMessage[]>();
+    const idSet = new Set(sorted.map((entry) => entry.id));
+    const roots: ChatMessage[] = [];
+
+    for (const entry of sorted) {
+      if (entry.replyToId && idSet.has(entry.replyToId)) {
+        const current = byParent.get(entry.replyToId) ?? [];
+        current.push(entry);
+        byParent.set(entry.replyToId, current);
+      } else {
+        roots.push(entry);
+      }
+    }
+
+    const ordered: Array<{ entry: ChatMessage; depth: number }> = [];
+    const walk = (entry: ChatMessage, depth: number) => {
+      ordered.push({ entry, depth });
+      const children = byParent.get(entry.id) ?? [];
+      for (const child of children) {
+        walk(child, Math.min(depth + 1, 3));
+      }
+    };
+
+    for (const root of roots) {
+      walk(root, 0);
+    }
+    return ordered;
+  }, [filteredMessages]);
+  const pinnedFiles = useMemo(
+    () => pinnedMessages.filter((entry) => Boolean(entry.file)),
+    [pinnedMessages]
+  );
+  const pinnedLinks = useMemo(
+    () =>
+      pinnedMessages.flatMap((entry) =>
+        extractLinksFromText(entry.content).map((url) => ({
+          id: `${entry.id}:${url}`,
+          messageId: entry.id,
+          senderName: entry.senderName,
+          url,
+        }))
+      ),
+    [pinnedMessages]
+  );
   const mentionCandidates = useMemo(() => {
     const base = [
       { token: "all", label: "All participants" },
@@ -265,6 +325,20 @@ export default function ChatWindow({
           return;
         }
         if (parsed.type === "edit") {
+          const existing = messageMap.get(parsed.messageId);
+          if (existing && existing.content !== parsed.content) {
+            setEditHistoryByMessage((prev) => ({
+              ...prev,
+              [parsed.messageId]: [
+                {
+                  content: existing.content,
+                  editedAt: parsed.editedAt,
+                  editedByName: existing.senderName,
+                },
+                ...(prev[parsed.messageId] ?? []),
+              ],
+            }));
+          }
           setMessages((prev) => prev.map((entry) => (entry.id === parsed.messageId ? { ...entry, content: parsed.content, editedAt: parsed.editedAt } : entry)));
           return;
         }
@@ -350,7 +424,7 @@ export default function ChatWindow({
       Object.values(typingExpiryRef.current).forEach(clearTimeout);
       typingExpiryRef.current = {};
     };
-  }, [me, meId, meName, publishData, isOpen, notifyMention, roomId]);
+  }, [isOpen, me, meId, meName, messageMap, notifyMention, publishData, roomId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -542,6 +616,20 @@ export default function ChatWindow({
     const newContent = editingContent.trim();
     if (!newContent) return;
     const editedAt = new Date().toISOString();
+    const existing = messages.find((entry) => entry.id === editingMessageId);
+    if (existing && existing.content !== newContent) {
+      setEditHistoryByMessage((prev) => ({
+        ...prev,
+        [editingMessageId]: [
+          {
+            content: existing.content,
+            editedAt,
+            editedByName: existing.senderName,
+          },
+          ...(prev[editingMessageId] ?? []),
+        ],
+      }));
+    }
     await publishData({ type: "edit", messageId: editingMessageId, editedBy: meId, content: newContent, editedAt });
     setMessages((prev) => prev.map((entry) => (entry.id === editingMessageId ? { ...entry, content: newContent, editedAt } : entry)));
     setEditingMessageId(null);
@@ -600,14 +688,33 @@ export default function ChatWindow({
       {error ? <p className="bg-red-500/10 px-4 py-2 text-xs text-red-600 dark:text-red-300">{error}</p> : null}
       {pinnedMessages.length > 0 ? (
         <div className="border-b border-border bg-muted/40 px-2 py-2 sm:px-4">
-          <p className="mb-1 text-xs font-semibold text-muted-foreground">Pinned</p>
-          <div className="space-y-1 max-h-24 overflow-y-auto">
-            {pinnedMessages.map((entry) => (
-              <button key={`pin-${entry.id}`} type="button" onClick={() => document.getElementById(`msg-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="w-full rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
-                <span className="font-semibold mr-1">{entry.senderName}:</span>
-                <span className="truncate inline-block max-w-[16rem] align-bottom">{entry.content || entry.file?.name || "(poll)"}</span>
+          <div className="mb-2 flex items-center gap-2">
+            <p className="text-xs font-semibold text-muted-foreground">Pinned Resources</p>
+            <div className="ml-auto flex items-center gap-1 rounded-md border border-border bg-card p-1">
+              <button type="button" onClick={() => setPinnedResourcesTab("messages")} className={`rounded px-2 py-0.5 text-[11px] ${pinnedResourcesTab === "messages" ? "bg-accent text-accent-foreground" : "text-muted-foreground"}`}>Messages</button>
+              <button type="button" onClick={() => setPinnedResourcesTab("files")} className={`rounded px-2 py-0.5 text-[11px] ${pinnedResourcesTab === "files" ? "bg-accent text-accent-foreground" : "text-muted-foreground"}`}>Files</button>
+              <button type="button" onClick={() => setPinnedResourcesTab("links")} className={`rounded px-2 py-0.5 text-[11px] ${pinnedResourcesTab === "links" ? "bg-accent text-accent-foreground" : "text-muted-foreground"}`}>Links</button>
+            </div>
+          </div>
+          <div className="max-h-28 space-y-1 overflow-y-auto">
+            {pinnedResourcesTab === "messages" ? pinnedMessages.map((entry) => (
+              <button key={`pin-msg-${entry.id}`} type="button" onClick={() => document.getElementById(`msg-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="w-full rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
+                <span className="mr-1 font-semibold">{entry.senderName}:</span>
+                <span className="inline-block max-w-[16rem] truncate align-bottom">{entry.content || entry.file?.name || "(poll)"}</span>
               </button>
-            ))}
+            )) : null}
+            {pinnedResourcesTab === "files" ? pinnedFiles.map((entry) => (
+              <button key={`pin-file-${entry.id}`} type="button" onClick={() => document.getElementById(`msg-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="w-full rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
+                <span className="mr-1 font-semibold">{entry.senderName}:</span>
+                <span>{entry.file?.name}</span>
+              </button>
+            )) : null}
+            {pinnedResourcesTab === "links" ? pinnedLinks.map((entry) => (
+              <div key={entry.id} className="w-full rounded border border-border bg-card px-2 py-1 text-xs">
+                <p className="mb-1 font-semibold">{entry.senderName}</p>
+                <a href={entry.url} target="_blank" rel="noreferrer" className="break-all text-blue-600 hover:underline dark:text-blue-300">{entry.url}</a>
+              </div>
+            )) : null}
           </div>
         </div>
       ) : null}
@@ -615,13 +722,13 @@ export default function ChatWindow({
       <div className="flex-1 overflow-x-hidden overflow-y-auto px-2 py-3 space-y-3 md:px-3 md:py-4">
         {!isLoaded ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading chat...</div> : null}
 
-        {filteredMessages.map((entry) => {
+        {threadedMessages.map(({ entry, depth }) => {
           const isMine = entry.senderId === meId;
           const replyTarget = entry.replyToId ? messageMap.get(entry.replyToId) : null;
           const hasDeleted = Boolean(entry.deletedAt);
 
           return (
-            <div id={`msg-${entry.id}`} key={entry.id} className={`flex min-w-0 ${isMine ? "justify-end" : "justify-start"}`}>
+            <div id={`msg-${entry.id}`} key={entry.id} className={`flex min-w-0 ${isMine ? "justify-end" : "justify-start"}`} style={{ marginLeft: `${depth * 16}px` }}>
               <div className={`min-w-0 max-w-[98%] rounded-2xl px-2.5 py-2 shadow-sm sm:max-w-[92%] sm:px-3 md:max-w-[82%] ${isMine ? "bg-blue-600 text-white" : "bg-card text-card-foreground border border-border"}`}>
                 <div className="flex items-center justify-between gap-3 mb-1">
                   <p className={`text-[11px] ${isMine ? "text-blue-100" : "text-muted-foreground"}`}>{entry.senderName}</p>
@@ -662,25 +769,50 @@ export default function ChatWindow({
                   {entry.recipients ? <span>Private message</span> : null}
                   {hasDeleted ? <span>Deleted</span> : null}
                   {isMine && entry.seenBy.length > 1 ? <span>Seen by {entry.seenBy.filter((u) => u.id !== meId).map((u) => u.name).join(", ")}</span> : null}
+                  {editHistoryByMessage[entry.id]?.length ? (
+                    <button
+                      type="button"
+                      className={`underline ${isMine ? "text-blue-100" : "text-muted-foreground"}`}
+                      onClick={() =>
+                        setExpandedEditHistoryId((prev) => (prev === entry.id ? null : entry.id))
+                      }
+                    >
+                      {expandedEditHistoryId === entry.id ? "Hide" : "View"} history ({editHistoryByMessage[entry.id].length})
+                    </button>
+                  ) : null}
                 </div>
+                {expandedEditHistoryId === entry.id && editHistoryByMessage[entry.id]?.length ? (
+                  <div className={`mt-2 rounded border px-2 py-1 text-xs ${isMine ? "border-blue-300/40 bg-blue-500/30" : "border-border bg-muted/40"}`}>
+                    {editHistoryByMessage[entry.id].map((history, index) => (
+                      <div key={`${entry.id}-history-${index}`} className="mb-1 last:mb-0">
+                        <p className="font-semibold">{history.editedByName} • {formatTime(history.editedAt)}</p>
+                        <p className="whitespace-pre-wrap">{history.content || "(empty)"}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1 flex-wrap">
                     {REACTION_OPTIONS.map((option) => {
-                      const count = entry.reactions[option.key]?.length ?? 0;
+                      const users = entry.reactions[option.key] ?? [];
+                      const count = users.length;
                       if (count <= 0) return null;
+                      const namesPreview = users.slice(0, 2).map((u) => u.name).join(", ");
+                      const moreCount = count > 2 ? ` +${count - 2}` : "";
                       return (
                         <span
                           key={`${entry.id}-summary-${option.key}`}
                           className={`rounded-full px-2 py-0.5 text-[11px] border ${isMine ? "border-blue-200/40 bg-blue-500/30 text-white" : "border-border bg-muted/40 text-foreground"}`}
+                          title={`${option.emoji} ${count}: ${users.map((u) => u.name).join(", ")}`}
                         >
-                          {option.emoji} {count}
+                          {option.emoji} {count}{namesPreview ? ` • ${namesPreview}${moreCount}` : ""}
                         </span>
                       );
                     })}
                   </div>
 
-                  <div className="flex max-w-full items-center gap-1 overflow-x-auto pb-1">
+                  <div className="flex max-w-full items-center gap-1 flex-wrap">
                     {!hasDeleted ? (
                       <>
                         <Button type="button" variant="ghost" size="sm" className={`h-8 px-2 ${isMine ? "text-white hover:bg-blue-700" : ""}`} onClick={() => setReplyToId(entry.id)}>
@@ -720,7 +852,7 @@ export default function ChatWindow({
                       </Button>
                     )}
 
-                    <div className="relative">
+                    <div className="relative z-20">
                       <Button
                         type="button"
                         variant="ghost"
@@ -732,18 +864,19 @@ export default function ChatWindow({
                       </Button>
 
                     {openMenuMessageId === entry.id ? (
-                      <div className="absolute right-0 z-30 mt-1 w-44 rounded-md border border-border bg-card p-2 text-card-foreground shadow-lg sm:w-48 md:w-52">
+                      <div className="absolute bottom-full right-0 z-40 mb-2 w-44 rounded-md border border-border bg-card p-2 text-card-foreground shadow-lg sm:w-48 md:w-52">
                         {!hasDeleted ? (
                           <>
-                            <p className="px-2 py-1 text-[11px] text-muted-foreground">Reactions</p>
-                            <div className="flex items-center gap-1 overflow-x-auto">
+                            <p className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">Quick Reactions</p>
+                            <div className="grid grid-cols-5 gap-1">
                               {REACTION_OPTIONS.map((option) => (
                                 <Button
                                   key={`${entry.id}-menu-${option.key}`}
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 w-8 p-0"
+                                  className="h-8 w-8 p-0 text-base"
+                                  title={option.key}
                                   onClick={() => { void toggleReaction(entry.id, option.key); setOpenMenuMessageId(null); }}
                                 >
                                   {option.emoji}

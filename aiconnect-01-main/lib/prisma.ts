@@ -6,6 +6,12 @@ const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
   throw new Error("DATABASE_URL must be set.");
 }
+const isSupabaseConnection = /supabase\.co/i.test(connectionString);
+const forceSsl =
+  isSupabaseConnection ||
+  process.env.NODE_ENV === "production" ||
+  /sslmode=require/i.test(connectionString) ||
+  process.env.PGSSLMODE === "require";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
@@ -17,7 +23,7 @@ const pool =
   new Pool({
     connectionString,
     max: 10,
-    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : undefined,
+    ssl: forceSsl ? { rejectUnauthorized: false } : undefined,
   });
 
 const adapter = new PrismaPg(pool);

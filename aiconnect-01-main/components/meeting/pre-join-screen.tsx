@@ -23,7 +23,7 @@ export default function PreJoinScreen({
   onJoin,
   meetingCode,
 }: PreJoinScreenProps) {
-  const participantName = "User"; // Replaced by authenticated user name before join
+  const [participantName, setParticipantName] = useState("");
   const [roomName, setRoomName] = useState(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -322,6 +322,11 @@ export default function PreJoinScreen({
   };
 
   const handleJoinMeeting = () => {
+    if (!participantName.trim()) {
+      alert("Please enter your display name");
+      return;
+    }
+
     if (!roomName.trim()) {
       alert("Please enter room code");
       return;
@@ -443,6 +448,16 @@ export default function PreJoinScreen({
                 <CardTitle className="text-lg">Join Meeting</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="name">Display Name</Label>
+                  <Input
+                    id="name"
+                    placeholder="Enter your name"
+                    value={participantName}
+                    onChange={(e) => setParticipantName(e.target.value)}
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="room">Room Code</Label>
                   <Input

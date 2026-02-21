@@ -22,12 +22,13 @@ export async function GET(req: NextRequest) {
     const room = req.nextUrl.searchParams.get("room");
     const username = req.nextUrl.searchParams.get("username");
     const session = req.nextUrl.searchParams.get("session");
-    console.log("Request params - room:", room, "username:", username, "session:", session);
+    const join = req.nextUrl.searchParams.get("join");
+    console.log("Request params - room:", room, "username:", username, "session:", session, "join:", join);
 
-    if (!room || !username || !session) {
-      console.error("Missing parameters - room:", room, "username:", username, "session:", session);
+    if (!room || !username || !session || !join) {
+      console.error("Missing parameters - room:", room, "username:", username, "session:", session, "join:", join);
       return NextResponse.json(
-        { error: "Missing room, username, or session" },
+        { error: "Missing room, username, session, or join" },
         { status: 400 }
       );
     }
@@ -35,6 +36,12 @@ export async function GET(req: NextRequest) {
     if (!/^[a-zA-Z0-9-]{8,128}$/.test(session)) {
       return NextResponse.json(
         { error: "Invalid session format" },
+        { status: 400 }
+      );
+    }
+    if (!/^[a-zA-Z0-9-]{8,128}$/.test(join)) {
+      return NextResponse.json(
+        { error: "Invalid join format" },
         { status: 400 }
       );
     }
@@ -52,7 +59,7 @@ export async function GET(req: NextRequest) {
 
     // Stable per-browser-tab identity avoids duplicate ghosts on reconnect
     // without force-kicking another active tab for the same user.
-    const sessionIdentity = `${userId}:${session}`;
+    const sessionIdentity = `${userId}:${session}:${join}`;
 
     const token = new AccessToken(apiKey, apiSecret, {
       identity: sessionIdentity,
