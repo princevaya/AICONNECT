@@ -467,6 +467,9 @@ export default function MeetingRoom({
   const [localIdentity, setLocalIdentity] = useState<string>("");
 
   const roomRef = useRef<Room | null>(null);
+  const intentionalLeaveRef = useRef(false);
+  const desiredCameraEnabledRef = useRef(Boolean(videoEnabled));
+  const desiredMicEnabledRef = useRef(Boolean(audioEnabled));
   const whiteboardLastPublishAtRef = useRef(0);
   const notesAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actionsAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -478,6 +481,14 @@ export default function MeetingRoom({
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
   const displayName = useMemo(() => participantName || "User", [participantName]);
+
+  useEffect(() => {
+    desiredCameraEnabledRef.current = Boolean(videoEnabled);
+  }, [videoEnabled]);
+
+  useEffect(() => {
+    desiredMicEnabledRef.current = Boolean(audioEnabled);
+  }, [audioEnabled]);
 
   const refreshParticipants = useCallback(() => {
     const room = roomRef.current;
@@ -545,15 +556,143 @@ export default function MeetingRoom({
       return;
     }
 
+    intentionalLeaveRef.current = false;
     const room = new Room({ adaptiveStream: true, dynacast: true });
     roomRef.current = room;
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 8;
+    const RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 12000];
+
+    const getSessionId = () => {
+      const key = "aiconnect_livekit_session_id";
+      const existing =
+        typeof window !== "undefined" ? window.sessionStorage.getItem(key) : null;
+      if (existing) return existing;
+      const created =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(key, created);
+      }
+      return created;
+    };
+
+    const fetchToken = async () => {
+      const tokenRes = await fetch(
+        `/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(
+          displayName
+        )}&session=${encodeURIComponent(getSessionId())}&join=${encodeURIComponent(
+          joinSessionIdRef.current
+        )}`,
+        { cache: "no-store" }
+      );
+      const tokenBody = (await tokenRes.json()) as { token?: string; error?: string };
+      if (!tokenRes.ok || !tokenBody.token) {
+        throw new Error(tokenBody.error || "Failed to get meeting token.");
+      }
+      return tokenBody.token;
+    };
+
+    const connectToRoom = async (isReconnect = false) => {
+      if (disposed || intentionalLeaveRef.current) return;
+      try {
+        if (!isReconnect) {
+          setIsLoading(true);
+        }
+        setConnectionStatus("connecting");
+        setMediaError("");
+        const token = await fetchToken();
+        if (disposed || intentionalLeaveRef.current) return;
+
+        await room.connect(livekitUrl, token, { autoSubscribe: true });
+        reconnectAttempts = 0;
+        setLocalIdentity(userKeyFromIdentity(room.localParticipant.identity));
+
+        if (desiredCameraEnabledRef.current) {
+          await room.localParticipant.setCameraEnabled(
+            true,
+            videoDeviceId ? ({ deviceId: videoDeviceId } as never) : undefined
+          );
+        }
+        if (desiredMicEnabledRef.current) {
+          await room.localParticipant.setMicrophoneEnabled(
+            true,
+            audioDeviceId ? ({ deviceId: audioDeviceId } as never) : undefined
+          );
+        }
+
+        setConnectionStatus("connected");
+        refreshParticipants();
+      } catch (error) {
+        if (disposed || intentionalLeaveRef.current) return;
+        const message = error instanceof Error ? error.message : "Failed to join meeting.";
+        setMediaError(message);
+        setConnectionStatus("disconnected");
+        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+          const delay =
+            RECONNECT_DELAYS_MS[
+              Math.min(reconnectAttempts, RECONNECT_DELAYS_MS.length - 1)
+            ];
+          reconnectAttempts += 1;
+          if (!reconnectTimer) {
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              void connectToRoom(true);
+            }, delay);
+          }
+        } else {
+          setMediaError(
+            "Connection lost repeatedly. Please check network and rejoin meeting."
+          );
+        }
+      } finally {
+        if (!isReconnect) {
+          setIsLoading(false);
+        }
+      }
+    };
 
     const handleRoomUpdate = () => {
       setConnectionStatus(mapConnectionState(room.state));
       refreshParticipants();
     };
 
-    room.on(RoomEvent.ConnectionStateChanged, handleRoomUpdate);
+    const handleConnectionStateChanged = (state: ConnectionState) => {
+      setConnectionStatus(mapConnectionState(state));
+      refreshParticipants();
+
+      if (state === ConnectionState.Connected) {
+        reconnectAttempts = 0;
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        return;
+      }
+
+      if (
+        state === ConnectionState.Disconnected &&
+        !disposed &&
+        !intentionalLeaveRef.current &&
+        reconnectAttempts < MAX_RECONNECT_ATTEMPTS &&
+        !reconnectTimer
+      ) {
+        const delay =
+          RECONNECT_DELAYS_MS[
+            Math.min(reconnectAttempts, RECONNECT_DELAYS_MS.length - 1)
+          ];
+        reconnectAttempts += 1;
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          void connectToRoom(true);
+        }, delay);
+      }
+    };
+
+    room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
     room.on(RoomEvent.ParticipantConnected, handleRoomUpdate);
     room.on(RoomEvent.ParticipantDisconnected, handleRoomUpdate);
     room.on(RoomEvent.TrackSubscribed, handleRoomUpdate);
@@ -771,64 +910,16 @@ export default function MeetingRoom({
       }
     });
 
-    const init = async () => {
-      try {
-        setIsLoading(true);
-        setConnectionStatus("connecting");
-        setMediaError("");
-
-        const tokenRes = await fetch(
-          `/api/livekit/token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(
-            displayName
-          )}&session=${encodeURIComponent(
-            (() => {
-              const key = "aiconnect_livekit_session_id";
-              const existing =
-                typeof window !== "undefined" ? window.sessionStorage.getItem(key) : null;
-              if (existing) return existing;
-              const created =
-                typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-                  ? crypto.randomUUID()
-                  : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-              if (typeof window !== "undefined") {
-                window.sessionStorage.setItem(key, created);
-              }
-              return created;
-            })()
-          )}&join=${encodeURIComponent(
-            joinSessionIdRef.current
-          )}`,
-          { cache: "no-store" }
-        );
-        const tokenBody = (await tokenRes.json()) as { token?: string; error?: string };
-        if (!tokenRes.ok || !tokenBody.token) {
-          throw new Error(tokenBody.error || "Failed to get meeting token.");
-        }
-
-        await room.connect(livekitUrl, tokenBody.token, { autoSubscribe: true });
-        setLocalIdentity(userKeyFromIdentity(room.localParticipant.identity));
-
-        if (videoEnabled) {
-          await room.localParticipant.setCameraEnabled(true, videoDeviceId ? ({ deviceId: videoDeviceId } as never) : undefined);
-        }
-        if (audioEnabled) {
-          await room.localParticipant.setMicrophoneEnabled(true, audioDeviceId ? ({ deviceId: audioDeviceId } as never) : undefined);
-        }
-
-        handleRoomUpdate();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to join meeting.";
-        setMediaError(message);
-        setConnectionStatus("disconnected");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void init();
+    void connectToRoom();
 
     return () => {
-      room.off(RoomEvent.ConnectionStateChanged, handleRoomUpdate);
+      disposed = true;
+      intentionalLeaveRef.current = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
       room.off(RoomEvent.ParticipantConnected, handleRoomUpdate);
       room.off(RoomEvent.ParticipantDisconnected, handleRoomUpdate);
       room.off(RoomEvent.TrackSubscribed, handleRoomUpdate);
@@ -844,7 +935,7 @@ export default function MeetingRoom({
       room.disconnect();
       roomRef.current = null;
     };
-  }, [audioDeviceId, audioEnabled, displayName, refreshParticipants, roomName, videoDeviceId, videoEnabled]);
+  }, [audioDeviceId, displayName, refreshParticipants, roomName, videoDeviceId]);
 
   const localParticipant = participants.find((participant) => participant.isLocal);
   const localCameraOn = Boolean(localParticipant?.cameraEnabled);
@@ -902,7 +993,12 @@ export default function MeetingRoom({
     const room = roomRef.current;
     if (!room) return;
     try {
-      await room.localParticipant.setCameraEnabled(!localCameraOn, !localCameraOn && videoDeviceId ? ({ deviceId: videoDeviceId } as never) : undefined);
+      const nextEnabled = !localCameraOn;
+      await room.localParticipant.setCameraEnabled(
+        nextEnabled,
+        nextEnabled && videoDeviceId ? ({ deviceId: videoDeviceId } as never) : undefined
+      );
+      desiredCameraEnabledRef.current = nextEnabled;
       refreshParticipants();
     } catch (error) {
       setMediaError(error instanceof Error ? error.message : "Unable to toggle camera.");
@@ -913,7 +1009,12 @@ export default function MeetingRoom({
     const room = roomRef.current;
     if (!room) return;
     try {
-      await room.localParticipant.setMicrophoneEnabled(!localMicOn, !localMicOn && audioDeviceId ? ({ deviceId: audioDeviceId } as never) : undefined);
+      const nextEnabled = !localMicOn;
+      await room.localParticipant.setMicrophoneEnabled(
+        nextEnabled,
+        nextEnabled && audioDeviceId ? ({ deviceId: audioDeviceId } as never) : undefined
+      );
+      desiredMicEnabledRef.current = nextEnabled;
       refreshParticipants();
     } catch (error) {
       setMediaError(error instanceof Error ? error.message : "Unable to toggle microphone.");
@@ -2633,6 +2734,7 @@ export default function MeetingRoom({
 
           <button
             onClick={() => {
+              intentionalLeaveRef.current = true;
               roomRef.current?.disconnect();
               onLeave();
             }}
