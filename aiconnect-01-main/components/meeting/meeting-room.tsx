@@ -78,6 +78,7 @@ type ParticipantView = ParticipantEntry & {
   cameraTrack?: Track;
   screenTrack?: Track;
   micTrack?: Track;
+  isRecording?: boolean;
 };
 
 type MeetingRealtimeEvent =
@@ -246,6 +247,7 @@ function buildParticipantView(
     micEnabled: Boolean(micPub && !micPub.isMuted),
     cameraEnabled: Boolean(cameraPub && !cameraPub.isMuted),
     screenShareEnabled: Boolean(screenPub && !screenPub.isMuted),
+    isRecording: participant.attributes?.aiconnect_recording === "1",
     cameraTrack: trackFromPublication(cameraPub, Track.Kind.Video),
     screenTrack: trackFromPublication(screenPub, Track.Kind.Video),
     micTrack: trackFromPublication(micPub, Track.Kind.Audio),
@@ -521,6 +523,22 @@ export default function MeetingRoom({
     setParticipants(Array.from(deduped.values()));
   }, [displayName]);
 
+  const setLocalRecordingAttribute = useCallback(
+    async (isRecording: boolean) => {
+      const room = roomRef.current;
+      if (!room?.localParticipant) return;
+      try {
+        await room.localParticipant.setAttributes({
+          aiconnect_recording: isRecording ? "1" : "0",
+        });
+        refreshParticipants();
+      } catch {
+        // Ignore attribute sync errors; recording itself should keep working.
+      }
+    },
+    [refreshParticipants]
+  );
+
   const publishRoomEvent = useCallback(
     async (event: MeetingRealtimeEvent, options?: { reliable?: boolean }) => {
     const room = roomRef.current;
@@ -610,6 +628,11 @@ export default function MeetingRoom({
         await room.connect(livekitUrl, token, { autoSubscribe: true });
         reconnectAttempts = 0;
         setLocalIdentity(userKeyFromIdentity(room.localParticipant.identity));
+        try {
+          await room.localParticipant.setAttributes({ aiconnect_recording: "0" });
+        } catch {
+          // Some deployments may not grant metadata updates; do not block join.
+        }
 
         if (desiredCameraEnabledRef.current) {
           await room.localParticipant.setCameraEnabled(
@@ -705,6 +728,7 @@ export default function MeetingRoom({
     room.on(RoomEvent.TrackUnmuted, handleRoomUpdate);
     room.on(RoomEvent.ActiveSpeakersChanged, handleRoomUpdate);
     room.on(RoomEvent.ParticipantNameChanged, handleRoomUpdate);
+    room.on(RoomEvent.ParticipantAttributesChanged, handleRoomUpdate);
     room.on(RoomEvent.ParticipantDisconnected, (participant) => {
       setRaisedHands((prev) => {
         if (!(participant.identity in prev)) return prev;
@@ -932,6 +956,7 @@ export default function MeetingRoom({
       room.off(RoomEvent.TrackUnmuted, handleRoomUpdate);
       room.off(RoomEvent.ActiveSpeakersChanged, handleRoomUpdate);
       room.off(RoomEvent.ParticipantNameChanged, handleRoomUpdate);
+      room.off(RoomEvent.ParticipantAttributesChanged, handleRoomUpdate);
       room.disconnect();
       roomRef.current = null;
     };
@@ -941,6 +966,10 @@ export default function MeetingRoom({
   const localCameraOn = Boolean(localParticipant?.cameraEnabled);
   const localMicOn = Boolean(localParticipant?.micEnabled);
   const localScreenOn = Boolean(localParticipant?.screenShareEnabled);
+  const activeRecordingParticipant = participants.find(
+    (participant) => participant.isRecording
+  );
+  const activeRecordingName = activeRecordingParticipant?.name || "";
   const whiteboardActive = Boolean(whiteboardControllerId);
   const canEditWhiteboard = Boolean(
     localIdentity &&
@@ -1542,12 +1571,13 @@ export default function MeetingRoom({
       }
       setRecordingEgressId(payload.egressId);
       setRecordingState("recording");
+      void setLocalRecordingAttribute(true);
       setRecordingMessage(payload.message || "Recording started.");
     } catch (error) {
       setRecordingState("idle");
       setRecordingMessage(error instanceof Error ? error.message : "Failed to start recording.");
     }
-  }, [recordingState, roomName]);
+  }, [recordingState, roomName, setLocalRecordingAttribute]);
 
   const stopRecording = useCallback(async () => {
     if (!recordingEgressId || recordingState !== "recording") return;
@@ -1607,12 +1637,13 @@ export default function MeetingRoom({
 
       setRecordingState("idle");
       setRecordingEgressId("");
+      void setLocalRecordingAttribute(false);
       setRecordingMessage("Recording stopped and metadata saved to S3.");
     } catch (error) {
       setRecordingState("recording");
       setRecordingMessage(error instanceof Error ? error.message : "Failed to stop recording.");
     }
-  }, [recordingEgressId, recordingState, roomName]);
+  }, [recordingEgressId, recordingState, roomName, setLocalRecordingAttribute]);
 
   const buildSharedNotesJson = () =>
     JSON.stringify(
@@ -2529,7 +2560,21 @@ export default function MeetingRoom({
           >
             <X className="h-4 w-4" />
           </button>
-          <ParticipantsPanel participants={participants} raisedHands={raisedHands} />
+          <ParticipantsPanel
+            participants={participants.map((participant) =>
+              participant.isLocal
+                ? {
+                    ...participant,
+                    isRecording:
+                      Boolean(participant.isRecording) ||
+                      recordingState === "starting" ||
+                      recordingState === "recording" ||
+                      recordingState === "stopping",
+                  }
+                : participant
+            )}
+            raisedHands={raisedHands}
+          />
         </div>
 
         <div
@@ -2746,6 +2791,11 @@ export default function MeetingRoom({
           </button>
         </div>
       </div>
+      {activeRecordingName ? (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-xs text-white">
+          🔴 {activeRecordingName} is recording
+        </div>
+      ) : null}
       {recordingMessage ? (
         <div className="pointer-events-none absolute bottom-[5.8rem] left-1/2 z-40 -translate-x-1/2 rounded-md bg-black/65 px-3 py-1 text-xs text-white">
           {recordingMessage}

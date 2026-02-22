@@ -112,7 +112,8 @@ export async function POST(req: NextRequest) {
 
     const fileOutput = buildFileOutput(roomName);
     const info = await client.startRoomCompositeEgress(roomName, fileOutput, {
-      layout: "grid",
+      // Speaker layout records shared content together with participant context.
+      layout: "speaker",
       encodingOptions: EncodingOptionsPreset.H264_1080P_30,
       // Ensure we capture both audio and video (explicitly set)
       audioOnly: false,

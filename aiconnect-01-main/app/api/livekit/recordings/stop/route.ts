@@ -26,10 +26,16 @@ export async function POST(req: NextRequest) {
   const client = getEgressClient();
 
   try {
-    // 1️⃣ Send stop signal (does NOT finalize yet)
-    await client.stopEgress(egressId);
+    // If already terminal (e.g. ABORTED), stopEgress can return precondition.
+    // Treat this as already stopped and continue with status polling.
+    try {
+      await client.stopEgress(egressId);
+    } catch (error) {
+      if (!isAlreadyStoppedError(error)) {
+        throw error;
+      }
+    }
 
-    // 2️⃣ Wait until LiveKit finishes encoding & upload
     const finalInfo = await waitForTerminalEgress(client, egressId);
 
     if (!finalInfo) {
@@ -52,8 +58,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ---------- helpers ---------- */
-
 function formatEgressResponse(info: EgressInfo) {
   return {
     egressId: info.egressId,
@@ -65,7 +69,6 @@ function formatEgressResponse(info: EgressInfo) {
 async function waitForTerminalEgress(
   client: ReturnType<typeof getEgressClient>,
   egressId: string,
-  // Increase timeout to allow LiveKit time to finish encodes and S3 uploads
   timeoutMs = 120_000
 ): Promise<EgressInfo | null> {
   const start = Date.now();
@@ -84,9 +87,26 @@ async function waitForTerminalEgress(
       return info;
     }
 
-    // wait before polling again
     await new Promise((r) => setTimeout(r, 2000));
   }
 
   return null;
+}
+
+function isAlreadyStoppedError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const maybe = error as { status?: number; code?: string; message?: string };
+
+  if (maybe.status === 412) return true;
+  if (typeof maybe.code === "string") {
+    if (maybe.code.toLowerCase() === "failed_precondition") return true;
+  }
+  if (typeof maybe.message === "string") {
+    const msg = maybe.message.toLowerCase();
+    if (msg.includes("cannot be stopped") || msg.includes("egress_aborted")) {
+      return true;
+    }
+  }
+
+  return false;
 }
