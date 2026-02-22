@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { AppUser } from "@/services/user.service";
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024 * 1024; // 5 TB
-const STORAGE_ROOT = path.join(process.cwd(), "storage", "uploads");
+const STORAGE_ROOT = path.join(process.cwd(), "storage", "meeting", "chats");
 const DOWNLOAD_TTL_SECONDS = 15 * 60;
 const FILE_URL_SECRET =
   process.env.FILE_URL_SECRET || process.env.CLERK_SECRET_KEY || "dev-file-secret";
@@ -77,7 +77,7 @@ async function writeFileToStorage(file: File) {
   const safeName = sanitizeFilename(path.basename(file.name, extension));
   const storedName = `${Date.now()}-${randomUUID()}-${safeName}${extension}`;
   const absolutePath = path.join(STORAGE_ROOT, storedName);
-  const relativePath = path.posix.join("storage", "uploads", storedName);
+  const relativePath = path.posix.join("storage", "meeting", "chats", storedName);
   const data = Buffer.from(await file.arrayBuffer());
   await fs.writeFile(absolutePath, data);
   return { relativePath, absolutePath };
@@ -98,7 +98,7 @@ async function writeFileToS3(file: File, context?: { roomCode?: string; uploader
   const safeObjectName = buildSafeObjectName(file.name);
   const roomSegment = context?.roomCode ? sanitizeFilename(context.roomCode) : "general";
   const uploaderSegment = context?.uploaderId ? sanitizeFilename(context.uploaderId) : "anonymous";
-  const key = `uploads/${new Date().toISOString().slice(0, 10)}/${roomSegment}/${uploaderSegment}/${Date.now()}-${randomUUID()}-${safeObjectName}`;
+  const key = `meeting/chats/${new Date().toISOString().slice(0, 10)}/${roomSegment}/${uploaderSegment}/${Date.now()}-${randomUUID()}-${safeObjectName}`;
   const body = Buffer.from(await file.arrayBuffer());
 
   await s3Client.send(

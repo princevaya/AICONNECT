@@ -9,6 +9,11 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
+  const s3Configured = Boolean(
+    process.env.AWS_ACCESS_KEY_ID &&
+      process.env.AWS_SECRET_ACCESS_KEY &&
+      process.env.AWS_S3_BUCKET
+  );
 
   try {
     if (!userId) {
@@ -36,8 +41,11 @@ export async function POST(req: NextRequest) {
         uploaderClerkId: userId,
       });
       return NextResponse.json({ file: directFile }, { status: 201 });
-    } catch {
-      // Continue with DB-backed flow when S3 direct path is unavailable.
+    } catch (directError) {
+      if (s3Configured) {
+        throw directError;
+      }
+      // Continue with DB-backed flow only when S3 is not configured.
     }
 
     const user = await ensureLocalUser(userId);
@@ -53,14 +61,24 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error("POST /api/chat/upload failed", error);
     const message = error instanceof Error ? error.message : "Upload failed";
+    const prismaCode =
+      typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code?: unknown }).code || "")
+        : "";
     const status =
       message.toLowerCase().includes("required") || message.toLowerCase().includes("allowed")
         ? 400
         : message.toLowerCase().includes("unauthorized")
           ? 401
+          : prismaCode === "P1001" || message.toLowerCase().includes("can't reach database server")
+            ? 503
           : message.toLowerCase().includes("authentication failed")
             ? 503
           : 500;
-    return NextResponse.json({ error: message }, { status });
+    const errorMessage =
+      prismaCode === "P1001"
+        ? "Database is unreachable. Use Supabase pooler URL in DATABASE_URL or enable direct S3 chat uploads."
+        : message;
+    return NextResponse.json({ error: errorMessage }, { status });
   }
 }
