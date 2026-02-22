@@ -454,6 +454,11 @@ export default function MeetingRoom({
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "connected" | "disconnected"
   >("connecting");
+  const [recordingState, setRecordingState] = useState<
+    "idle" | "starting" | "recording" | "stopping"
+  >("idle");
+  const [recordingEgressId, setRecordingEgressId] = useState<string>("");
+  const [recordingMessage, setRecordingMessage] = useState("");
   const [participants, setParticipants] = useState<ParticipantView[]>([]);
   const [raisedHands, setRaisedHands] = useState<Record<string, boolean>>({});
   const [code, setCode] = useState(`export default function App() {
@@ -854,6 +859,9 @@ export default function MeetingRoom({
   const activeScreenShareCount = participants.filter(
     (participant) => participant.screenShareEnabled
   ).length;
+  const otherActiveScreenShareCount = participants.filter(
+    (participant) => participant.screenShareEnabled && !participant.isLocal
+  ).length;
   const sharingParticipants = participants.filter((participant) => participant.screenTrack);
   const participantsForCameraStrip = participants;
   const [stripPage, setStripPage] = useState(0);
@@ -916,7 +924,9 @@ export default function MeetingRoom({
     const room = roomRef.current;
     if (!room) return;
     try {
-      if (!localScreenOn && activeScreenShareCount >= 2) {
+      // Enforce the 2-share limit only when user starts sharing.
+      // Do not auto-stop an active share during transient participant state changes.
+      if (!localScreenOn && otherActiveScreenShareCount >= 2) {
         setMediaError(
           "Maximum 2 participants can share screens at once. Ask one person to stop sharing."
         );
@@ -928,18 +938,7 @@ export default function MeetingRoom({
     } catch (error) {
       setMediaError(error instanceof Error ? error.message : "Unable to toggle screen sharing.");
     }
-  }, [activeScreenShareCount, localScreenOn, refreshParticipants]);
-
-  useEffect(() => {
-    const room = roomRef.current;
-    if (!room) return;
-    if (localScreenOn && activeScreenShareCount > 2) {
-      void room.localParticipant.setScreenShareEnabled(false);
-      setMediaError(
-        "Maximum 2 participants can share screens at once. Ask one person to stop sharing."
-      );
-    }
-  }, [activeScreenShareCount, localScreenOn]);
+  }, [localScreenOn, otherActiveScreenShareCount, refreshParticipants]);
 
   useEffect(() => {
     if (!showCaption) return;
@@ -1421,6 +1420,98 @@ export default function MeetingRoom({
     }
     return payload.url;
   };
+
+  const startRecording = useCallback(async () => {
+    if (recordingState !== "idle") return;
+    setRecordingState("starting");
+    setRecordingMessage("");
+    try {
+      const response = await fetch("/api/livekit/recordings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomName }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        egressId?: string;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok || !payload.egressId) {
+        throw new Error(payload.error || "Failed to start recording.");
+      }
+      setRecordingEgressId(payload.egressId);
+      setRecordingState("recording");
+      setRecordingMessage(payload.message || "Recording started.");
+    } catch (error) {
+      setRecordingState("idle");
+      setRecordingMessage(error instanceof Error ? error.message : "Failed to start recording.");
+    }
+  }, [recordingState, roomName]);
+
+  const stopRecording = useCallback(async () => {
+    if (!recordingEgressId || recordingState !== "recording") return;
+    setRecordingState("stopping");
+    setRecordingMessage("");
+    try {
+      const response = await fetch("/api/livekit/recordings/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ egressId: recordingEgressId }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        egressId?: string;
+        status?: string;
+        statusCode?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to stop recording.");
+      }
+
+      const listRes = await fetch(
+        `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
+        { cache: "no-store" }
+      );
+      const recordings = (await listRes.json().catch(() => [])) as Array<{
+        egressId: string;
+        roomName: string;
+        status: string;
+        startedAt?: number;
+        endedAt?: number;
+        durationSeconds?: number;
+        filename?: string;
+        sizeBytes?: number;
+        downloadUrl?: string | null;
+        streamUrl?: string | null;
+        storageLocation?: string;
+      }>;
+      const latest = recordings.find((entry) => entry.egressId === recordingEgressId);
+
+      const manifest = JSON.stringify(
+        {
+          room: roomName,
+          exportedAt: new Date().toISOString(),
+          recording: latest || payload,
+        },
+        null,
+        2
+      );
+      const filename = `recording-${roomName}-${Date.now()}.json`;
+      await saveResourceToS3(
+        "recordings",
+        filename,
+        manifest,
+        "application/json;charset=utf-8"
+      );
+
+      setRecordingState("idle");
+      setRecordingEgressId("");
+      setRecordingMessage("Recording stopped and metadata saved to S3.");
+    } catch (error) {
+      setRecordingState("recording");
+      setRecordingMessage(error instanceof Error ? error.message : "Failed to stop recording.");
+    }
+  }, [recordingEgressId, recordingState, roomName]);
 
   const buildSharedNotesJson = () =>
     JSON.stringify(
@@ -2499,6 +2590,49 @@ export default function MeetingRoom({
 
           <button
             onClick={() => {
+              if (recordingState === "idle") {
+                void startRecording();
+                return;
+              }
+              if (recordingState === "recording") {
+                void stopRecording();
+              }
+            }}
+            disabled={recordingState === "starting" || recordingState === "stopping"}
+            title={
+              recordingState === "recording"
+                ? "Stop Recording"
+                : recordingState === "starting"
+                ? "Starting Recording"
+                : recordingState === "stopping"
+                ? "Stopping Recording"
+                : "Start Recording"
+            }
+            aria-label={
+              recordingState === "recording"
+                ? "Stop Recording"
+                : recordingState === "starting"
+                ? "Starting Recording"
+                : recordingState === "stopping"
+                ? "Stopping Recording"
+                : "Start Recording"
+            }
+            className="relative flex h-10 w-10 items-center justify-center rounded-full bg-secondary text-secondary-foreground transition-colors hover:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-70 sm:h-11 sm:w-11 md:h-12 md:w-12"
+          >
+            {recordingState === "starting" || recordingState === "stopping" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <span className="text-sm leading-none" aria-hidden>
+                🔴
+              </span>
+            )}
+            {recordingState === "recording" ? (
+              <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-background animate-pulse" />
+            ) : null}
+          </button>
+
+          <button
+            onClick={() => {
               roomRef.current?.disconnect();
               onLeave();
             }}
@@ -2510,6 +2644,11 @@ export default function MeetingRoom({
           </button>
         </div>
       </div>
+      {recordingMessage ? (
+        <div className="pointer-events-none absolute bottom-[5.8rem] left-1/2 z-40 -translate-x-1/2 rounded-md bg-black/65 px-3 py-1 text-xs text-white">
+          {recordingMessage}
+        </div>
+      ) : null}
     </div>
   );
 }
