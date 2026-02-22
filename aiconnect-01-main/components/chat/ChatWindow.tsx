@@ -3,7 +3,6 @@
 import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import { Bell, Loader2, MoreVertical, Paperclip, Pin, PinOff, Reply, Search, Send, SmilePlus, SquarePen, Trash2, Vote, X } from "lucide-react";
-import { useLocalParticipant, useParticipants, useRoomContext } from "@livekit/components-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import FilePreview from "@/components/chat/FilePreview";
@@ -45,6 +44,9 @@ type Props = {
   roomId: string;
   isOpen?: boolean;
   onUnreadCountChange?: (count: number) => void;
+  onParticipantsChange?: (participants: Array<{ id: string; name: string }>) => void;
+  participantId?: string;
+  participantName?: string;
 };
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024 * 1024;
@@ -96,15 +98,24 @@ function applyPollVote(poll: PollData, optionId: string, voter: ChatUser) {
   return { ...poll, options: nextOptions };
 }
 
-export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange }: Props) {
-  const room = useRoomContext();
-  const remoteParticipants = useParticipants();
-  const { localParticipant } = useLocalParticipant();
+export default function ChatWindow({
+  roomId,
+  isOpen = true,
+  onUnreadCountChange,
+  onParticipantsChange,
+  participantId,
+  participantName,
+}: Props) {
   const { user, isLoaded } = useUser();
   const endRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typingExpiryRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const lastPresenceSeenRef = useRef<Record<string, number>>({});
+  const fallbackIdRef = useRef(
+    `guest-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now()}`
+  );
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -130,11 +141,28 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const meId = useMemo(() => localParticipant.identity || user?.id || "", [localParticipant.identity, user?.id]);
-  const meName = useMemo(() => user?.fullName || user?.emailAddresses[0]?.emailAddress || user?.id || "You", [user]);
+  const meId = useMemo(
+    () => participantId || user?.id || fallbackIdRef.current,
+    [participantId, user?.id]
+  );
+  const meName = useMemo(
+    () =>
+      participantName?.trim() ||
+      user?.fullName ||
+      user?.emailAddresses[0]?.emailAddress ||
+      user?.id ||
+      "You",
+    [participantName, user]
+  );
   const me = useMemo<ChatUser>(() => ({ id: meId, name: meName }), [meId, meName]);
 
-  const participantOptions = useMemo(() => remoteParticipants.map((participant) => ({ identity: participant.identity, label: participant.name || participant.identity })), [remoteParticipants]);
+  const participantOptions = useMemo(
+    () =>
+      Object.entries(onlineUsers)
+        .filter(([id]) => id !== meId)
+        .map(([identity, label]) => ({ identity, label })),
+    [onlineUsers, meId]
+  );
   const messageMap = useMemo(() => { const map = new Map<string, ChatMessage>(); for (const entry of messages) map.set(entry.id, entry); return map; }, [messages]);
   const pinnedMessages = useMemo(() => messages.filter((entry) => entry.pinned && !entry.deletedAt), [messages]);
   const filteredMessages = useMemo(() => {
@@ -163,10 +191,9 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
   }, [participantOptions]);
 
   useEffect(() => {
-    const nextOnline: Record<string, string> = { [meId]: meName };
-    for (const participant of participantOptions) nextOnline[participant.identity] = participant.label;
-    setOnlineUsers(nextOnline);
-  }, [participantOptions, meId, meName]);
+    lastPresenceSeenRef.current[meId] = Date.now();
+    setOnlineUsers((prev) => ({ ...prev, [meId]: meName }));
+  }, [meId, meName]);
 
   useEffect(() => {
     if (isOpen && unreadCount !== 0) {
@@ -178,9 +205,23 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
     onUnreadCountChange?.(unreadCount);
   }, [onUnreadCountChange, unreadCount]);
 
-  const publishData = useCallback(async (payload: ChatWireMessage, reliable = true) => {
-    await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(payload)), { reliable });
-  }, [room.localParticipant]);
+  useEffect(() => {
+    onParticipantsChange?.(
+      Object.entries(onlineUsers).map(([id, name]) => ({ id, name }))
+    );
+  }, [onlineUsers, onParticipantsChange]);
+
+  const publishData = useCallback(
+    async (payload: ChatWireMessage, _reliable = true) => {
+      const response = await fetch(`/api/realtime/${encodeURIComponent(roomId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderId: meId, payload }),
+      });
+      return response.ok;
+    },
+    [meId, roomId]
+  );
 
   const notifyMention = useCallback((sender: string, content: string) => {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -199,9 +240,8 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
   }, []);
 
   useEffect(() => {
-    const handleIncoming = (payload: Uint8Array) => {
+    const handleIncoming = (parsed: ChatWireMessage) => {
       try {
-        const parsed = JSON.parse(new TextDecoder().decode(payload)) as ChatWireMessage;
         if (parsed.type === "chat") {
           if (parsed.message.recipients && !parsed.message.recipients.includes(meId)) return;
           setMessages((prev) => (prev.some((entry) => entry.id === parsed.message.id) ? prev : [...prev, parsed.message]));
@@ -257,10 +297,16 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
           return;
         }
         if (parsed.type === "presence") {
+          const now = Date.now();
           setOnlineUsers((prev) => {
             const next = { ...prev };
-            if (parsed.online) next[parsed.user.id] = parsed.user.name;
-            else delete next[parsed.user.id];
+            if (parsed.online) {
+              next[parsed.user.id] = parsed.user.name;
+              lastPresenceSeenRef.current[parsed.user.id] = now;
+            } else {
+              delete next[parsed.user.id];
+              delete lastPresenceSeenRef.current[parsed.user.id];
+            }
             return next;
           });
           return;
@@ -281,13 +327,30 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
       }
     };
 
-    room.on("dataReceived", handleIncoming);
+    const source = new EventSource(`/api/realtime/${encodeURIComponent(roomId)}`);
+    eventSourceRef.current = source;
+
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as {
+          senderId?: string;
+          payload?: ChatWireMessage;
+        };
+        if (!data.payload) return;
+        if (data.senderId === meId) return;
+        handleIncoming(data.payload);
+      } catch {
+        // Ignore malformed events.
+      }
+    };
+
     return () => {
-      room.off("dataReceived", handleIncoming);
+      source.close();
+      eventSourceRef.current = null;
       Object.values(typingExpiryRef.current).forEach(clearTimeout);
       typingExpiryRef.current = {};
     };
-  }, [me, meId, meName, room, publishData, isOpen, notifyMention]);
+  }, [me, meId, meName, publishData, isOpen, notifyMention, roomId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -295,8 +358,46 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
 
   useEffect(() => {
     if (!meId) return;
-    void publishData({ type: "presence", user: me, online: true });
-    return () => { void publishData({ type: "presence", user: me, online: false }); };
+    const PRESENCE_HEARTBEAT_MS = 4000;
+    const PRESENCE_STALE_MS = 14000;
+
+    const publishPresence = () => {
+      const now = Date.now();
+      lastPresenceSeenRef.current[meId] = now;
+      setOnlineUsers((prev) => ({ ...prev, [meId]: meName }));
+      void publishData({ type: "presence", user: me, online: true });
+    };
+
+    publishPresence();
+
+    const heartbeat = setInterval(() => {
+      publishPresence();
+    }, PRESENCE_HEARTBEAT_MS);
+
+    const reapStale = setInterval(() => {
+      const now = Date.now();
+      setOnlineUsers((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const id of Object.keys(next)) {
+          const seenAt = lastPresenceSeenRef.current[id];
+          if (!seenAt) continue;
+          if (now - seenAt > PRESENCE_STALE_MS) {
+            delete next[id];
+            delete lastPresenceSeenRef.current[id];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, PRESENCE_HEARTBEAT_MS);
+
+    return () => {
+      clearInterval(heartbeat);
+      clearInterval(reapStale);
+      delete lastPresenceSeenRef.current[meId];
+      void publishData({ type: "presence", user: me, online: false });
+    };
   }, [me, meId, publishData]);
 
   const publishTyping = (isTyping: boolean) => {
@@ -398,7 +499,8 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
         file: uploadedFile,
       };
 
-      await publishData({ type: "chat", message: nextMessage });
+      const sent = await publishData({ type: "chat", message: nextMessage });
+      if (!sent) throw new Error("Connection lost. Reconnect and try again.");
       setMessages((prev) => [...prev, nextMessage]);
       setMessage("");
       setSelectedFile(null);
@@ -468,17 +570,17 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
   const onlineCount = Object.keys(onlineUsers).length;
 
   return (
-    <section className="h-full min-w-0 flex flex-col bg-slate-100 text-slate-900">
-      <div className="border-b bg-white px-2 py-2 space-y-2 sm:px-3 sm:py-3 md:px-4">
+    <section className="h-full min-w-0 flex flex-col bg-background text-foreground">
+      <div className="space-y-2 border-b border-border bg-card px-2 py-2 sm:px-3 sm:py-3 md:px-4">
         <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
           <div>
             <p className="text-sm font-semibold">Meeting Chat</p>
-            <p className="max-w-[52vw] truncate text-xs text-slate-500 sm:max-w-[18rem]">{roomId}</p>
+            <p className="max-w-[52vw] truncate text-xs text-muted-foreground sm:max-w-[18rem]">{roomId}</p>
           </div>
           <p className="text-xs text-emerald-600">{onlineCount} online</p>
         </div>
         <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search messages, files, polls" className="pl-8" />
         </div>
       </div>
@@ -495,13 +597,13 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
         </div>
       ) : null}
 
-      {error ? <p className="px-4 py-2 text-xs text-red-600 bg-red-50">{error}</p> : null}
+      {error ? <p className="bg-red-500/10 px-4 py-2 text-xs text-red-600 dark:text-red-300">{error}</p> : null}
       {pinnedMessages.length > 0 ? (
-        <div className="border-b border-slate-200 bg-slate-50 px-2 py-2 sm:px-4">
-          <p className="text-xs font-semibold text-slate-600 mb-1">Pinned</p>
+        <div className="border-b border-border bg-muted/40 px-2 py-2 sm:px-4">
+          <p className="mb-1 text-xs font-semibold text-muted-foreground">Pinned</p>
           <div className="space-y-1 max-h-24 overflow-y-auto">
             {pinnedMessages.map((entry) => (
-              <button key={`pin-${entry.id}`} type="button" onClick={() => document.getElementById(`msg-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="w-full text-left text-xs rounded bg-white px-2 py-1 border border-slate-200 hover:bg-slate-100">
+              <button key={`pin-${entry.id}`} type="button" onClick={() => document.getElementById(`msg-${entry.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" })} className="w-full rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-accent">
                 <span className="font-semibold mr-1">{entry.senderName}:</span>
                 <span className="truncate inline-block max-w-[16rem] align-bottom">{entry.content || entry.file?.name || "(poll)"}</span>
               </button>
@@ -511,7 +613,7 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
       ) : null}
 
       <div className="flex-1 overflow-x-hidden overflow-y-auto px-2 py-3 space-y-3 md:px-3 md:py-4">
-        {!isLoaded ? <div className="text-sm text-slate-500 flex items-center"><Loader2 className="h-4 w-4 mr-2 animate-spin" />Loading chat...</div> : null}
+        {!isLoaded ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading chat...</div> : null}
 
         {filteredMessages.map((entry) => {
           const isMine = entry.senderId === meId;
@@ -520,18 +622,18 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
 
           return (
             <div id={`msg-${entry.id}`} key={entry.id} className={`flex min-w-0 ${isMine ? "justify-end" : "justify-start"}`}>
-              <div className={`min-w-0 max-w-[98%] rounded-2xl px-2.5 py-2 shadow-sm sm:max-w-[92%] sm:px-3 md:max-w-[82%] ${isMine ? "bg-blue-600 text-white" : "bg-white text-slate-900"}`}>
+              <div className={`min-w-0 max-w-[98%] rounded-2xl px-2.5 py-2 shadow-sm sm:max-w-[92%] sm:px-3 md:max-w-[82%] ${isMine ? "bg-blue-600 text-white" : "bg-card text-card-foreground border border-border"}`}>
                 <div className="flex items-center justify-between gap-3 mb-1">
-                  <p className={`text-[11px] ${isMine ? "text-blue-100" : "text-slate-500"}`}>{entry.senderName}</p>
-                  <p className={`text-[11px] ${isMine ? "text-blue-100" : "text-slate-500"}`}>{formatTime(entry.createdAt)}</p>
+                  <p className={`text-[11px] ${isMine ? "text-blue-100" : "text-muted-foreground"}`}>{entry.senderName}</p>
+                  <p className={`text-[11px] ${isMine ? "text-blue-100" : "text-muted-foreground"}`}>{formatTime(entry.createdAt)}</p>
                 </div>
 
                 {entry.kind === "note" ? <p className={`mb-1 inline-block rounded-md px-2 py-0.5 text-[11px] font-semibold ${isMine ? "bg-blue-500 text-white" : "bg-amber-100 text-amber-800"}`}>Note</p> : null}
-                {entry.replyToId && replyTarget ? <div className={`mb-2 rounded border px-2 py-1 text-xs ${isMine ? "border-blue-300/40 bg-blue-500/30" : "border-slate-300 bg-slate-50"}`}><p className="font-semibold">Reply to {replyTarget.senderName}</p><p className="truncate">{replyTarget.content || replyTarget.file?.name || "(poll)"}</p></div> : null}
+                {entry.replyToId && replyTarget ? <div className={`mb-2 rounded border px-2 py-1 text-xs ${isMine ? "border-blue-300/40 bg-blue-500/30" : "border-border bg-muted/40"}`}><p className="font-semibold">Reply to {replyTarget.senderName}</p><p className="truncate">{replyTarget.content || replyTarget.file?.name || "(poll)"}</p></div> : null}
 
                 {editingMessageId === entry.id ? (
                   <div className="mb-2 flex gap-2">
-                    <Input value={editingContent} onChange={(e) => setEditingContent(e.target.value)} className="h-8 text-black" />
+                    <Input value={editingContent} onChange={(e) => setEditingContent(e.target.value)} className="h-8" />
                     <Button size="sm" onClick={() => void saveEditMessage()}>Save</Button>
                     <Button size="sm" variant="ghost" onClick={() => setEditingMessageId(null)}><X className="h-4 w-4" /></Button>
                   </div>
@@ -539,12 +641,14 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
                   <>
                     {entry.content ? <p className="text-sm whitespace-pre-wrap">{renderMentions(entry.content)}</p> : null}
                     {entry.poll ? (
-                      <div className={`mt-2 rounded-lg border p-2 ${isMine ? "border-blue-300/40 bg-blue-500/20" : "border-slate-200 bg-slate-50"}`}>
-                        <p className="text-xs font-semibold mb-2">Poll: {entry.poll.question}</p>
+                      <div className={`mt-2 rounded-lg border p-2 ${isMine ? "border-blue-300/40 bg-blue-500/20" : "border-border bg-muted/40"}`}>
+                        <p className="mb-2 break-words text-xs font-semibold">
+                          Poll: {entry.poll.question}
+                        </p>
                         <div className="space-y-1">
                           {entry.poll.options.map((option) => {
                             const voted = option.votes.some((vote) => vote.id === meId);
-                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900" : "border-slate-300 bg-white text-slate-900"}`}><span>{option.text}</span><span>{option.votes.length}</span></button>;
+                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900 dark:bg-emerald-500/20 dark:text-emerald-100" : "border-border bg-card text-card-foreground"}`}><span className="min-w-0 flex-1 break-words pr-2">{option.text}</span><span className="shrink-0">{option.votes.length}</span></button>;
                           })}
                         </div>
                       </div>
@@ -553,7 +657,7 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
                   </>
                 )}
 
-                <div className={`mt-1 flex items-center gap-2 flex-wrap text-[11px] ${isMine ? "text-blue-100" : "text-slate-500"}`}>
+                <div className={`mt-1 flex items-center gap-2 flex-wrap text-[11px] ${isMine ? "text-blue-100" : "text-muted-foreground"}`}>
                   {entry.editedAt ? <span>(edited)</span> : null}
                   {entry.recipients ? <span>Private message</span> : null}
                   {hasDeleted ? <span>Deleted</span> : null}
@@ -568,7 +672,7 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
                       return (
                         <span
                           key={`${entry.id}-summary-${option.key}`}
-                          className={`rounded-full px-2 py-0.5 text-[11px] border ${isMine ? "border-blue-200/40 bg-blue-500/30 text-white" : "border-slate-300 bg-slate-50 text-slate-700"}`}
+                          className={`rounded-full px-2 py-0.5 text-[11px] border ${isMine ? "border-blue-200/40 bg-blue-500/30 text-white" : "border-border bg-muted/40 text-foreground"}`}
                         >
                           {option.emoji} {count}
                         </span>
@@ -628,10 +732,10 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
                       </Button>
 
                     {openMenuMessageId === entry.id ? (
-                      <div className="absolute right-0 z-30 mt-1 w-44 rounded-md border bg-white p-2 text-slate-900 shadow-lg sm:w-48 md:w-52">
+                      <div className="absolute right-0 z-30 mt-1 w-44 rounded-md border border-border bg-card p-2 text-card-foreground shadow-lg sm:w-48 md:w-52">
                         {!hasDeleted ? (
                           <>
-                            <p className="px-2 py-1 text-[11px] text-slate-500">Reactions</p>
+                            <p className="px-2 py-1 text-[11px] text-muted-foreground">Reactions</p>
                             <div className="flex items-center gap-1 overflow-x-auto">
                               {REACTION_OPTIONS.map((option) => (
                                 <Button
@@ -658,36 +762,42 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
           );
         })}
 
-        {typingNames.length > 0 ? <p className="text-xs text-slate-500 px-1">{typingNames.join(", ")} typing...</p> : null}
+        {typingNames.length > 0 ? <p className="px-1 text-xs text-muted-foreground">{typingNames.join(", ")} typing...</p> : null}
         <div ref={endRef} />
       </div>
-      <div className="border-t bg-white p-2 md:p-3">
-        <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[auto_minmax(150px,1fr)_auto_minmax(180px,1fr)_auto] lg:items-center">
-          <label className="text-xs text-slate-600 lg:justify-self-end">Type</label>
-          <select value={messageKind} onChange={(event) => setMessageKind(event.target.value as "message" | "note")} className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-xs">
+      <div className="border-t border-border bg-card p-2 md:p-3">
+        <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)_auto] lg:items-center">
+          <label className="text-xs text-muted-foreground lg:justify-self-end">Type</label>
+          <select value={messageKind} onChange={(event) => setMessageKind(event.target.value as "message" | "note")} className="h-9 w-full rounded-md border border-border bg-background px-2 text-xs">
             <option value="message">Message</option>
             <option value="note">Note</option>
           </select>
 
-          <label className="text-xs text-slate-600 lg:justify-self-end">Send to</label>
-          <select value={audience} onChange={(event) => setAudience(event.target.value as "everyone" | "selected")} className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-xs">
+          <label className="text-xs text-muted-foreground lg:justify-self-end">Send to</label>
+          <select value={audience} onChange={(event) => setAudience(event.target.value as "everyone" | "selected")} className="h-9 w-full rounded-md border border-border bg-background px-2 text-xs">
             <option value="everyone">Everyone</option>
             <option value="selected">Selected participants</option>
           </select>
 
-          <Button type="button" variant="outline" size="sm" className="h-9 w-full sm:w-auto" onClick={() => setShowPollComposer((prev) => !prev)}>
-            <Vote className="h-4 w-4" /> Poll
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9 w-full sm:w-auto lg:justify-self-start"
+            onClick={() => setShowPollComposer((prev) => !prev)}
+          >
+            <Vote className="h-4 w-4 shrink-0" /> Poll
           </Button>
         </div>
 
         {audience === "selected" ? (
-          <div className="mb-2 max-h-24 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-2">
-            {participantOptions.length === 0 ? <p className="text-xs text-slate-500">No other participants available</p> : (
+          <div className="mb-2 max-h-24 overflow-y-auto rounded-md border border-border bg-muted/40 p-2">
+            {participantOptions.length === 0 ? <p className="text-xs text-muted-foreground">No other participants available</p> : (
               <div className="space-y-1">
                 {participantOptions.map((participant) => {
                   const checked = selectedRecipients.includes(participant.identity);
                   return (
-                    <label key={participant.identity} className="flex items-center gap-2 text-xs text-slate-700">
+                    <label key={participant.identity} className="flex items-center gap-2 text-xs text-foreground">
                       <input type="checkbox" checked={checked} onChange={(event) => setSelectedRecipients((prev) => event.target.checked ? Array.from(new Set([...prev, participant.identity])) : prev.filter((id) => id !== participant.identity))} />
                       <span className="truncate">{participant.label}</span>
                     </label>
@@ -706,15 +816,45 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
         ) : null}
 
         {showPollComposer ? (
-          <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2 space-y-2">
-            <Input placeholder="Poll question" value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} />
+           <div className="mb-2 max-h-52 space-y-2 overflow-y-auto rounded-md border border-border bg-muted/40 p-2">
+            <Input
+              placeholder="Poll question"
+              value={pollQuestion}
+              onChange={(e) => setPollQuestion(e.target.value)}
+              className="w-full"
+            />
             {pollOptions.map((option, idx) => (
-              <div key={`poll-option-${idx}`} className="flex items-center gap-2">
-                <Input placeholder={`Option ${idx + 1}`} value={option} onChange={(e) => setPollOptions((prev) => prev.map((entry, i) => (i === idx ? e.target.value : entry)))} />
-                {pollOptions.length > 2 ? <Button size="sm" variant="ghost" onClick={() => setPollOptions((prev) => prev.filter((_, i) => i !== idx))}><X className="h-4 w-4" /></Button> : null}
+              <div key={`poll-option-${idx}`} className="flex min-w-0 items-center gap-2">
+                <Input
+                  placeholder={`Option ${idx + 1}`}
+                  value={option}
+                  onChange={(e) =>
+                    setPollOptions((prev) =>
+                      prev.map((entry, i) => (i === idx ? e.target.value : entry))
+                    )
+                  }
+                  className="min-w-0 flex-1"
+                />
+                {pollOptions.length > 2 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0"
+                    onClick={() => setPollOptions((prev) => prev.filter((_, i) => i !== idx))}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                ) : null}
               </div>
             ))}
-            <Button size="sm" variant="outline" onClick={() => setPollOptions((prev) => [...prev, ""])}><SmilePlus className="h-4 w-4" /> Add option</Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setPollOptions((prev) => [...prev, ""])}
+            >
+              <SmilePlus className="h-4 w-4" /> Add option
+            </Button>
           </div>
         ) : null}
 
@@ -727,22 +867,22 @@ export default function ChatWindow({ roomId, isOpen = true, onUnreadCountChange 
         </div>
 
         {selectedFile ? (
-          <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs flex items-center justify-between gap-2">
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
             <span className="truncate pr-2 min-w-0">{selectedFile.name}</span>
             <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}>Remove</Button>
           </div>
         ) : null}
 
         {showMentionPicker && mentionCandidates.length > 0 ? (
-          <div className="mb-2 rounded-md border border-slate-200 bg-white shadow-sm max-h-40 overflow-y-auto">
+          <div className="mb-2 max-h-40 overflow-y-auto rounded-md border border-border bg-card shadow-sm">
             {mentionCandidates.map((candidate) => (
               <button
                 key={`mention-${candidate.token}`}
                 type="button"
-                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100"
+                className="w-full px-3 py-2 text-left text-xs hover:bg-accent"
                 onClick={() => selectMention(candidate.token)}
               >
-                @{candidate.token} <span className="text-slate-500">({candidate.label})</span>
+                @{candidate.token} <span className="text-muted-foreground">({candidate.label})</span>
               </button>
             ))}
           </div>

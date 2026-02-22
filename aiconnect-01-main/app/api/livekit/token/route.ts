@@ -21,12 +21,20 @@ export async function GET(req: NextRequest) {
 
     const room = req.nextUrl.searchParams.get("room");
     const username = req.nextUrl.searchParams.get("username");
-    console.log("Request params - room:", room, "username:", username);
+    const session = req.nextUrl.searchParams.get("session");
+    console.log("Request params - room:", room, "username:", username, "session:", session);
 
-    if (!room || !username) {
-      console.error("Missing parameters - room:", room, "username:", username);
+    if (!room || !username || !session) {
+      console.error("Missing parameters - room:", room, "username:", username, "session:", session);
       return NextResponse.json(
-        { error: "Missing room or username" },
+        { error: "Missing room, username, or session" },
+        { status: 400 }
+      );
+    }
+
+    if (!/^[a-zA-Z0-9-]{8,128}$/.test(session)) {
+      return NextResponse.json(
+        { error: "Invalid session format" },
         { status: 400 }
       );
     }
@@ -42,8 +50,12 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Stable per-browser-tab identity avoids duplicate ghosts on reconnect
+    // without force-kicking another active tab for the same user.
+    const sessionIdentity = `${userId}:${session}`;
+
     const token = new AccessToken(apiKey, apiSecret, {
-      identity: userId,
+      identity: sessionIdentity,
       name: username,
       ttl: "4h",
     });
