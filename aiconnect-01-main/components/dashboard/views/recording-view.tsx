@@ -130,6 +130,7 @@ export default function RecordingView() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   const fetchRecordings = useCallback(async () => {
     setIsRefreshing(true);
@@ -168,6 +169,7 @@ export default function RecordingView() {
       alert("Recording is not ready yet. Please try again later.");
       return;
     }
+    setVideoError(null);
     setPlayingRecording(recording);
     setVideoUrl(playableUrl);
     setLoadingVideo(true);
@@ -425,6 +427,7 @@ export default function RecordingView() {
             setPlayingRecording(null);
             setVideoUrl("");
             setLoadingVideo(false);
+            setVideoError(null);
           }
         }}
       >
@@ -437,18 +440,36 @@ export default function RecordingView() {
           <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
             {videoUrl ? (
               <>
-                {loadingVideo && (
+                {loadingVideo && !videoError && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 text-white">
                     Loading video...
                   </div>
                 )}
+                {videoError && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/70 text-white px-6 text-center">
+                    <span className="text-red-400 font-medium">Playback error</span>
+                    <span className="text-sm text-white/70">{videoError}</span>
+                  </div>
+                )}
                 <video
+                  key={videoUrl}
                   src={videoUrl}
                   controls
                   autoPlay
+                  playsInline
                   className="w-full h-full"
                   onLoadedData={() => setLoadingVideo(false)}
-                />
+                  onCanPlay={() => setLoadingVideo(false)}
+                  onError={(e) => {
+                    setLoadingVideo(false);
+                    const mediaError = (e.currentTarget as HTMLVideoElement).error;
+                    const msg = mediaError?.message || "Unable to play recording. The URL may have expired — refresh and try again.";
+                    setVideoError(msg);
+                  }}
+                >
+                  <source src={videoUrl} type="video/mp4" />
+                  <source src={videoUrl} type="video/webm" />
+                </video>
               </>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-white/70">

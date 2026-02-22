@@ -8,12 +8,29 @@ import {
   EgressStatus,
   S3Upload,
 } from "livekit-server-sdk";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import {
   getEgressClient,
   isActiveEgressStatus,
   mapStatusToLegacyCode,
 } from "@/lib/livekit-server";
+
+const PRESIGNED_URL_EXPIRES_IN = 3600; // 1 hour
+
+function getS3Client(): S3Client | null {
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+  if (!accessKeyId || !secretAccessKey) {
+    return null;
+  }
+  return new S3Client({
+    region,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -313,18 +330,30 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
     return null;
   }
 
-  const fallbackHttp = file.location?.startsWith("http")
-    ? file.location
-    : null;
-
   const parsed =
     parseS3Location(file.location) ?? parseHttpS3Location(file.location);
-  if (fallbackHttp) {
-    return fallbackHttp;
-  }
 
   if (parsed?.bucket && parsed?.key) {
-    return `s3://${parsed.bucket}/${normalizeS3Key(parsed.key)}`;
+    const key = normalizeS3Key(parsed.key) ?? parsed.key;
+    try {
+      const s3 = getS3Client();
+      if (s3) {
+        const command = new GetObjectCommand({
+          Bucket: parsed.bucket,
+          Key: key,
+        });
+        return await getSignedUrl(s3, command, {
+          expiresIn: PRESIGNED_URL_EXPIRES_IN,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to generate presigned URL for recording", error);
+    }
+  }
+
+  // Fallback: return the raw HTTP URL if it's already public
+  if (file.location?.startsWith("http")) {
+    return file.location;
   }
 
   return null;
