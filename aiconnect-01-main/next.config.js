@@ -1,12 +1,3 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  webpack: (config) => {
-    // Add support for pnpm symlinks
-    config.resolve.symlinks = false;
-    return config;
-  },
-  // Optional: Add transpilePackages if needed
-  transpilePackages: [],
-}
-
-module.exports = nextConfig
+// All configuration has been consolidated into next.config.ts
+// This file is intentionally left as a no-op to avoid duplicate config.
+module.exports = {};
