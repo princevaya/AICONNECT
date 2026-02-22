@@ -469,6 +469,13 @@ export default function MeetingRoom({
   const [localIdentity, setLocalIdentity] = useState<string>("");
 
   const roomRef = useRef<Room | null>(null);
+  const uiRecorderRef = useRef<MediaRecorder | null>(null);
+  const uiRecordingChunksRef = useRef<Blob[]>([]);
+  const uiCaptureStreamRef = useRef<MediaStream | null>(null);
+  const uiMicStreamRef = useRef<MediaStream | null>(null);
+  const uiAudioContextRef = useRef<AudioContext | null>(null);
+  const uiUploadUrlRef = useRef<string>("");
+  const uiLocalSavedRef = useRef(false);
   const intentionalLeaveRef = useRef(false);
   const desiredCameraEnabledRef = useRef(Boolean(videoEnabled));
   const desiredMicEnabledRef = useRef(Boolean(audioEnabled));
@@ -962,14 +969,40 @@ export default function MeetingRoom({
     };
   }, [audioDeviceId, displayName, refreshParticipants, roomName, videoDeviceId]);
 
+  useEffect(() => {
+    return () => {
+      if (uiRecorderRef.current && uiRecorderRef.current.state !== "inactive") {
+        try {
+          uiRecorderRef.current.stop();
+        } catch {
+          // Ignore stop errors during unmount.
+        }
+      }
+      uiCaptureStreamRef.current?.getTracks().forEach((track) => track.stop());
+      uiMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (uiAudioContextRef.current) {
+        void uiAudioContextRef.current.close().catch(() => undefined);
+        uiAudioContextRef.current = null;
+      }
+      uiCaptureStreamRef.current = null;
+      uiMicStreamRef.current = null;
+      uiRecorderRef.current = null;
+      uiRecordingChunksRef.current = [];
+      uiUploadUrlRef.current = "";
+      uiLocalSavedRef.current = false;
+    };
+  }, []);
+
   const localParticipant = participants.find((participant) => participant.isLocal);
   const localCameraOn = Boolean(localParticipant?.cameraEnabled);
   const localMicOn = Boolean(localParticipant?.micEnabled);
   const localScreenOn = Boolean(localParticipant?.screenShareEnabled);
-  const activeRecordingParticipant = participants.find(
+  const activeRecordingParticipants = participants.filter(
     (participant) => participant.isRecording
   );
-  const activeRecordingName = activeRecordingParticipant?.name || "";
+  const activeRecordingNames = activeRecordingParticipants.map((participant) =>
+    participant.name.trim()
+  );
   const whiteboardActive = Boolean(whiteboardControllerId);
   const canEditWhiteboard = Boolean(
     localIdentity &&
@@ -1524,6 +1557,247 @@ export default function MeetingRoom({
     URL.revokeObjectURL(url);
   };
 
+  const downloadBlobFile = (filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const uploadUiRecordingToS3 = async (blob: Blob, filename: string) => {
+    const uploadViaServerRoute = async () => {
+      setRecordingMessage("UI recording: retrying upload via server route...");
+      const formData = new FormData();
+      formData.append(
+        "file",
+        new File([blob], filename, { type: blob.type || "video/webm" })
+      );
+      formData.append("roomName", roomName);
+      const response = await fetch("/api/meeting/recordings/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        url?: string;
+      };
+      if (!response.ok) {
+        throw new Error(
+          `UI recording server-upload failed (${response.status}): ${
+            payload.error || "unknown error"
+          }`
+        );
+      }
+      return payload.url || "";
+    };
+
+    const extension = filename.toLowerCase().endsWith(".mp4") ? "mp4" : "webm";
+    setRecordingMessage("UI recording: creating upload URL...");
+    const createRes = await fetch("/api/meeting/recordings/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        roomName,
+        contentType: blob.type || "video/webm",
+        extension,
+      }),
+    });
+    const createPayload = (await createRes.json().catch(() => ({}))) as {
+      error?: string;
+      putUrl?: string;
+      downloadUrl?: string;
+    };
+    if (!createRes.ok || !createPayload.putUrl) {
+      return uploadViaServerRoute();
+    }
+
+    setRecordingMessage("UI recording: uploading to S3...");
+    let putRes: Response;
+    try {
+      putRes = await fetch(createPayload.putUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": blob.type || "video/webm",
+        },
+        body: blob,
+      });
+    } catch {
+      return uploadViaServerRoute();
+    }
+    if (!putRes.ok) {
+      const details = await putRes.text().catch(() => "");
+      if (putRes.status === 403 || putRes.status === 400) {
+        return uploadViaServerRoute();
+      }
+      throw new Error(
+        `UI recording S3 PUT failed (${putRes.status}): ${
+          details.slice(0, 220) || putRes.statusText || "unknown error"
+        }`
+      );
+    }
+
+    return createPayload.downloadUrl || "";
+  };
+
+  const stopUiRootCapture = useCallback(
+    async (options?: { skipUpload?: boolean }) => {
+      const recorder = uiRecorderRef.current;
+      if (!recorder) return "";
+      const stopped = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => {
+          const blob = new Blob(uiRecordingChunksRef.current, {
+            type: recorder.mimeType || "video/webm",
+          });
+          resolve(blob);
+        };
+      });
+
+      if (recorder.state !== "inactive") {
+        recorder.stop();
+      }
+
+      uiCaptureStreamRef.current?.getTracks().forEach((track) => track.stop());
+      uiMicStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (uiAudioContextRef.current) {
+        void uiAudioContextRef.current.close().catch(() => undefined);
+        uiAudioContextRef.current = null;
+      }
+      uiCaptureStreamRef.current = null;
+      uiMicStreamRef.current = null;
+      uiRecorderRef.current = null;
+
+      const blob = await stopped;
+      uiRecordingChunksRef.current = [];
+      const filename = `meeting-ui-${roomName}-${Date.now()}.webm`;
+      downloadBlobFile(filename, blob);
+      uiLocalSavedRef.current = true;
+
+      if (options?.skipUpload) {
+        uiUploadUrlRef.current = "";
+        return "";
+      }
+      const uploadedUrl = await uploadUiRecordingToS3(blob, filename);
+      uiUploadUrlRef.current = uploadedUrl;
+      return uploadedUrl;
+    },
+    [roomName]
+  );
+
+  const startUiRootCapture = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices ||
+      typeof navigator.mediaDevices.getDisplayMedia !== "function"
+    ) {
+      throw new Error("Screen capture is not supported in this browser.");
+    }
+
+    uiRecordingChunksRef.current = [];
+    uiUploadUrlRef.current = "";
+
+    const displayStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: 30,
+      },
+      audio: true,
+      // @ts-expect-error - experimental browser hint
+      preferCurrentTab: true,
+      selfBrowserSurface: "include",
+      surfaceSwitching: "include",
+      systemAudio: "include",
+    });
+
+    const [pickedVideoTrack] = displayStream.getVideoTracks();
+    const pickedSurface = pickedVideoTrack?.getSettings().displaySurface;
+    if (pickedSurface && pickedSurface !== "browser") {
+      displayStream.getTracks().forEach((track) => track.stop());
+      throw new Error(
+        "Please select the current meeting browser tab in the capture picker (not window/screen)."
+      );
+    }
+
+    const composed = new MediaStream();
+    displayStream.getVideoTracks().forEach((track) => composed.addTrack(track));
+
+    const displayAudioTracks = displayStream.getAudioTracks();
+    if (displayAudioTracks.length > 0) {
+      displayAudioTracks.forEach((track) => composed.addTrack(track));
+    } else {
+      setRecordingMessage(
+        "Tab audio not shared. Falling back to mixed mic + participant audio."
+      );
+      const audioContext = new AudioContext();
+      uiAudioContextRef.current = audioContext;
+      const destination = audioContext.createMediaStreamDestination();
+      let mixedCount = 0;
+
+      const addTrackToMix = (track?: MediaStreamTrack) => {
+        if (!track || track.kind !== "audio") return;
+        try {
+          const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+          source.connect(destination);
+          mixedCount += 1;
+        } catch {
+          // Ignore unusable tracks.
+        }
+      };
+
+      try {
+        const micStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        uiMicStreamRef.current = micStream;
+        micStream.getAudioTracks().forEach((track) => addTrackToMix(track));
+      } catch {
+        // Continue with remote tracks only.
+      }
+
+      for (const track of remoteAudioTracks) {
+        const mediaTrack = (track as unknown as { mediaStreamTrack?: MediaStreamTrack })
+          .mediaStreamTrack;
+        addTrackToMix(mediaTrack);
+      }
+      const localMicTrack = (localParticipant?.micTrack as unknown as
+        | { mediaStreamTrack?: MediaStreamTrack }
+        | undefined)?.mediaStreamTrack;
+      addTrackToMix(localMicTrack);
+
+      if (mixedCount > 0) {
+        const mixedTrack = destination.stream.getAudioTracks()[0];
+        if (mixedTrack) composed.addTrack(mixedTrack);
+      }
+    }
+
+    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+      ? "video/webm;codecs=vp9"
+      : MediaRecorder.isTypeSupported("video/webm;codecs=vp8")
+      ? "video/webm;codecs=vp8"
+      : "video/webm";
+
+    const recorder = new MediaRecorder(composed, { mimeType });
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        uiRecordingChunksRef.current.push(event.data);
+      }
+    };
+    recorder.start(1000);
+
+    uiRecorderRef.current = recorder;
+    uiCaptureStreamRef.current = displayStream;
+
+    const [videoTrack] = displayStream.getVideoTracks();
+    if (videoTrack) {
+      videoTrack.onended = () => {
+        setRecordingMessage(
+          "Screen capture was ended from browser controls. Use Stop Recording to finalize."
+        );
+      };
+    }
+  }, [localParticipant?.micTrack, remoteAudioTracks]);
+
   const saveResourceToS3 = async (
     feature: string,
     filename: string,
@@ -1556,6 +1830,7 @@ export default function MeetingRoom({
     setRecordingState("starting");
     setRecordingMessage("");
     try {
+      await startUiRootCapture();
       const response = await fetch("/api/livekit/recordings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1572,12 +1847,22 @@ export default function MeetingRoom({
       setRecordingEgressId(payload.egressId);
       setRecordingState("recording");
       void setLocalRecordingAttribute(true);
-      setRecordingMessage(payload.message || "Recording started.");
+      setRecordingMessage(
+        payload.message ||
+          "Recording started. Ensure you shared the current meeting tab for full layout capture."
+      );
     } catch (error) {
+      if (uiRecorderRef.current) {
+        try {
+          await stopUiRootCapture({ skipUpload: true });
+        } catch {
+          // Ignore cleanup errors.
+        }
+      }
       setRecordingState("idle");
       setRecordingMessage(error instanceof Error ? error.message : "Failed to start recording.");
     }
-  }, [recordingState, roomName, setLocalRecordingAttribute]);
+  }, [recordingState, roomName, setLocalRecordingAttribute, startUiRootCapture, stopUiRootCapture]);
 
   const stopRecording = useCallback(async () => {
     if (!recordingEgressId || recordingState !== "recording") return;
@@ -1599,6 +1884,22 @@ export default function MeetingRoom({
         throw new Error(payload.error || "Failed to stop recording.");
       }
 
+      let uiUrl = "";
+      let uiCaptureAttempted = false;
+      uiLocalSavedRef.current = false;
+      if (uiRecorderRef.current) {
+        uiCaptureAttempted = true;
+        try {
+          uiUrl = await stopUiRootCapture();
+        } catch (uiError) {
+          setRecordingMessage(
+            uiError instanceof Error
+              ? uiError.message
+              : "UI recording stopped but upload failed."
+          );
+        }
+      }
+
       const listRes = await fetch(
         `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
         { cache: "no-store" }
@@ -1618,11 +1919,18 @@ export default function MeetingRoom({
       }>;
       const latest = recordings.find((entry) => entry.egressId === recordingEgressId);
 
+      if (uiUrl) {
+        window.open(uiUrl, "_blank", "noopener,noreferrer");
+      } else if (!uiCaptureAttempted && latest?.downloadUrl) {
+        window.open(latest.downloadUrl, "_blank", "noopener,noreferrer");
+      }
+
       const manifest = JSON.stringify(
         {
           room: roomName,
           exportedAt: new Date().toISOString(),
           recording: latest || payload,
+          uiRecordingUrl: uiUrl || uiUploadUrlRef.current || null,
         },
         null,
         2
@@ -1638,12 +1946,20 @@ export default function MeetingRoom({
       setRecordingState("idle");
       setRecordingEgressId("");
       void setLocalRecordingAttribute(false);
-      setRecordingMessage("Recording stopped and metadata saved to S3.");
+      if (uiCaptureAttempted && uiUrl) {
+        setRecordingMessage("UI recording saved (local + S3 upload complete).");
+      } else if (uiCaptureAttempted) {
+        setRecordingMessage(uiLocalSavedRef.current
+          ? "UI recording saved locally, but S3 upload failed. Check exact error above."
+          : "UI recording stop completed, but local file save failed.");
+      } else {
+        setRecordingMessage("Recording stopped and metadata saved to S3.");
+      }
     } catch (error) {
       setRecordingState("recording");
       setRecordingMessage(error instanceof Error ? error.message : "Failed to stop recording.");
     }
-  }, [recordingEgressId, recordingState, roomName, setLocalRecordingAttribute]);
+  }, [recordingEgressId, recordingState, roomName, setLocalRecordingAttribute, stopUiRootCapture]);
 
   const buildSharedNotesJson = () =>
     JSON.stringify(
@@ -2791,9 +3107,9 @@ export default function MeetingRoom({
           </button>
         </div>
       </div>
-      {activeRecordingName ? (
+      {activeRecordingNames.length > 0 ? (
         <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-xs text-white">
-          🔴 {activeRecordingName} is recording
+          🔴 Recording: {activeRecordingNames.join(", ")}
         </div>
       ) : null}
       {recordingMessage ? (

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   EncodedFileOutput,
   EncodedFileType,
@@ -11,9 +13,9 @@ import {
 
 import {
   getEgressClient,
-  isActiveEgressStatus,
   mapStatusToLegacyCode,
 } from "@/lib/livekit-server";
+import { setRecordingOwner } from "@/lib/recording-ownership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,25 +94,7 @@ export async function POST(req: NextRequest) {
   try {
     const client = getEgressClient();
 
-    const activeRecordings = await client.listEgress({
-      roomName,
-      active: true,
-    });
-
-    const existing = activeRecordings.find((info) =>
-      isActiveEgressStatus(info.status)
-    );
-
-    if (existing) {
-      return NextResponse.json({
-        egressId: existing.egressId,
-        status: EgressStatus[existing.status] ?? existing.status,
-        statusCode: mapStatusToLegacyCode(existing.status),
-        message: "Recording already running",
-      });
-    }
-
-    const fileOutput = buildFileOutput(roomName);
+    const fileOutput = buildFileOutput(roomName, userId);
     const info = await client.startRoomCompositeEgress(roomName, fileOutput, {
       // Speaker layout records shared content together with participant context.
       layout: "speaker",
@@ -119,6 +103,7 @@ export async function POST(req: NextRequest) {
       audioOnly: false,
       videoOnly: false,
     });
+    setRecordingOwner(info.egressId, userId);
 
     return NextResponse.json({
       egressId: info.egressId,
@@ -325,6 +310,8 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
   }
 
   if (parsed?.bucket && parsed?.key) {
+    const signed = await getS3SignedUrl(parsed.bucket, normalizeS3Key(parsed.key));
+    if (signed) return signed;
     return `s3://${parsed.bucket}/${normalizeS3Key(parsed.key)}`;
   }
 
@@ -398,10 +385,13 @@ function normalizeS3Key(key?: string | null) {
   return key.replace(/^\/+/, "");
 }
 
-function buildFileOutput(roomName: string): EncodedFileOutput {
+function buildFileOutput(roomName: string, userId: string): EncodedFileOutput {
   const aws = getAwsConfig();
+  const safeRoom = roomName.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filepath = `meeting/recordings/${roomName}/${timestamp}.mp4`;
+  const day = new Date().toISOString().slice(0, 10);
+  const safeUser = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const filepath = `meeting/recordings/${safeRoom}/${safeUser}/${day}/${timestamp}.mp4`;
 
   return new EncodedFileOutput({
     fileType: EncodedFileType.MP4,
@@ -437,4 +427,28 @@ function getAwsConfig(): AwsConfig {
   }
 
   return { accessKeyId, secretAccessKey, region, bucket };
+}
+
+async function getS3SignedUrl(bucket: string, key?: string) {
+  if (!key) return null;
+  try {
+    const aws = getAwsConfig();
+    const client = new S3Client({
+      region: aws.region,
+      credentials: {
+        accessKeyId: aws.accessKeyId,
+        secretAccessKey: aws.secretAccessKey,
+      },
+    });
+    return await getSignedUrl(
+      client,
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      }),
+      { expiresIn: 60 * 60 * 24 }
+    );
+  } catch {
+    return null;
+  }
 }

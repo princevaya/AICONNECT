@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { EgressInfo, EgressStatus } from "livekit-server-sdk";
 import { getEgressClient, mapStatusToLegacyCode } from "@/lib/livekit-server";
+import {
+  clearRecordingOwner,
+  getRecordingOwner,
+} from "@/lib/recording-ownership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +30,26 @@ export async function POST(req: NextRequest) {
   const client = getEgressClient();
 
   try {
+    const knownOwner = getRecordingOwner(egressId);
+    if (knownOwner && knownOwner !== userId) {
+      return NextResponse.json(
+        { error: "Only the user who started this recording can stop it." },
+        { status: 403 }
+      );
+    }
+
+    if (!knownOwner) {
+      const list = await client.listEgress({ egressId });
+      const info = list[0];
+      const inferredOwner = inferOwnerFromEgress(info);
+      if (inferredOwner && inferredOwner !== userId) {
+        return NextResponse.json(
+          { error: "Only the user who started this recording can stop it." },
+          { status: 403 }
+        );
+      }
+    }
+
     // If already terminal (e.g. ABORTED), stopEgress can return precondition.
     // Treat this as already stopped and continue with status polling.
     try {
@@ -45,6 +69,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    clearRecordingOwner(egressId);
     return NextResponse.json(formatEgressResponse(finalInfo));
   } catch (error) {
     console.error("Failed to stop LiveKit recording", error);
@@ -109,4 +134,29 @@ function isAlreadyStoppedError(error: unknown) {
   }
 
   return false;
+}
+
+function inferOwnerFromEgress(info?: EgressInfo) {
+  if (!info) return undefined;
+  const fileResult =
+    (info.fileResults && info.fileResults.length > 0
+      ? info.fileResults[0]
+      : undefined) ??
+    (info.result?.case === "file" ? info.result.value : undefined);
+  const location = fileResult?.location;
+  if (!location) return undefined;
+
+  const s3Prefix = "s3://";
+  if (location.startsWith(s3Prefix)) {
+    const noScheme = location.slice(s3Prefix.length);
+    const slash = noScheme.indexOf("/");
+    if (slash === -1) return undefined;
+    const key = noScheme.slice(slash + 1);
+    const parts = key.split("/").filter(Boolean);
+    if (parts[0] === "meeting" && parts[1] === "recordings" && parts[2]) {
+      return parts[2];
+    }
+  }
+
+  return undefined;
 }
