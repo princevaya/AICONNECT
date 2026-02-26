@@ -221,3 +221,13 @@ export async function markMeetingClosed(code: string): Promise<void> {
 function deriveIsActiveFromStatus(status: MeetingStatus): boolean {
   return status !== "closed";
 }
+
+
+
+export async function listAllMeetings(): Promise<MeetingRecord[]> {
+  await ensureTable();
+  const result = await pool.query(
+    "SELECT * FROM meeting_rooms ORDER BY scheduled_for DESC"
+  );
+  return result.rows.map(mapRow);
+}
