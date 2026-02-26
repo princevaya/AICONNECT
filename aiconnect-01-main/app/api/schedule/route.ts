@@ -1,9 +1,6 @@
 import { success, failure } from "@/app/api/_utils/response";
-import {
-  MeetingRecord,
-  listMeetings,
-  createMeeting,
-} from "@/lib/meetings";
+import { MeetingRecord, listMeetings, listAllMeetings, createMeeting } from "@/lib/meetings";
+import { sendMeetingInvite } from "@/lib/email";
 
 /* ---------- helper ---------- */
 function toClientPayload(meeting: MeetingRecord) {
@@ -15,6 +12,7 @@ function toClientPayload(meeting: MeetingRecord) {
     attendees: meeting.attendees,
     notes: meeting.notes ?? null,
     status: meeting.status,
+    isActive: meeting.isActive,
     link: `/meeting/${meeting.code}`,
     createdAt: meeting.createdAt.toISOString(),
     updatedAt: meeting.updatedAt.toISOString(),
@@ -22,9 +20,13 @@ function toClientPayload(meeting: MeetingRecord) {
 }
 
 /* ---------- GET /api/schedule ---------- */
-export async function GET() {
+// Add ?all=true to get past meetings too
+export async function GET(req: Request) {
   try {
-    const meetings = await listMeetings();
+    const { searchParams } = new URL(req.url);
+    const showAll = searchParams.get("all") === "true";
+
+    const meetings = showAll ? await listAllMeetings() : await listMeetings();
     return success({
       meetings: meetings.map(toClientPayload),
     });
@@ -43,9 +45,7 @@ export async function POST(req: Request) {
       return failure("Invalid payload", 400);
     }
 
-    const title =
-      typeof body.title === "string" ? body.title.trim() : "";
-
+    const title = typeof body.title === "string" ? body.title.trim() : "";
     if (title.length < 3) {
       return failure("Title must be at least 3 characters long", 400);
     }
@@ -59,16 +59,43 @@ export async function POST(req: Request) {
       return failure("Meeting must be scheduled in the future", 400);
     }
 
+    const attendees: string[] = Array.isArray(body.attendees)
+      ? body.attendees
+      : [];
+
     const meeting = await createMeeting({
       title,
       scheduledFor: scheduledDate,
-      attendees: Array.isArray(body.attendees) ? body.attendees : [],
+      attendees,
       notes: body.notes ?? null,
     });
+
+    // Send email invites to all attendees
+    const emailResults = await Promise.allSettled(
+      attendees
+        .filter((a) => a.includes("@")) // only valid emails
+        .map((email) =>
+          sendMeetingInvite({
+            to: email,
+            title: meeting.title,
+            scheduledFor: meeting.scheduledFor,
+            meetingCode: meeting.code,
+            notes: meeting.notes,
+          })
+        )
+    );
+
+    const emailsSent = emailResults.filter(
+      (r) => r.status === "fulfilled"
+    ).length;
+    const emailsFailed = emailResults.filter(
+      (r) => r.status === "rejected"
+    ).length;
 
     return success(
       {
         meeting: toClientPayload(meeting),
+        invites: { sent: emailsSent, failed: emailsFailed },
       },
       201
     );
