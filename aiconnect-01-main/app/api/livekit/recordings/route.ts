@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   EncodedFileOutput,
   EncodedFileType,
@@ -10,12 +8,29 @@ import {
   EgressStatus,
   S3Upload,
 } from "livekit-server-sdk";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import {
   getEgressClient,
+  isActiveEgressStatus,
   mapStatusToLegacyCode,
 } from "@/lib/livekit-server";
-import { setRecordingOwner } from "@/lib/recording-ownership";
+
+const PRESIGNED_URL_EXPIRES_IN = 3600; // 1 hour
+
+function getS3Client(): S3Client | null {
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+  if (!accessKeyId || !secretAccessKey) {
+    return null;
+  }
+  return new S3Client({
+    region,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,16 +109,32 @@ export async function POST(req: NextRequest) {
   try {
     const client = getEgressClient();
 
-    const fileOutput = buildFileOutput(roomName, userId);
+    const activeRecordings = await client.listEgress({
+      roomName,
+      active: true,
+    });
+
+    const existing = activeRecordings.find((info) =>
+      isActiveEgressStatus(info.status)
+    );
+
+    if (existing) {
+      return NextResponse.json({
+        egressId: existing.egressId,
+        status: EgressStatus[existing.status] ?? existing.status,
+        statusCode: mapStatusToLegacyCode(existing.status),
+        message: "Recording already running",
+      });
+    }
+
+    const fileOutput = buildFileOutput(roomName);
     const info = await client.startRoomCompositeEgress(roomName, fileOutput, {
-      // Speaker layout records shared content together with participant context.
-      layout: "speaker",
+      layout: "grid",
       encodingOptions: EncodingOptionsPreset.H264_1080P_30,
       // Ensure we capture both audio and video (explicitly set)
       audioOnly: false,
       videoOnly: false,
     });
-    setRecordingOwner(info.egressId, userId);
 
     return NextResponse.json({
       egressId: info.egressId,
@@ -299,20 +330,30 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
     return null;
   }
 
-  const fallbackHttp = file.location?.startsWith("http")
-    ? file.location
-    : null;
-
   const parsed =
     parseS3Location(file.location) ?? parseHttpS3Location(file.location);
-  if (fallbackHttp) {
-    return fallbackHttp;
-  }
 
   if (parsed?.bucket && parsed?.key) {
-    const signed = await getS3SignedUrl(parsed.bucket, normalizeS3Key(parsed.key));
-    if (signed) return signed;
-    return `s3://${parsed.bucket}/${normalizeS3Key(parsed.key)}`;
+    const key = normalizeS3Key(parsed.key) ?? parsed.key;
+    try {
+      const s3 = getS3Client();
+      if (s3) {
+        const command = new GetObjectCommand({
+          Bucket: parsed.bucket,
+          Key: key,
+        });
+        return await getSignedUrl(s3, command, {
+          expiresIn: PRESIGNED_URL_EXPIRES_IN,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to generate presigned URL for recording", error);
+    }
+  }
+
+  // Fallback: return the raw HTTP URL if it's already public
+  if (file.location?.startsWith("http")) {
+    return file.location;
   }
 
   return null;
@@ -385,13 +426,10 @@ function normalizeS3Key(key?: string | null) {
   return key.replace(/^\/+/, "");
 }
 
-function buildFileOutput(roomName: string, userId: string): EncodedFileOutput {
+function buildFileOutput(roomName: string): EncodedFileOutput {
   const aws = getAwsConfig();
-  const safeRoom = roomName.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const day = new Date().toISOString().slice(0, 10);
-  const safeUser = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filepath = `meeting/recordings/${safeRoom}/${safeUser}/${day}/${timestamp}.mp4`;
+  const filepath = `recordings/${roomName}/${timestamp}.mp4`;
 
   return new EncodedFileOutput({
     fileType: EncodedFileType.MP4,
@@ -412,43 +450,12 @@ function buildFileOutput(roomName: string, userId: string): EncodedFileOutput {
 function getAwsConfig(): AwsConfig {
   const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+  const region = process.env.AWS_REGION;
   const bucket = process.env.AWS_S3_BUCKET;
 
   if (!accessKeyId || !secretAccessKey || !region || !bucket) {
-    const missing: string[] = [];
-    if (!accessKeyId) missing.push("AWS_ACCESS_KEY_ID");
-    if (!secretAccessKey) missing.push("AWS_SECRET_ACCESS_KEY");
-    if (!region) missing.push("AWS_REGION/AWS_DEFAULT_REGION");
-    if (!bucket) missing.push("AWS_S3_BUCKET");
-    throw new Error(
-      `AWS S3 is not configured for recordings. Missing: ${missing.join(", ")}`
-    );
+    throw new Error("AWS S3 is not configured for recordings");
   }
 
   return { accessKeyId, secretAccessKey, region, bucket };
-}
-
-async function getS3SignedUrl(bucket: string, key?: string) {
-  if (!key) return null;
-  try {
-    const aws = getAwsConfig();
-    const client = new S3Client({
-      region: aws.region,
-      credentials: {
-        accessKeyId: aws.accessKeyId,
-        secretAccessKey: aws.secretAccessKey,
-      },
-    });
-    return await getSignedUrl(
-      client,
-      new GetObjectCommand({
-        Bucket: bucket,
-        Key: key,
-      }),
-      { expiresIn: 60 * 60 * 24 }
-    );
-  } catch {
-    return null;
-  }
 }

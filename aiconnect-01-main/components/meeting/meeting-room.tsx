@@ -1,5 +1,5 @@
 ﻿"use client";
-
+import VSCodeEditor from "./vscode-editor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
@@ -39,7 +39,6 @@ import ParticipantsPanel, { ParticipantEntry } from "@/components/meeting/partic
 import ChatWindow from "@/components/chat/ChatWindow";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import LiveCodePanel from "./live-code-panel";
 import ThemeToggle from "@/components/navigation/theme-toggle";
 
 interface MeetingRoomProps {
@@ -2061,8 +2060,27 @@ export default function MeetingRoom({
 
   return (
     <div className="relative h-[100dvh] min-h-[100dvh] flex flex-col bg-background text-foreground">
-      {showLiveCode ? <LiveCodePanel code={code} onChange={setCode} /> : null}
+      {showLiveCode ? (
+  <div className="absolute inset-0 z-[10050] bg-black/80 p-4">
+    <div className="h-full w-full bg-gray-900 rounded-xl p-3">
+      <div className="flex justify-between mb-2">
+        <span className="text-white font-semibold">Live Coding</span>
 
+        <button
+          onClick={() => setShowLiveCode(false)}
+          className="text-white bg-red-500 px-3 py-1 rounded"
+        >
+          Close
+        </button>
+      </div>
+
+      <VSCodeEditor
+  room={roomRef.current}
+  roomId={roomName}
+/>
+    </div>
+  </div>
+) : null}
       {showCaption ? (
         <div className="fixed bottom-28 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-card/90 px-3 py-2 text-xs text-foreground shadow-sm sm:bottom-36 sm:px-4 sm:text-sm z-[9999]">
           {captionText || "Listening..."}
