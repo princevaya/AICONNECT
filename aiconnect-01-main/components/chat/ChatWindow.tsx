@@ -273,12 +273,16 @@ export default function ChatWindow({
 
   const publishData = useCallback(
     async (payload: ChatWireMessage, _reliable = true) => {
-      const response = await fetch(`/api/realtime/${encodeURIComponent(roomId)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ senderId: meId, payload }),
-      });
-      return response.ok;
+      try {
+        const response = await fetch(`/api/realtime/${encodeURIComponent(roomId)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ senderId: meId, payload }),
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
     },
     [meId, roomId]
   );

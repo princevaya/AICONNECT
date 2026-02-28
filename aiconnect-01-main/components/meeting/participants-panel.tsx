@@ -7,6 +7,7 @@ export type ParticipantEntry = {
   name: string;
   isLocal?: boolean;
   isSpeaking?: boolean;
+  isRecording?: boolean;
   micEnabled?: boolean;
   cameraEnabled?: boolean;
   screenShareEnabled?: boolean;
@@ -114,12 +115,20 @@ export default function ParticipantsPanel({
                     {participant.isLocal ? " (You)" : ""}
                   </p>
                 </div>
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    participant.isSpeaking ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/60"
-                  }`}
-                  title={participant.isSpeaking ? "Speaking" : "Not speaking"}
-                />
+                <div className="flex items-center gap-1.5">
+                  {participant.isRecording ? (
+                    <span
+                      className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse"
+                      title="Recording in progress"
+                    />
+                  ) : null}
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      participant.isSpeaking ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/60"
+                    }`}
+                    title={participant.isSpeaking ? "Speaking" : "Not speaking"}
+                  />
+                </div>
               </div>
 
               <div className="mt-2 flex items-center gap-2 text-muted-foreground">
