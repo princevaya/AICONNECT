@@ -3,85 +3,80 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
-import PreJoinScreen from "@/components/meeting/pre-join-screen";
 import MeetingRoom from "@/components/meeting/meeting-room";
 
 export default function MeetingPage() {
   const params = useParams();
   const router = useRouter();
   const { user, isLoaded } = useUser();
-  const [hasJoined, setHasJoined] = useState(false);
-  const [participantName, setParticipantName] = useState("");
-  const [videoEnabled, setVideoEnabled] = useState(true);
-  const [audioEnabled, setAudioEnabled] = useState(true);
-  const [videoDeviceId, setVideoDeviceId] = useState<string | undefined>(undefined);
-  const [audioDeviceId, setAudioDeviceId] = useState<string | undefined>(undefined);
 
   const meetingCode = params.code as string;
 
+  const [pendingUsers, setPendingUsers] = useState<string[]>([]);
+
+  // 🔥 HOST POLLING
   useEffect(() => {
-    // If no meeting code or user not loaded, redirect to dashboard
-    if (!meetingCode || (isLoaded && !user)) {
-      router.push("/dashboard");
-    }
-  }, [meetingCode, router, isLoaded, user]);
+    if (!meetingCode) return;
 
-  const handleJoin = (
-    name: string,
-    roomName?: string,
-    video?: boolean,
-    audio?: boolean,
-    selectedVideoDeviceId?: string,
-    selectedAudioDeviceId?: string
-  ) => {
-    const fallbackName =
-      user?.fullName || user?.firstName || user?.username || "User";
-    setParticipantName(name.trim() || fallbackName);
-    setVideoEnabled(video ?? true);
-    setAudioEnabled(audio ?? true);
-    setVideoDeviceId(selectedVideoDeviceId);
-    setAudioDeviceId(selectedAudioDeviceId);
-    setHasJoined(true);
+    const interval = setInterval(async () => {
+      const res = await fetch(
+        `/api/get-pending?roomId=${meetingCode}`
+      );
+      const data = await res.json();
+      setPendingUsers(data.pending || []);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [meetingCode]);
+
+  const approveUser = async (name: string) => {
+    await fetch("/api/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        roomId: meetingCode,
+        name,
+      }),
+    });
   };
 
-  const handleLeave = () => {
-    setHasJoined(false);
-    setParticipantName("");
-    setVideoDeviceId(undefined);
-    setAudioDeviceId(undefined);
-    router.push("/dashboard");
-  };
-
-  if (!meetingCode || !isLoaded) {
-    return null;
-  }
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-lg mb-4">Please sign in to join the meeting</p>
-          <Button onClick={() => router.push("/auth/sign-in")}>Sign In</Button>
-        </div>
-      </div>
-    );
-  }
+  if (!meetingCode || !isLoaded || !user) return null;
 
   return (
-    <div className="min-h-screen bg-background">
-      {!hasJoined ? (
-        <PreJoinScreen onJoin={handleJoin} meetingCode={meetingCode} />
-      ) : (
-        <MeetingRoom
-          roomName={meetingCode}
-          participantName={participantName}
-          videoEnabled={videoEnabled}
-          audioEnabled={audioEnabled}
-          videoDeviceId={videoDeviceId}
-          audioDeviceId={audioDeviceId}
-          onLeave={handleLeave}
-        />
+    <div className="min-h-screen bg-background relative">
+      <MeetingRoom
+        roomName={meetingCode}
+        participantName={user.fullName || "Host"}
+        videoEnabled={true}
+        audioEnabled={true}
+        onLeave={() => router.push("/dashboard")}
+      />
+
+      {/* 🔥 Pending Popup */}
+      {pendingUsers.length > 0 && (
+        <div className="fixed top-6 right-6 bg-white shadow-xl p-4 rounded-lg space-y-3 z-50 w-72">
+          <h3 className="font-semibold text-lg">
+            Waiting to join
+          </h3>
+
+          {pendingUsers.map((name) => (
+            <div
+              key={name}
+              className="flex justify-between items-center"
+            >
+              <span>{name}</span>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => approveUser(name)}
+                  className="bg-green-500 text-white px-3 py-1 rounded"
+                >
+                  Approve
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
