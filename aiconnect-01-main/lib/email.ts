@@ -1,6 +1,12 @@
-import { Resend } from "resend";
+import nodemailer from "nodemailer";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
 export async function sendMeetingInvite({
   to,
@@ -22,8 +28,8 @@ export async function sendMeetingInvite({
     timeZone: "Asia/Kolkata",
   });
 
-  await resend.emails.send({
-    from: "AIConnect <onboarding@resend.dev>",
+  await transporter.sendMail({
+    from: `"AIConnect Meetings" <${process.env.GMAIL_USER}>`,
     to,
     subject: `Meeting Invite: ${title}`,
     html: `
