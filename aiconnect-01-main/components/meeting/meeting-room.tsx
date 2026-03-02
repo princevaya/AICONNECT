@@ -33,6 +33,8 @@ import {
   Square,
   Eraser,
   Highlighter,
+  Link2,
+  Check,
 } from "lucide-react";
 import { ConnectionState, Participant, Room, RoomEvent, Track, TrackPublication } from "livekit-client";
 import ParticipantsPanel, { ParticipantEntry } from "@/components/meeting/participants-panel";
@@ -460,6 +462,8 @@ export default function MeetingRoom({
   >("idle");
   const [recordingEgressId, setRecordingEgressId] = useState<string>("");
   const [recordingMessage, setRecordingMessage] = useState("");
+  const [meetingInviteLink, setMeetingInviteLink] = useState("");
+  const [meetingLinkCopied, setMeetingLinkCopied] = useState(false);
   const [participants, setParticipants] = useState<ParticipantView[]>([]);
   const [raisedHands, setRaisedHands] = useState<Record<string, boolean>>({});
   const [code, setCode] = useState(`export default function App() {
@@ -489,6 +493,33 @@ export default function MeetingRoom({
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`
   );
   const displayName = useMemo(() => participantName || "User", [participantName]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !roomName) {
+      setMeetingInviteLink("");
+      return;
+    }
+
+    setMeetingInviteLink(
+      `${window.location.origin}/meeting/join?room=${encodeURIComponent(roomName)}`
+    );
+  }, [roomName]);
+
+  const copyMeetingLink = useCallback(async () => {
+    if (!meetingInviteLink) {
+      setMeetingLinkCopied(false);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(meetingInviteLink);
+      setMeetingLinkCopied(true);
+      window.setTimeout(() => setMeetingLinkCopied(false), 1800);
+    } catch {
+      setMeetingLinkCopied(false);
+      setRecordingMessage("Unable to copy link. Please copy manually.");
+    }
+  }, [meetingInviteLink]);
 
   useEffect(() => {
     desiredCameraEnabledRef.current = Boolean(videoEnabled);
@@ -2936,6 +2967,22 @@ export default function MeetingRoom({
 
       <div className="relative border-t border-border bg-background/90 backdrop-blur-md">
         <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => void copyMeetingLink()}
+            disabled={!meetingInviteLink}
+            className="rounded-full h-9 px-3 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+            title="Copy meeting link"
+          >
+            {meetingLinkCopied ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Link2 className="h-4 w-4" />
+            )}
+            <span className="ml-1 hidden sm:inline">
+              {meetingLinkCopied ? "Copied" : "Copy link"}
+            </span>
+          </Button>
           <div className="rounded-full bg-secondary text-secondary-foreground shadow-sm">
             <ThemeToggle />
           </div>
