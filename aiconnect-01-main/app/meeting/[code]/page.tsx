@@ -6,17 +6,9 @@ import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  X,
-  User,
-  Check,
-  Loader2,
-  Copy,
-  XCircle
-} from "lucide-react";
+import { X } from "lucide-react";
 
 export default function MeetingPage() {
-
   const params = useParams();
   const router = useRouter();
   const { user, isLoaded } = useUser();
@@ -26,272 +18,129 @@ export default function MeetingPage() {
   const [pendingUsers, setPendingUsers] = useState<string[]>([]);
   const [inviteLink, setInviteLink] = useState("");
   const [showInvitePopup, setShowInvitePopup] = useState(true);
-  const [approving, setApproving] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-
-  // create invite link
   useEffect(() => {
+    if (!meetingCode || typeof window === "undefined") {
+      return;
+    }
 
-    if (!meetingCode || typeof window === "undefined") return;
-
-    setInviteLink(
-      `${window.location.origin}/meeting/join?room=${meetingCode}`
-    );
-
+    const link = `${window.location.origin}/meeting/join?room=${encodeURIComponent(meetingCode)}`;
+    setInviteLink(link);
+    setShowInvitePopup(true);
   }, [meetingCode]);
 
-
-  // polling pending users
+  // 🔥 HOST POLLING
   useEffect(() => {
-
     if (!meetingCode) return;
 
     const interval = setInterval(async () => {
-
       const res = await fetch(
-        `/api/get-pending?roomId=${meetingCode}`,
-        { cache: "no-store" }
+        `/api/get-pending?roomId=${meetingCode}`
       );
-
       const data = await res.json();
-
-      setPendingUsers(Array.isArray(data) ? data : []);
-
+      setPendingUsers(data.pending || []);
     }, 2000);
 
     return () => clearInterval(interval);
-
   }, [meetingCode]);
 
-
-  // approve user
   const approveUser = async (name: string) => {
-
-    setApproving(name);
-
     await fetch("/api/approve", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         roomId: meetingCode,
         name,
       }),
     });
-
-    setPendingUsers(prev =>
-      prev.filter(u => u !== name)
-    );
-
-    setApproving(null);
-
   };
 
-
-  // deny user
-  const denyUser = (name: string) => {
-
-    setPendingUsers(prev =>
-      prev.filter(u => u !== name)
-    );
-
+  const copyMeetingLink = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+      alert("Unable to copy link. Please copy it manually.");
+    }
   };
 
-
-  // copy link
-  const copyLink = async () => {
-
-    await navigator.clipboard.writeText(inviteLink);
-
-    setCopied(true);
-
-    setTimeout(() => setCopied(false), 2000);
-
-  };
-
-
-  if (!meetingCode || !user || !isLoaded) return null;
-
+  if (!meetingCode || !isLoaded || !user) return null;
 
   return (
-
-    <div className="min-h-screen relative">
-
+    <div className="min-h-screen bg-background relative">
       <MeetingRoom
         roomName={meetingCode}
         participantName={user.fullName || "Host"}
-        videoEnabled
-        audioEnabled
+        videoEnabled={true}
+        audioEnabled={true}
         onLeave={() => router.push("/dashboard")}
       />
 
-
-      {/* INVITE POPUP */}
+      {/* Meeting Link Popup (Google Meet style) */}
       {showInvitePopup && (
-
-        <div className="fixed bottom-24 left-6 bg-zinc-900 text-white p-4 rounded-xl shadow-xl w-80 z-50">
-
-          <div className="flex justify-between">
-
+        <div className="fixed left-6 bottom-24 z-50 w-[min(92vw,380px)] rounded-xl border bg-card p-4 shadow-xl">
+          <div className="mb-3 flex items-start justify-between gap-3">
             <div>
-
-              <h3 className="font-semibold text-sm">
-                Your meeting is ready
-              </h3>
-
-              <p className="text-xs text-zinc-400">
-                Share this link
+              <h3 className="text-base font-semibold">Your meeting is ready</h3>
+              <p className="text-sm text-muted-foreground">
+                Share this link so others can join this meeting.
               </p>
-
             </div>
-
-            <X
-              size={18}
-              className="cursor-pointer"
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
               onClick={() => setShowInvitePopup(false)}
-            />
-
-          </div>
-
-
-          {/* FIXED LINK FIELD */}
-          <div className="flex gap-2 mt-3">
-
-            <input
-              value={inviteLink}
-              readOnly
-              className="
-                bg-white
-                text-black
-                text-xs
-                px-2
-                py-2
-                rounded
-                w-full
-                outline-none
-              "
-            />
-
-            <button
-              onClick={copyLink}
-              className="
-                bg-white
-                text-black
-                px-2
-                rounded
-                hover:bg-gray-200
-              "
+              aria-label="Close meeting link popup"
             >
-              <Copy size={16}/>
-            </button>
-
+              <X className="h-4 w-4" />
+            </Button>
           </div>
 
-          {copied && (
-            <p className="text-green-400 text-xs mt-1">
-              Link copied
-            </p>
-          )}
-
+          <div className="space-y-2">
+            <Input value={inviteLink} readOnly />
+            <div className="flex items-center justify-between gap-2">
+              <Button onClick={copyMeetingLink} disabled={!inviteLink}>
+                Copy link
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {copied ? "Link copied" : "Anyone with this link can request to join"}
+              </span>
+            </div>
+          </div>
         </div>
-
       )}
 
-
-
-      {/* APPROVAL POPUP */}
+      {/* 🔥 Pending Popup */}
       {pendingUsers.length > 0 && (
+        <div className="fixed top-6 right-6 bg-white shadow-xl p-4 rounded-lg space-y-3 z-50 w-72">
+          <h3 className="font-semibold text-lg">
+            Waiting to join
+          </h3>
 
-        <div className="fixed top-6 right-6 space-y-3 z-50">
-
-          {pendingUsers.map(name => (
-
+          {pendingUsers.map((name) => (
             <div
               key={name}
-              className="
-                bg-white
-                shadow-xl
-                rounded-xl
-                p-4
-                w-80
-                border
-                flex
-                items-center
-                justify-between
-              "
+              className="flex justify-between items-center"
             >
+              <span>{name}</span>
 
-              <div className="flex items-center gap-3">
-
-                <div className="bg-blue-100 p-2 rounded-full">
-                  <User size={18}/>
-                </div>
-
-                <div>
-
-                  <p className="font-medium text-sm">
-                    {name}
-                  </p>
-
-                  <p className="text-xs text-gray-500">
-                    wants to join
-                  </p>
-
-                </div>
-
-              </div>
-
-
-              {/* buttons */}
               <div className="flex gap-2">
-
-                {/* APPROVE BLUE */}
                 <button
                   onClick={() => approveUser(name)}
-                  disabled={approving === name}
-                  className="
-                    bg-blue-600
-                    hover:bg-blue-700
-                    text-white
-                    p-2
-                    rounded
-                  "
+                  className="bg-green-500 text-white px-3 py-1 rounded"
                 >
-                  {approving === name
-                    ? <Loader2 className="animate-spin" size={16}/>
-                    : <Check size={16}/>
-                  }
+                  Approve
                 </button>
-
-
-                {/* DENY RED */}
-                <button
-                  onClick={() => denyUser(name)}
-                  className="
-                    bg-red-600
-                    hover:bg-red-700
-                    text-white
-                    p-2
-                    rounded
-                  "
-                >
-                  <XCircle size={16}/>
-                </button>
-
               </div>
-
             </div>
-
           ))}
-
         </div>
-
       )}
-
     </div>
-
   );
-
 }

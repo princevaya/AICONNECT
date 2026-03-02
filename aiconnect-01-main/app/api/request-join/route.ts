@@ -2,23 +2,13 @@ import { NextResponse } from "next/server";
 import { rooms } from "@/app/api/_utils/roomStore";
 
 export async function POST(req: Request) {
-  const body = await req.json();
-
-  const roomId = body.roomId || body.room;
-  const name = body.name || body.username;
-
-  console.log("JOIN REQUEST:", roomId, name);
+  const { roomId, name } = await req.json();
 
   if (!rooms[roomId]) {
-  rooms[roomId] = {
-    hostCreatedAt: new Date(),
-    pending: [],
-    approved: [],
-  };
-}
-  rooms[roomId].pending.push(name);
+    return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  }
 
-  console.log("ROOM STATE:", rooms[roomId]);
+  rooms[roomId].pending.push(name);
 
   return NextResponse.json({ status: "waiting" });
 }

@@ -4,7 +4,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import PreJoinScreen from "@/components/meeting/pre-join-screen";
 
 export default function JoinMeetingPage() {
-
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -13,27 +12,17 @@ export default function JoinMeetingPage() {
 
   const handleJoin = (
     name: string,
-    roomName?: string,
-    video?: boolean,
-    audio?: boolean
+    roomName?: string
   ) => {
-
     if (!roomName) return;
-
-    // ✅ direct join
     router.push(`/meeting/${roomName}`);
-
   };
 
-
   return (
-
     <PreJoinScreen
       onJoin={handleJoin}
       meetingCode={meetingCode}
       isHost={false}
     />
-
   );
-
 }
