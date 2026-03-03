@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
@@ -24,15 +24,23 @@ export default function MeetingPage() {
   const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [isApprovalPanelCollapsed, setIsApprovalPanelCollapsed] = useState(false);
+  const mutationVersionRef = useRef(0);
+  const [isModerating, setIsModerating] = useState(false);
 
   useEffect(() => {
     if (!meetingCode || !isHost) return;
 
     const pollPending = async () => {
+      const pollVersion = mutationVersionRef.current;
       setIsLoadingPending(true);
       try {
-        const res = await fetch(`/api/get-pending?roomId=${meetingCode}`);
+        const res = await fetch(`/api/get-pending?roomId=${meetingCode}`, {
+          cache: "no-store",
+        });
         const data = await res.json();
+        if (pollVersion !== mutationVersionRef.current) {
+          return;
+        }
         setPendingUsers(data.pending || []);
       } catch {
         setApprovalError("Unable to refresh join requests.");
@@ -50,48 +58,64 @@ export default function MeetingPage() {
   }, [meetingCode, isHost]);
 
   const moderateUser = async (name: string, action: "approve" | "reject") => {
+    setIsModerating(true);
+    mutationVersionRef.current += 1;
     setApprovalError(null);
-    const res = await fetch("/api/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomId: meetingCode,
-        name,
-        action: action === "reject" ? "reject" : "approve",
-      }),
-    });
+    try {
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          name,
+          action: action === "reject" ? "reject" : "approve",
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setApprovalError(data.error || "Failed to update join request.");
-      return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setApprovalError(data.error || "Failed to update join request.");
+        return;
+      }
+
+      setPendingUsers((prev) => prev.filter((u) => u !== name));
+      setApprovalMessage(action === "reject" ? `${name} rejected` : `${name} approved`);
+    } catch {
+      setApprovalError("Network error while updating join request.");
+    } finally {
+      setIsModerating(false);
     }
-
-    setPendingUsers((prev) => prev.filter((u) => u !== name));
-    setApprovalMessage(action === "reject" ? `${name} rejected` : `${name} approved`);
   };
 
   const approveAll = async () => {
     if (pendingUsers.length === 0) return;
 
+    setIsModerating(true);
+    mutationVersionRef.current += 1;
     setApprovalError(null);
-    const res = await fetch("/api/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomId: meetingCode,
-        action: "all",
-      }),
-    });
+    try {
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          action: "all",
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setApprovalError(data.error || "Failed to approve all requests.");
-      return;
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setApprovalError(data.error || "Failed to approve all requests.");
+        return;
+      }
+
+      setApprovalMessage(`Approved ${pendingUsers.length} request(s)`);
+      setPendingUsers([]);
+    } catch {
+      setApprovalError("Network error while approving requests.");
+    } finally {
+      setIsModerating(false);
     }
-
-    setApprovalMessage(`Approved ${pendingUsers.length} request(s)`);
-    setPendingUsers([]);
   };
 
   if (!meetingCode || !isLoaded || !user) return null;
@@ -146,6 +170,7 @@ export default function MeetingPage() {
             <>
               <Button
                 onClick={approveAll}
+                disabled={isModerating}
                 className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
               >
                 Approve all
@@ -161,6 +186,7 @@ export default function MeetingPage() {
                     <Button
                       onClick={() => moderateUser(name, "approve")}
                       size="sm"
+                      disabled={isModerating}
                       className="h-8 bg-emerald-600 px-2 text-sm text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
                     >
                       Approve
@@ -169,6 +195,7 @@ export default function MeetingPage() {
                       onClick={() => moderateUser(name, "reject")}
                       size="sm"
                       variant="destructive"
+                      disabled={isModerating}
                       className="h-8 px-2 text-sm"
                     >
                       Reject

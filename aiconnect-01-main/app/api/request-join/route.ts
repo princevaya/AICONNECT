@@ -1,14 +1,26 @@
 import { NextResponse } from "next/server";
-import { rooms } from "@/app/api/_utils/roomStore";
+import {
+  ensureRoom,
+  normalizeParticipantName,
+  normalizeRoomId,
+} from "@/app/api/_utils/roomStore";
 
 export async function POST(req: Request) {
-  const { roomId, name } = await req.json();
+  const body = await req.json();
+  const roomId = typeof body?.roomId === "string" ? normalizeRoomId(body.roomId) : "";
+  const name =
+    typeof body?.name === "string" ? normalizeParticipantName(body.name) : "";
 
-  if (!rooms[roomId]) {
-    return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  if (!roomId || !name) {
+    return NextResponse.json({ error: "Room ID and name are required" }, { status: 400 });
   }
 
-  rooms[roomId].pending.push(name);
+  const room = ensureRoom(roomId);
+
+  if (!room.pending.includes(name) && !room.approved.includes(name)) {
+    room.pending.push(name);
+  }
+  room.rejected = room.rejected.filter((u) => u !== name);
 
   return NextResponse.json({ status: "waiting" });
 }
