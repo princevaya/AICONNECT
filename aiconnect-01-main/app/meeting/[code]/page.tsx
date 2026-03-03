@@ -1,70 +1,219 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { X } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function MeetingPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, isLoaded } = useUser();
 
   const meetingCode = params.code as string;
+  const isHost = searchParams.get("host") === "1";
+  const participantName =
+    searchParams.get("name")?.trim() || user?.fullName?.trim() || "Host";
+  const videoEnabled = searchParams.get("video") !== "0";
+  const audioEnabled = searchParams.get("audio") !== "0";
 
   const [pendingUsers, setPendingUsers] = useState<string[]>([]);
-  const [inviteLink, setInviteLink] = useState("");
-  const [showInvitePopup, setShowInvitePopup] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
+  const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [isHostPanelCollapsed, setIsHostPanelCollapsed] = useState(false);
+  const mutationVersionRef = useRef(0);
+  const [isModerating, setIsModerating] = useState(false);
+  const [shareLink, setShareLink] = useState("");
+  const [linkCopiedMessage, setLinkCopiedMessage] = useState<string | null>(null);
+  const [hostSettings, setHostSettings] = useState({
+    autoApprove: false,
+    isLocked: false,
+  });
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!meetingCode || typeof window === "undefined") {
-      return;
-    }
+    if (!meetingCode || !isHost) return;
 
-    const link = `${window.location.origin}/meeting/join?room=${encodeURIComponent(meetingCode)}`;
-    setInviteLink(link);
-    setShowInvitePopup(true);
-  }, [meetingCode]);
+    const pollPending = async () => {
+      const pollVersion = mutationVersionRef.current;
+      setIsLoadingPending(true);
+      try {
+        const res = await fetch(`/api/get-pending?roomId=${meetingCode}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (pollVersion !== mutationVersionRef.current) {
+          return;
+        }
+        setPendingUsers(data.pending || []);
+      } catch {
+        setApprovalError("Unable to refresh join requests.");
+      } finally {
+        setIsLoadingPending(false);
+      }
+    };
 
-  // 🔥 HOST POLLING
-  useEffect(() => {
-    if (!meetingCode) return;
-
-    const interval = setInterval(async () => {
-      const res = await fetch(
-        `/api/get-pending?roomId=${meetingCode}`
-      );
-      const data = await res.json();
-      setPendingUsers(data.pending || []);
+    void pollPending();
+    const interval = setInterval(() => {
+      void pollPending();
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [meetingCode]);
+  }, [meetingCode, isHost]);
 
-  const approveUser = async (name: string) => {
-    await fetch("/api/approve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomId: meetingCode,
-        name,
-      }),
-    });
+  useEffect(() => {
+    if (!meetingCode || !isHost) return;
+    if (typeof window !== "undefined") {
+      setShareLink(`${window.location.origin}/meeting/join?room=${meetingCode}`);
+    }
+  }, [meetingCode, isHost]);
+
+  useEffect(() => {
+    if (!meetingCode || !isHost) return;
+
+    const loadSettings = async () => {
+      setIsLoadingSettings(true);
+      setSettingsError(null);
+      try {
+        const res = await fetch(`/api/room-settings?roomId=${meetingCode}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setSettingsError(data.error || "Unable to load host settings.");
+          return;
+        }
+        const data = await res.json();
+        setHostSettings({
+          autoApprove: Boolean(data?.settings?.autoApprove),
+          isLocked: Boolean(data?.settings?.isLocked),
+        });
+      } catch {
+        setSettingsError("Unable to load host settings.");
+      } finally {
+        setIsLoadingSettings(false);
+      }
+    };
+
+    void loadSettings();
+  }, [meetingCode, isHost]);
+
+  const moderateUser = async (name: string, action: "approve" | "reject") => {
+    setIsModerating(true);
+    mutationVersionRef.current += 1;
+    setApprovalError(null);
+    try {
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          name,
+          action: action === "reject" ? "reject" : "approve",
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setApprovalError(data.error || "Failed to update join request.");
+        return;
+      }
+
+      setPendingUsers((prev) => prev.filter((u) => u !== name));
+      setApprovalMessage(action === "reject" ? `${name} rejected` : `${name} approved`);
+    } catch {
+      setApprovalError("Network error while updating join request.");
+    } finally {
+      setIsModerating(false);
+    }
   };
 
-  const copyMeetingLink = async () => {
-    if (!inviteLink) return;
+  const approveAll = async () => {
+    if (pendingUsers.length === 0) return;
+
+    setIsModerating(true);
+    mutationVersionRef.current += 1;
+    setApprovalError(null);
     try {
-      await navigator.clipboard.writeText(inviteLink);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      const res = await fetch("/api/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          action: "all",
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setApprovalError(data.error || "Failed to approve all requests.");
+        return;
+      }
+
+      setApprovalMessage(`Approved ${pendingUsers.length} request(s)`);
+      setPendingUsers([]);
     } catch {
-      setCopied(false);
-      alert("Unable to copy link. Please copy it manually.");
+      setApprovalError("Network error while approving requests.");
+    } finally {
+      setIsModerating(false);
+    }
+  };
+
+  const copyText = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setLinkCopiedMessage(successMessage);
+      setTimeout(() => setLinkCopiedMessage(null), 2000);
+    } catch {
+      setLinkCopiedMessage("Unable to copy. Please copy manually.");
+      setTimeout(() => setLinkCopiedMessage(null), 2500);
+    }
+  };
+
+  const updateHostSettings = async (nextSettings: {
+    autoApprove: boolean;
+    isLocked: boolean;
+  }) => {
+    setIsSavingSettings(true);
+    setSettingsError(null);
+    setSettingsMessage(null);
+    try {
+      const res = await fetch("/api/room-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          autoApprove: nextSettings.autoApprove,
+          isLocked: nextSettings.isLocked,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSettingsError(data.error || "Unable to save host settings.");
+        return;
+      }
+      setHostSettings(nextSettings);
+      const pendingRes = await fetch(`/api/get-pending?roomId=${meetingCode}`, {
+        cache: "no-store",
+      });
+      if (pendingRes.ok) {
+        const pendingData = await pendingRes.json().catch(() => ({}));
+        setPendingUsers(pendingData.pending || []);
+      }
+      setSettingsMessage("Host settings saved.");
+      setTimeout(() => setSettingsMessage(null), 2000);
+    } catch {
+      setSettingsError("Unable to save host settings.");
+    } finally {
+      setIsSavingSettings(false);
     }
   };
 
@@ -74,71 +223,202 @@ export default function MeetingPage() {
     <div className="min-h-screen bg-background relative">
       <MeetingRoom
         roomName={meetingCode}
-        participantName={user.fullName || "Host"}
-        videoEnabled={true}
-        audioEnabled={true}
+        participantName={participantName}
+        videoEnabled={videoEnabled}
+        audioEnabled={audioEnabled}
         onLeave={() => router.push("/dashboard")}
       />
 
-      {/* Meeting Link Popup (Google Meet style) */}
-      {showInvitePopup && (
-        <div className="fixed left-6 bottom-24 z-50 w-[min(92vw,380px)] rounded-xl border bg-card p-4 shadow-xl">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold">Your meeting is ready</h3>
-              <p className="text-sm text-muted-foreground">
-                Share this link so others can join this meeting.
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setShowInvitePopup(false)}
-              aria-label="Close meeting link popup"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <div className="space-y-2">
-            <Input value={inviteLink} readOnly />
-            <div className="flex items-center justify-between gap-2">
-              <Button onClick={copyMeetingLink} disabled={!inviteLink}>
-                Copy link
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                {copied ? "Link copied" : "Anyone with this link can request to join"}
-              </span>
-            </div>
-          </div>
-        </div>
+      {isHost && isHostPanelCollapsed && (
+        <Button
+          onClick={() => setIsHostPanelCollapsed(false)}
+          size="sm"
+          className="fixed top-6 right-6 z-50 rounded-full shadow-lg"
+        >
+          Host Panel ({pendingUsers.length})
+        </Button>
       )}
 
-      {/* 🔥 Pending Popup */}
-      {pendingUsers.length > 0 && (
-        <div className="fixed top-6 right-6 bg-white shadow-xl p-4 rounded-lg space-y-3 z-50 w-72">
-          <h3 className="font-semibold text-lg">
-            Waiting to join
-          </h3>
+      {isHost && !isHostPanelCollapsed && (
+        <div className="fixed top-6 right-6 z-50 w-[25rem] space-y-3 rounded-lg border border-border bg-card/95 p-4 text-card-foreground shadow-xl backdrop-blur-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-lg">Host Panel</h3>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {isLoadingPending ? "Refreshing..." : `${pendingUsers.length} pending`}
+              </span>
+              <Button
+                onClick={() => setIsHostPanelCollapsed(true)}
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+              >
+                Minimize
+              </Button>
+            </div>
+          </div>
 
-          {pendingUsers.map((name) => (
-            <div
-              key={name}
-              className="flex justify-between items-center"
-            >
-              <span>{name}</span>
+          <Tabs defaultValue="requests" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="requests">Requests</TabsTrigger>
+              <TabsTrigger value="info">Meeting Info</TabsTrigger>
+              <TabsTrigger value="settings">Host Settings</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="requests" className="space-y-3">
+              {approvalMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
+              ) : null}
+              {approvalError ? (
+                <p className="text-sm text-destructive">{approvalError}</p>
+              ) : null}
+
+              {pendingUsers.length > 0 ? (
+                <>
+                  <Button
+                    onClick={approveAll}
+                    disabled={isModerating}
+                    className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                  >
+                    Approve all
+                  </Button>
+
+                  {pendingUsers.map((name) => (
+                    <div
+                      key={name}
+                      className="flex items-center justify-between rounded-md border border-border bg-background/40 px-2 py-2"
+                    >
+                      <span className="truncate pr-2">{name}</span>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => moderateUser(name, "approve")}
+                          size="sm"
+                          disabled={isModerating}
+                          className="h-8 bg-emerald-600 px-2 text-sm text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          onClick={() => moderateUser(name, "reject")}
+                          size="sm"
+                          variant="destructive"
+                          disabled={isModerating}
+                          className="h-8 px-2 text-sm"
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">No pending requests right now.</p>
+              )}
+            </TabsContent>
+
+            <TabsContent value="info" className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Room code</p>
+                <div className="flex gap-2">
+                  <Input value={meetingCode} readOnly className="h-9" />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => copyText(meetingCode, "Room code copied")}
+                  >
+                    Copy
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Share link</p>
+                <div className="flex gap-2">
+                  <Input value={shareLink} readOnly className="h-9" />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => copyText(shareLink, "Invite link copied")}
+                    disabled={!shareLink}
+                  >
+                    Copy
+                  </Button>
+                </div>
+              </div>
 
               <div className="flex gap-2">
-                <button
-                  onClick={() => approveUser(name)}
-                  className="bg-green-500 text-white px-3 py-1 rounded"
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    if (shareLink) window.open(shareLink, "_blank", "noopener,noreferrer");
+                  }}
+                  disabled={!shareLink}
                 >
-                  Approve
-                </button>
+                  Open Join Page
+                </Button>
               </div>
-            </div>
-          ))}
+
+              {linkCopiedMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{linkCopiedMessage}</p>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="settings" className="space-y-3">
+              {isLoadingSettings ? (
+                <p className="text-sm text-muted-foreground">Loading settings...</p>
+              ) : (
+                <>
+                  <label className="flex items-start gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-emerald-600"
+                      checked={hostSettings.autoApprove}
+                      disabled={isSavingSettings}
+                      onChange={(e) =>
+                        void updateHostSettings({
+                          ...hostSettings,
+                          autoApprove: e.target.checked,
+                        })
+                      }
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Auto-approve requests</p>
+                      <p className="text-xs text-muted-foreground">
+                        New participants are approved immediately without manual action.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-rose-600"
+                      checked={hostSettings.isLocked}
+                      disabled={isSavingSettings}
+                      onChange={(e) =>
+                        void updateHostSettings({
+                          ...hostSettings,
+                          isLocked: e.target.checked,
+                        })
+                      }
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Lock meeting</p>
+                      <p className="text-xs text-muted-foreground">
+                        New join attempts are rejected until this is turned off.
+                      </p>
+                    </div>
+                  </label>
+                </>
+              )}
+
+              {settingsMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{settingsMessage}</p>
+              ) : null}
+              {settingsError ? <p className="text-sm text-destructive">{settingsError}</p> : null}
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>
