@@ -14,12 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { CalendarCheck, Copy, RefreshCw, Users } from "lucide-react";
 
-/* ---------------- constants ---------------- */
-const TIME_OPTIONS = [
-  "08:00","09:00","10:00","11:00",
-  "13:00","14:00","15:00","16:00",
-];
-
 /* ---------------- types ---------------- */
 interface ScheduleApiMeeting {
   id: string;
@@ -58,7 +52,8 @@ const upsertMeeting = (meetings: ScheduledMeeting[], incoming: ScheduledMeeting)
 export default function ScheduleView() {
   const [meetings, setMeetings] = useState<ScheduledMeeting[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedTime, setSelectedTime] = useState("10:00");
+  const [selectedHour, setSelectedHour] = useState("10");
+  const [selectedMinute, setSelectedMinute] = useState("00");
   const [title, setTitle] = useState("");
   const [attendeeInput, setAttendeeInput] = useState("");
   const [attendeeList, setAttendeeList] = useState<string[]>([]);
@@ -118,9 +113,13 @@ export default function ScheduleView() {
     if (!title.trim()) return setFormError("Please enter a meeting title");
     if (attendeeList.length === 0) return setFormError("Please add at least one attendee");
 
+    const h = parseInt(selectedHour);
+    const m = parseInt(selectedMinute);
+    if (isNaN(h) || h < 0 || h > 23) return setFormError("Enter a valid hour (0–23)");
+    if (isNaN(m) || m < 0 || m > 59) return setFormError("Enter a valid minute (0–59)");
+
     setIsSubmitting(true);
     try {
-      const [h, m] = selectedTime.split(":").map(Number);
       const scheduled = new Date(selectedDate);
       scheduled.setHours(h, m, 0, 0);
 
@@ -148,6 +147,8 @@ export default function ScheduleView() {
       setTitle("");
       setAttendeeList([]);
       setNotes("");
+      setSelectedHour("10");
+      setSelectedMinute("00");
     } catch (err: any) {
       setFormError(err.message);
     } finally {
@@ -224,7 +225,6 @@ export default function ScheduleView() {
               onSelect={(d) => d && setSelectedDate(d)}
             />
 
-            {/* Meetings for selected date */}
             {meetingsForDate.length > 0 && (
               <div className="mt-4 space-y-2">
                 <p className="text-sm font-medium">
@@ -276,15 +276,28 @@ export default function ScheduleView() {
             {/* Time */}
             <div className="space-y-1">
               <label className="text-sm font-medium">Meeting Time</label>
-              <select
-                value={selectedTime}
-                onChange={(e) => setSelectedTime(e.target.value)}
-                className="w-full border rounded p-2 text-sm"
-              >
-                {TIME_OPTIONS.map((t) => (
-                  <option key={t}>{t}</option>
-                ))}
-              </select>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  placeholder="HH"
+                  value={selectedHour}
+                  onChange={(e) => setSelectedHour(e.target.value)}
+                  className="w-20 px-3 py-2 rounded-md border border-input bg-background text-foreground text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <span className="text-xl font-bold text-foreground">:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  placeholder="MM"
+                  value={selectedMinute}
+                  onChange={(e) => setSelectedMinute(e.target.value)}
+                  className="w-20 px-3 py-2 rounded-md border border-input bg-background text-foreground text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <span className="text-sm text-muted-foreground">24hr format (0–23 : 0–59)</span>
+              </div>
             </div>
 
             {/* Attendees */}
@@ -301,7 +314,6 @@ export default function ScheduleView() {
                   Add
                 </Button>
               </div>
-              {/* Attendee tags */}
               {attendeeList.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-2">
                   {attendeeList.map((email) => (
