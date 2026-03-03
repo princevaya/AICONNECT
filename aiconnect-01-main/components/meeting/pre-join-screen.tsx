@@ -26,6 +26,7 @@ export default function PreJoinScreen({
   const [participantName, setParticipantName] = useState("");
   const [roomName, setRoomName] = useState(meetingCode || "");
   const [waitingForApproval, setWaitingForApproval] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   const inviteLink =
     typeof window !== "undefined" && meetingCode
@@ -81,6 +82,8 @@ export default function PreJoinScreen({
   };
 
   const handleJoinMeeting = async () => {
+    setJoinError(null);
+
     if (!participantName.trim()) {
       alert("Please enter your display name");
       return;
@@ -98,7 +101,7 @@ export default function PreJoinScreen({
     }
 
     // 🔥 JOINER FLOW (approval required)
-    await fetch("/api/request-join", {
+    const joinRes = await fetch("/api/request-join", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -106,6 +109,22 @@ export default function PreJoinScreen({
         name: participantName,
       }),
     });
+
+    if (!joinRes.ok) {
+      const data = await joinRes.json().catch(() => ({}));
+      setJoinError(data.error || "Unable to send join request. Please retry.");
+      return;
+    }
+
+    const joinData = await joinRes.json().catch(() => ({}));
+    if (joinData.status === "approved") {
+      onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
+      return;
+    }
+    if (joinData.status === "rejected") {
+      setJoinError("Host is not accepting new participants right now.");
+      return;
+    }
 
     setWaitingForApproval(true);
     alert("Waiting for host approval...");
@@ -125,6 +144,13 @@ export default function PreJoinScreen({
         clearInterval(interval);
         setWaitingForApproval(false);
         onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
+        return;
+      }
+
+      if (data.rejected) {
+        clearInterval(interval);
+        setWaitingForApproval(false);
+        setJoinError("Host rejected your join request.");
       }
     }, 2000);
 
@@ -230,6 +256,10 @@ export default function PreJoinScreen({
                     </>
                   )}
                 </div>
+
+                {joinError ? (
+                  <p className="text-sm text-red-600">{joinError}</p>
+                ) : null}
               </CardContent>
             </Card>
 

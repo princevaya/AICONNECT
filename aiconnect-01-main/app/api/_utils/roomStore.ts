@@ -1,14 +1,26 @@
 // app/api/_utils/roomStore.ts
 
-export const rooms: Record<
-  string,
-  {
-    hostCreatedAt: Date;
-    pending: string[];
-    approved: string[];
-    rejected: string[];
-  }
-> = {};
+export type RoomState = {
+  hostCreatedAt: Date;
+  pending: string[];
+  approved: string[];
+  rejected: string[];
+  settings: {
+    autoApprove: boolean;
+    isLocked: boolean;
+  };
+};
+
+type RoomStore = Record<string, RoomState>;
+
+const globalForRooms = globalThis as typeof globalThis & {
+  __aiconnectRooms?: RoomStore;
+};
+
+export const rooms: RoomStore = globalForRooms.__aiconnectRooms ?? {};
+if (!globalForRooms.__aiconnectRooms) {
+  globalForRooms.__aiconnectRooms = rooms;
+}
 
 export function normalizeRoomId(roomId: string) {
   return roomId.trim();
@@ -27,7 +39,20 @@ export function ensureRoom(roomId: string) {
       pending: [],
       approved: [],
       rejected: [],
+      settings: {
+        autoApprove: false,
+        isLocked: false,
+      },
     };
   }
+
+  // Backfill settings for rooms created before settings existed.
+  if (!rooms[normalizedRoomId].settings) {
+    rooms[normalizedRoomId].settings = {
+      autoApprove: false,
+      isLocked: false,
+    };
+  }
+
   return rooms[normalizedRoomId];
 }

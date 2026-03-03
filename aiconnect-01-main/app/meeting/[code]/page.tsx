@@ -5,6 +5,8 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function MeetingPage() {
   const params = useParams();
@@ -23,9 +25,19 @@ export default function MeetingPage() {
   const [isLoadingPending, setIsLoadingPending] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [isApprovalPanelCollapsed, setIsApprovalPanelCollapsed] = useState(false);
+  const [isHostPanelCollapsed, setIsHostPanelCollapsed] = useState(false);
   const mutationVersionRef = useRef(0);
   const [isModerating, setIsModerating] = useState(false);
+  const [shareLink, setShareLink] = useState("");
+  const [linkCopiedMessage, setLinkCopiedMessage] = useState<string | null>(null);
+  const [hostSettings, setHostSettings] = useState({
+    autoApprove: false,
+    isLocked: false,
+  });
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!meetingCode || !isHost) return;
@@ -55,6 +67,43 @@ export default function MeetingPage() {
     }, 2000);
 
     return () => clearInterval(interval);
+  }, [meetingCode, isHost]);
+
+  useEffect(() => {
+    if (!meetingCode || !isHost) return;
+    if (typeof window !== "undefined") {
+      setShareLink(`${window.location.origin}/meeting/join?room=${meetingCode}`);
+    }
+  }, [meetingCode, isHost]);
+
+  useEffect(() => {
+    if (!meetingCode || !isHost) return;
+
+    const loadSettings = async () => {
+      setIsLoadingSettings(true);
+      setSettingsError(null);
+      try {
+        const res = await fetch(`/api/room-settings?roomId=${meetingCode}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setSettingsError(data.error || "Unable to load host settings.");
+          return;
+        }
+        const data = await res.json();
+        setHostSettings({
+          autoApprove: Boolean(data?.settings?.autoApprove),
+          isLocked: Boolean(data?.settings?.isLocked),
+        });
+      } catch {
+        setSettingsError("Unable to load host settings.");
+      } finally {
+        setIsLoadingSettings(false);
+      }
+    };
+
+    void loadSettings();
   }, [meetingCode, isHost]);
 
   const moderateUser = async (name: string, action: "approve" | "reject") => {
@@ -118,6 +167,56 @@ export default function MeetingPage() {
     }
   };
 
+  const copyText = async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setLinkCopiedMessage(successMessage);
+      setTimeout(() => setLinkCopiedMessage(null), 2000);
+    } catch {
+      setLinkCopiedMessage("Unable to copy. Please copy manually.");
+      setTimeout(() => setLinkCopiedMessage(null), 2500);
+    }
+  };
+
+  const updateHostSettings = async (nextSettings: {
+    autoApprove: boolean;
+    isLocked: boolean;
+  }) => {
+    setIsSavingSettings(true);
+    setSettingsError(null);
+    setSettingsMessage(null);
+    try {
+      const res = await fetch("/api/room-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: meetingCode,
+          autoApprove: nextSettings.autoApprove,
+          isLocked: nextSettings.isLocked,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setSettingsError(data.error || "Unable to save host settings.");
+        return;
+      }
+      setHostSettings(nextSettings);
+      const pendingRes = await fetch(`/api/get-pending?roomId=${meetingCode}`, {
+        cache: "no-store",
+      });
+      if (pendingRes.ok) {
+        const pendingData = await pendingRes.json().catch(() => ({}));
+        setPendingUsers(pendingData.pending || []);
+      }
+      setSettingsMessage("Host settings saved.");
+      setTimeout(() => setSettingsMessage(null), 2000);
+    } catch {
+      setSettingsError("Unable to save host settings.");
+    } finally {
+      setIsSavingSettings(false);
+    }
+  };
+
   if (!meetingCode || !isLoaded || !user) return null;
 
   return (
@@ -130,83 +229,196 @@ export default function MeetingPage() {
         onLeave={() => router.push("/dashboard")}
       />
 
-      {isHost && isApprovalPanelCollapsed && (
+      {isHost && isHostPanelCollapsed && (
         <Button
-          onClick={() => setIsApprovalPanelCollapsed(false)}
+          onClick={() => setIsHostPanelCollapsed(false)}
           size="sm"
           className="fixed top-6 right-6 z-50 rounded-full shadow-lg"
         >
-          Requests ({pendingUsers.length})
+          Host Panel ({pendingUsers.length})
         </Button>
       )}
 
-      {isHost && !isApprovalPanelCollapsed && (
-        <div className="fixed top-6 right-6 z-50 w-80 space-y-3 rounded-lg border border-border bg-card/95 p-4 text-card-foreground shadow-xl backdrop-blur-sm">
+      {isHost && !isHostPanelCollapsed && (
+        <div className="fixed top-6 right-6 z-50 w-[25rem] space-y-3 rounded-lg border border-border bg-card/95 p-4 text-card-foreground shadow-xl backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-lg">Join Requests</h3>
+            <h3 className="font-semibold text-lg">Host Panel</h3>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">
                 {isLoadingPending ? "Refreshing..." : `${pendingUsers.length} pending`}
               </span>
               <Button
-                onClick={() => setIsApprovalPanelCollapsed(true)}
+                onClick={() => setIsHostPanelCollapsed(true)}
                 variant="outline"
                 size="sm"
                 className="h-7 px-2 text-xs"
               >
-                Collapse
+                Minimize
               </Button>
             </div>
           </div>
 
-          {approvalMessage ? (
-            <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
-          ) : null}
-          {approvalError ? (
-            <p className="text-sm text-destructive">{approvalError}</p>
-          ) : null}
+          <Tabs defaultValue="requests" className="w-full">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="requests">Requests</TabsTrigger>
+              <TabsTrigger value="info">Meeting Info</TabsTrigger>
+              <TabsTrigger value="settings">Host Settings</TabsTrigger>
+            </TabsList>
 
-          {pendingUsers.length > 0 ? (
-            <>
-              <Button
-                onClick={approveAll}
-                disabled={isModerating}
-                className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
-              >
-                Approve all
-              </Button>
+            <TabsContent value="requests" className="space-y-3">
+              {approvalMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
+              ) : null}
+              {approvalError ? (
+                <p className="text-sm text-destructive">{approvalError}</p>
+              ) : null}
 
-              {pendingUsers.map((name) => (
-                <div
-                  key={name}
-                  className="flex items-center justify-between rounded-md border border-border bg-background/40 px-2 py-2"
-                >
-                  <span className="truncate pr-2">{name}</span>
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => moderateUser(name, "approve")}
-                      size="sm"
-                      disabled={isModerating}
-                      className="h-8 bg-emerald-600 px-2 text-sm text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+              {pendingUsers.length > 0 ? (
+                <>
+                  <Button
+                    onClick={approveAll}
+                    disabled={isModerating}
+                    className="w-full bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                  >
+                    Approve all
+                  </Button>
+
+                  {pendingUsers.map((name) => (
+                    <div
+                      key={name}
+                      className="flex items-center justify-between rounded-md border border-border bg-background/40 px-2 py-2"
                     >
-                      Approve
-                    </Button>
-                    <Button
-                      onClick={() => moderateUser(name, "reject")}
-                      size="sm"
-                      variant="destructive"
-                      disabled={isModerating}
-                      className="h-8 px-2 text-sm"
-                    >
-                      Reject
-                    </Button>
-                  </div>
+                      <span className="truncate pr-2">{name}</span>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => moderateUser(name, "approve")}
+                          size="sm"
+                          disabled={isModerating}
+                          className="h-8 bg-emerald-600 px-2 text-sm text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          onClick={() => moderateUser(name, "reject")}
+                          size="sm"
+                          variant="destructive"
+                          disabled={isModerating}
+                          className="h-8 px-2 text-sm"
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">No pending requests right now.</p>
+              )}
+            </TabsContent>
+
+            <TabsContent value="info" className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Room code</p>
+                <div className="flex gap-2">
+                  <Input value={meetingCode} readOnly className="h-9" />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => copyText(meetingCode, "Room code copied")}
+                  >
+                    Copy
+                  </Button>
                 </div>
-              ))}
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">No pending requests right now.</p>
-          )}
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Share link</p>
+                <div className="flex gap-2">
+                  <Input value={shareLink} readOnly className="h-9" />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => copyText(shareLink, "Invite link copied")}
+                    disabled={!shareLink}
+                  >
+                    Copy
+                  </Button>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => {
+                    if (shareLink) window.open(shareLink, "_blank", "noopener,noreferrer");
+                  }}
+                  disabled={!shareLink}
+                >
+                  Open Join Page
+                </Button>
+              </div>
+
+              {linkCopiedMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{linkCopiedMessage}</p>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value="settings" className="space-y-3">
+              {isLoadingSettings ? (
+                <p className="text-sm text-muted-foreground">Loading settings...</p>
+              ) : (
+                <>
+                  <label className="flex items-start gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-emerald-600"
+                      checked={hostSettings.autoApprove}
+                      disabled={isSavingSettings}
+                      onChange={(e) =>
+                        void updateHostSettings({
+                          ...hostSettings,
+                          autoApprove: e.target.checked,
+                        })
+                      }
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Auto-approve requests</p>
+                      <p className="text-xs text-muted-foreground">
+                        New participants are approved immediately without manual action.
+                      </p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="mt-1 h-4 w-4 accent-rose-600"
+                      checked={hostSettings.isLocked}
+                      disabled={isSavingSettings}
+                      onChange={(e) =>
+                        void updateHostSettings({
+                          ...hostSettings,
+                          isLocked: e.target.checked,
+                        })
+                      }
+                    />
+                    <div>
+                      <p className="text-sm font-medium">Lock meeting</p>
+                      <p className="text-xs text-muted-foreground">
+                        New join attempts are rejected until this is turned off.
+                      </p>
+                    </div>
+                  </label>
+                </>
+              )}
+
+              {settingsMessage ? (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">{settingsMessage}</p>
+              ) : null}
+              {settingsError ? <p className="text-sm text-destructive">{settingsError}</p> : null}
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>
