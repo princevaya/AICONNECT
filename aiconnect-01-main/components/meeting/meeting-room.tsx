@@ -392,9 +392,23 @@ export default function MeetingRoom({
     window.console.error = (...args: unknown[]) => {
       const first = args[0];
       const text = typeof first === "string" ? first : "";
+      const failedFetchNoise =
+        (typeof first === "string" && first.includes("Failed to fetch")) ||
+        (first instanceof Error && first.message.includes("Failed to fetch")) ||
+        (typeof first === "object" &&
+          first !== null &&
+          "message" in first &&
+          typeof (first as { message?: unknown }).message === "string" &&
+          ((first as { message: string }).message.includes("Failed to fetch")));
+      const secondIsEmptyObject =
+        args.length > 1 &&
+        typeof args[1] === "object" &&
+        args[1] !== null &&
+        Object.keys(args[1] as Record<string, unknown>).length === 0;
       if (
         text.includes("Unknown DataChannel error on lossy") ||
-        text.includes("Unknown DataChannel error on reliable")
+        text.includes("Unknown DataChannel error on reliable") ||
+        (failedFetchNoise && (args.length === 1 || secondIsEmptyObject))
       ) {
         return;
       }

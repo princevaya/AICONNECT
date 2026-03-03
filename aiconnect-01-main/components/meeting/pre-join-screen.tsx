@@ -229,11 +229,24 @@ export default function PreJoinScreen({
 
                 <div>
                   <Label>Room Code</Label>
-                  <Input
-                    value={roomName}
-                    disabled={!!meetingCode}
-                    onChange={(e) => setRoomName(e.target.value)}
-                  />
+                  <div className="mt-1 flex gap-2">
+                    <Input
+                      value={roomName}
+                      disabled={!!meetingCode}
+                      onChange={(e) => setRoomName(e.target.value)}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        navigator.clipboard.writeText(roomName.trim());
+                        alert("Link copied!");
+                      }}
+                      disabled={!roomName.trim()}
+                    >
+                      Copy
+                    </Button>
+                  </div>
 
                   {isHost && meetingCode && (
                     <>

@@ -87,15 +87,32 @@ export default function OverviewView({
 
   const handleCreateMeeting = () => {
     if (!user) return;
-    // Generate a random meeting code
-    const randomCode = Math.random().toString(36).substring(2, 10);
-    router.push(`/meeting/${randomCode}`);
+    router.push("/meeting/create");
   };
 
   const handleJoinMeeting = () => {
-    if (meetingCode.trim()) {
-      router.push(`/meeting/${meetingCode.trim()}`);
+    const raw = meetingCode.trim();
+    if (!raw) return;
+
+    let room = raw;
+    try {
+      const parsed = new URL(raw);
+      const roomFromQuery = parsed.searchParams.get("room");
+      if (roomFromQuery) {
+        room = roomFromQuery.trim();
+      } else {
+        const parts = parsed.pathname.split("/").filter(Boolean);
+        const meetingIndex = parts.findIndex((p) => p === "meeting");
+        if (meetingIndex >= 0 && parts[meetingIndex + 1] && parts[meetingIndex + 1] !== "join") {
+          room = parts[meetingIndex + 1].trim();
+        }
+      }
+    } catch {
+      // Keep raw value when it is not a valid URL.
     }
+
+    if (!room) return;
+    router.push(`/meeting/join?room=${encodeURIComponent(room)}`);
   };
 
 const fetchUpcomingMeetings = useCallback(async () => {
