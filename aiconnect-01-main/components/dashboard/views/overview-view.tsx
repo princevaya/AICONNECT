@@ -126,13 +126,6 @@ export default function OverviewView({
     router.push(`/meeting/join?room=${encodeURIComponent(room)}`);
   };
 
- const handleJoinMeeting = () => {
-  if (meetingCode.trim()) {
-    router.push(`/meeting/join?room=${encodeURIComponent(meetingCode.trim())}`);
-  }
-};
-
-
   const fetchUpcomingMeetings = useCallback(async () => {
 
     setIsLoadingUpcoming(true);

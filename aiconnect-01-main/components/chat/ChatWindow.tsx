@@ -753,13 +753,13 @@ export default function ChatWindow({
                     {entry.content ? <p className="text-sm whitespace-pre-wrap">{renderMentions(entry.content)}</p> : null}
                     {entry.poll ? (
                       <div className={`mt-2 rounded-lg border p-2 ${isMine ? "border-blue-300/40 bg-blue-500/20" : "border-border bg-muted/40"}`}>
-                        <p className="mb-2 break-words text-xs font-semibold">
+                        <p className="mb-2 wrap-break-word text-xs font-semibold">
                           Poll: {entry.poll.question}
                         </p>
                         <div className="space-y-1">
                           {entry.poll.options.map((option) => {
                             const voted = option.votes.some((vote) => vote.id === meId);
-                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900 dark:bg-emerald-500/20 dark:text-emerald-100" : "border-border bg-card text-card-foreground"}`}><span className="min-w-0 flex-1 break-words pr-2">{option.text}</span><span className="shrink-0">{option.votes.length}</span></button>;
+                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900 dark:bg-emerald-500/20 dark:text-emerald-100" : "border-border bg-card text-card-foreground"}`}><span className="min-w-0 flex-1 wrap-break-word pr-2">{option.text}</span><span className="shrink-0">{option.votes.length}</span></button>;
                           })}
                         </div>
                       </div>

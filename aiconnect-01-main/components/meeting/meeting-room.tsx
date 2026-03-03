@@ -22,7 +22,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   Users,
-  UsersRound,
   Video,
   VideoOff,
   Wifi,
@@ -301,20 +300,6 @@ function AudioElement({ track }: { track?: Track }) {
   return <audio ref={audioRef} autoPlay playsInline />;
 }
 
-const avatarColorClasses = [
-  "bg-rose-500",
-  "bg-orange-500",
-  "bg-amber-500",
-  "bg-lime-500",
-  "bg-emerald-500",
-  "bg-teal-500",
-  "bg-cyan-500",
-  "bg-sky-500",
-  "bg-blue-500",
-  "bg-indigo-500",
-  "bg-violet-500",
-  "bg-fuchsia-500",
-];
 const avatarColorHexes = [
   "#f43f5e",
   "#f97316",
@@ -480,9 +465,6 @@ export default function MeetingRoom({
   const [meetingLinkCopied, setMeetingLinkCopied] = useState(false);
   const [participants, setParticipants] = useState<ParticipantView[]>([]);
   const [raisedHands, setRaisedHands] = useState<Record<string, boolean>>({});
-  const [code, setCode] = useState(`export default function App() {
-  return <h1>Hello Live Coding</h1>;
-}`);
   const [localIdentity, setLocalIdentity] = useState<string>("");
 
   const roomRef = useRef<Room | null>(null);
@@ -1053,9 +1035,6 @@ export default function MeetingRoom({
       (localIdentity === whiteboardControllerId ||
         whiteboardAllowedEditorIds.includes(localIdentity))
   );
-  const activeScreenShareCount = participants.filter(
-    (participant) => participant.screenShareEnabled
-  ).length;
   const otherActiveScreenShareCount = participants.filter(
     (participant) => participant.screenShareEnabled && !participant.isLocal
   ).length;
@@ -1610,7 +1589,7 @@ export default function MeetingRoom({
     URL.revokeObjectURL(url);
   };
 
-  const uploadUiRecordingToS3 = async (blob: Blob, filename: string) => {
+  const uploadUiRecordingToS3 = useCallback(async (blob: Blob, filename: string) => {
     const uploadViaServerRoute = async () => {
       setRecordingMessage("UI recording: retrying upload via server route...");
       const formData = new FormData();
@@ -1683,7 +1662,7 @@ export default function MeetingRoom({
     }
 
     return createPayload.downloadUrl || "";
-  };
+  }, [roomName]);
 
   const stopUiRootCapture = useCallback(
     async (options?: { skipUpload?: boolean }) => {
@@ -1726,7 +1705,7 @@ export default function MeetingRoom({
       uiUploadUrlRef.current = uploadedUrl;
       return uploadedUrl;
     },
-    [roomName]
+    [roomName, uploadUiRecordingToS3]
   );
 
   const startUiRootCapture = useCallback(async () => {
@@ -1842,7 +1821,7 @@ export default function MeetingRoom({
     }
   }, [localParticipant?.micTrack, remoteAudioTracks]);
 
-  const saveResourceToS3 = async (
+  const saveResourceToS3 = useCallback(async (
     feature: string,
     filename: string,
     content: string,
@@ -1867,7 +1846,7 @@ export default function MeetingRoom({
       throw new Error(payload.error || "Failed to save resource to S3");
     }
     return payload.url;
-  };
+  }, [roomName]);
 
   const startRecording = useCallback(async () => {
     if (recordingState !== "idle") return;
@@ -2003,7 +1982,14 @@ export default function MeetingRoom({
       setRecordingState("recording");
       setRecordingMessage(error instanceof Error ? error.message : "Failed to stop recording.");
     }
-  }, [recordingEgressId, recordingState, roomName, setLocalRecordingAttribute, stopUiRootCapture]);
+  }, [
+    recordingEgressId,
+    recordingState,
+    roomName,
+    saveResourceToS3,
+    setLocalRecordingAttribute,
+    stopUiRootCapture,
+  ]);
 
   const buildSharedNotesJson = () =>
     JSON.stringify(
@@ -2022,12 +2008,20 @@ export default function MeetingRoom({
     downloadLocalFile(filename, content, "application/json;charset=utf-8");
   };
 
-  const exportSharedNotes = async () => {
-    const content = buildSharedNotesJson();
+  const exportSharedNotes = useCallback(async () => {
+    const content = JSON.stringify(
+      {
+        room: roomName,
+        exportedAt: new Date().toISOString(),
+        notes: sharedNotes,
+      },
+      null,
+      2
+    );
     const filename = `shared-notes-${roomName}-${Date.now()}.json`;
     const url = await saveResourceToS3("notes", filename, content, "application/json;charset=utf-8");
     if (url) setExportStatus("Shared notes auto-saved to S3.");
-  };
+  }, [roomName, saveResourceToS3, sharedNotes]);
 
   const buildActionItemsCsv = () => {
     const rows = [
@@ -2046,12 +2040,18 @@ export default function MeetingRoom({
     downloadLocalFile(filename, csv, "text/csv;charset=utf-8");
   };
 
-  const exportActionItemsCsv = async () => {
-    const csv = buildActionItemsCsv();
+  const exportActionItemsCsv = useCallback(async () => {
+    const rows = [
+      ["Task", "Owner", "Due Date", "Status"],
+      ...actionItems.map((item) => [item.text, item.owner, item.dueDate, item.status]),
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
     const filename = `action-items-${roomName}-${Date.now()}.csv`;
     const url = await saveResourceToS3("action-items", filename, csv, "text/csv;charset=utf-8");
     if (url) setExportStatus("Action items auto-saved to S3.");
-  };
+  }, [actionItems, roomName, saveResourceToS3]);
 
   useEffect(() => {
     if (!hasInitializedNotesRef.current) {
@@ -2072,7 +2072,7 @@ export default function MeetingRoom({
         clearTimeout(notesAutosaveTimerRef.current);
       }
     };
-  }, [sharedNotes]);
+  }, [exportSharedNotes, sharedNotes]);
 
   useEffect(() => {
     if (!hasInitializedActionsRef.current) {
@@ -2093,20 +2093,20 @@ export default function MeetingRoom({
         clearTimeout(actionsAutosaveTimerRef.current);
       }
     };
-  }, [actionItems]);
+  }, [actionItems, exportActionItemsCsv]);
 
   if (isLoading) {
     return (
-      <div className="h-[100dvh] bg-background flex items-center justify-center text-foreground">
+      <div className="h-dvh bg-background flex items-center justify-center text-foreground">
         <Loader2 className="h-10 w-10 animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="relative h-[100dvh] min-h-[100dvh] flex flex-col bg-background text-foreground">
+    <div className="relative h-dvh min-h-dvh flex flex-col bg-background text-foreground">
       {showLiveCode ? (
-  <div className="absolute inset-0 z-[10050] bg-black/80 p-4">
+  <div className="absolute inset-0 z-10050 bg-black/80 p-4">
     <div className="h-full w-full bg-gray-900 rounded-xl p-3">
       <div className="flex justify-between mb-2">
         <span className="text-white font-semibold">Live Coding</span>
@@ -2127,7 +2127,7 @@ export default function MeetingRoom({
   </div>
 ) : null}
       {showCaption ? (
-        <div className="fixed bottom-28 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-card/90 px-3 py-2 text-xs text-foreground shadow-sm sm:bottom-36 sm:px-4 sm:text-sm z-[9999]">
+        <div className="fixed bottom-28 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-card/90 px-3 py-2 text-xs text-foreground shadow-sm sm:bottom-36 sm:px-4 sm:text-sm z-9999">
           {captionText || "Listening..."}
         </div>
       ) : null}
@@ -2135,7 +2135,7 @@ export default function MeetingRoom({
       {reactions.map((reaction, i) => (
         <div
           key={`${reaction.id}-${i}`}
-          className="fixed bottom-32 left-1/2 -translate-x-1/2 text-3xl animate-bounce sm:bottom-40 sm:text-4xl z-[9999]"
+          className="fixed bottom-32 left-1/2 -translate-x-1/2 text-3xl animate-bounce sm:bottom-40 sm:text-4xl z-9999"
           title={`${reaction.participantName} reacted`}
         >
           {reaction.emoji}
@@ -2144,7 +2144,7 @@ export default function MeetingRoom({
 
       {showAppsHub ? (
         <div
-          className={`fixed right-3 top-16 z-[10020] rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur-md ${
+          className={`fixed right-3 top-16 z-10020 rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur-md ${
             minimizedAppsHub ? "w-56 p-2" : "w-[min(92vw,28rem)] p-3"
           }`}
         >
@@ -2465,7 +2465,7 @@ export default function MeetingRoom({
                   <div className="max-h-36 space-y-2 overflow-y-auto">
                     {sharedNotes.map((item) => (
                       <div key={item.id} className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs">
-                        <p className="break-words font-medium">{item.text}</p>
+                        <p className="wrap-break-word font-medium">{item.text}</p>
                         <p className="text-[10px] text-muted-foreground">
                           {item.author} • {new Date(item.createdAt).toLocaleString()}
                         </p>
@@ -2563,12 +2563,12 @@ export default function MeetingRoom({
       ))}
 
       {mediaError ? (
-        <div className="absolute top-3 left-1/2 z-[10000] -translate-x-1/2 rounded-md border border-red-400/60 bg-red-900/70 px-3 py-2 text-xs text-red-50">
+        <div className="absolute top-3 left-1/2 z-10000 -translate-x-1/2 rounded-md border border-red-400/60 bg-red-900/70 px-3 py-2 text-xs text-red-50">
           Media error: {mediaError}
         </div>
       ) : null}
 
-      <div className="fixed top-3 left-3 z-[9999]">
+      <div className="fixed top-3 left-3 z-9999">
         <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1.5 text-xs text-foreground backdrop-blur-md">
           {connectionStatus === "connected" ? (
             <>
@@ -2665,7 +2665,7 @@ export default function MeetingRoom({
                   </div>
                 </div>
               </div>
-              <div className="h-32 min-h-[8rem] sm:h-36 sm:min-h-[9rem] xl:h-full xl:min-h-0">
+              <div className="h-32 min-h-32 sm:h-36 sm:min-h-36 xl:h-full xl:min-h-0">
                 <div
                   className={`grid h-full gap-2 overflow-x-auto pb-1 grid-flow-col auto-cols-[minmax(7.5rem,10rem)] sm:auto-cols-[minmax(9rem,1fr)] xl:overflow-visible xl:pb-0 xl:grid-flow-row xl:auto-cols-auto ${
                     stripVisibleParticipants.length > 2
@@ -2767,7 +2767,7 @@ export default function MeetingRoom({
                   </div>
                 ))}
               </div>
-              <div className="h-32 min-h-[8rem] sm:h-36 sm:min-h-[9rem] xl:h-full xl:min-h-0">
+              <div className="h-32 min-h-32 sm:h-36 sm:min-h-36 xl:h-full xl:min-h-0">
                 <div
                   className={`grid h-full gap-2 overflow-x-auto pb-1 grid-flow-col auto-cols-[minmax(7.5rem,10rem)] sm:auto-cols-[minmax(9rem,1fr)] xl:overflow-visible xl:pb-0 xl:grid-flow-row xl:auto-cols-auto ${
                     stripVisibleParticipants.length > 2
@@ -2959,7 +2959,7 @@ export default function MeetingRoom({
         <div
           className={`${
             showChat ? "" : "hidden"
-          } fixed inset-y-0 right-0 z-40 w-[96vw] max-w-[32rem] border-l border-border bg-background/95 lg:static lg:w-[28rem] lg:max-w-none lg:bg-transparent`}
+          } fixed inset-y-0 right-0 z-40 w-[96vw] max-w-lg border-l border-border bg-background/95 lg:static lg:w-md lg:max-w-none lg:bg-transparent`}
         >
           <button
             type="button"
@@ -3042,7 +3042,7 @@ export default function MeetingRoom({
           </Button>
         </div>
 
-        <div className="mx-auto flex min-h-[86px] w-full max-w-[96vw] items-center justify-start gap-2 overflow-x-auto px-1 pr-24 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:pr-28 md:max-w-[94vw] md:flex-wrap md:justify-center md:overflow-visible md:px-0 md:py-4 md:pb-4 md:gap-3">
+        <div className="mx-auto flex min-h-21.5 w-full max-w-[96vw] items-center justify-start gap-2 overflow-x-auto px-1 pr-24 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:pr-28 md:max-w-[94vw] md:flex-wrap md:justify-center md:overflow-visible md:px-0 md:py-4 md:pb-4 md:gap-3">
           <button
             onClick={() => void toggleMic()}
             title={localMicOn ? "Microphone On" : "Microphone Off"}
@@ -3106,7 +3106,7 @@ export default function MeetingRoom({
               <Smile className="h-4 w-4" />
             </button>
             {showReactions ? (
-              <div className="absolute bottom-12 left-1/2 z-[9999] flex -translate-x-1/2 gap-2 rounded-full border border-border bg-card/90 px-3 py-2 shadow-lg">
+              <div className="absolute bottom-12 left-1/2 z-9999 flex -translate-x-1/2 gap-2 rounded-full border border-border bg-card/90 px-3 py-2 shadow-lg">
                 {["\u2764\uFE0F", "\u{1F600}", "\u{1F602}", "\u{1F622}", "\u{1F44D}"].map((e) => (
                   <button
                     key={e}
@@ -3518,194 +3518,3 @@ function AnnotateStage({
   );
 }
 
-function WhiteboardOverlay({
-  onClose,
-  mode,
-  background,
-  setBackground,
-  ops,
-  onAddOp,
-  onClear,
-  canEdit,
-  isController,
-  participants,
-  allowedEditorIds,
-  onSetAllowedEditors,
-}: {
-  onClose: () => void;
-  mode: WhiteboardMode;
-  background: string;
-  setBackground: (color: string) => void;
-  ops: WhiteboardOp[];
-  onAddOp: (op: WhiteboardOp) => void;
-  onClear: () => void;
-  canEdit: boolean;
-  isController: boolean;
-  participants: ParticipantView[];
-  allowedEditorIds: string[];
-  onSetAllowedEditors: (ids: string[]) => void;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const startRef = useRef<WhiteboardPoint | null>(null);
-  const [tool, setTool] = useState<WhiteboardTool>("pen");
-  const [color, setColor] = useState("#22c55e");
-  const [size, setSize] = useState(4);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.floor(rect.width);
-      canvas.height = Math.floor(rect.height);
-      drawWhiteboardOps(ctx, ops, background);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [ops, background]);
-
-  const getPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  };
-
-  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    if (!point) return;
-    drawingRef.current = true;
-    startRef.current = point;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit || !drawingRef.current) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (!point || !from) return;
-    if (tool === "pen" || tool === "highlighter" || tool === "eraser") {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-      startRef.current = point;
-    }
-  };
-
-  const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (point && from && (tool === "line" || tool === "rect" || tool === "circle")) {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-    }
-    drawingRef.current = false;
-    startRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  const toggleEditor = (id: string) => {
-    if (!isController) return;
-    const next = allowedEditorIds.includes(id)
-      ? allowedEditorIds.filter((entry) => entry !== id)
-      : [...allowedEditorIds, id];
-    onSetAllowedEditors(next);
-  };
-
-  return (
-    <div className="absolute inset-y-2 left-2 right-2 z-[10060] p-0 xl:right-[calc(20rem+0.5rem)]">
-      <div className="pointer-events-none absolute top-3 left-3 right-3 z-20">
-        <div className="pointer-events-auto space-y-2 rounded-xl border border-border bg-card/85 p-2 shadow-lg backdrop-blur-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="mr-auto text-sm font-semibold">
-              {mode === "annotate" ? "Annotate Shared Content" : "Shared Whiteboard"}
-            </p>
-            <button type="button" onClick={onClear} className="rounded-md border border-border bg-card px-3 py-1 text-xs">
-              Clear
-            </button>
-            <button type="button" onClick={onClose} className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground">
-              Close
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={!canEdit} onClick={() => setTool("pen")} className={`rounded p-1 ${tool === "pen" ? "bg-accent" : ""}`} title="Pen">
-              <PencilLine className="h-4 w-4" />
-            </button>
-            <button type="button" disabled={!canEdit} onClick={() => setTool("highlighter")} className={`rounded p-1 ${tool === "highlighter" ? "bg-accent" : ""}`} title="Highlighter">
-              <Highlighter className="h-4 w-4" />
-            </button>
-            <button type="button" disabled={!canEdit} onClick={() => setTool("eraser")} className={`rounded p-1 ${tool === "eraser" ? "bg-accent" : ""}`} title="Eraser">
-              <Eraser className="h-4 w-4" />
-            </button>
-            <button type="button" disabled={!canEdit} onClick={() => setTool("line")} className={`rounded p-1 ${tool === "line" ? "bg-accent" : ""}`} title="Line">
-              <Minus className="h-4 w-4" />
-            </button>
-            <button type="button" disabled={!canEdit} onClick={() => setTool("rect")} className={`rounded p-1 ${tool === "rect" ? "bg-accent" : ""}`} title="Rectangle">
-              <Square className="h-4 w-4" />
-            </button>
-            <button type="button" disabled={!canEdit} onClick={() => setTool("circle")} className={`rounded p-1 ${tool === "circle" ? "bg-accent" : ""}`} title="Circle">
-              <Circle className="h-4 w-4" />
-            </button>
-            <input disabled={!canEdit} type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-8 w-8 rounded border border-border" />
-            <label className="flex items-center gap-1 text-xs">
-              Size
-              <input disabled={!canEdit} type="range" min={1} max={24} value={size} onChange={(e) => setSize(Number(e.target.value))} />
-            </label>
-            <label className="flex items-center gap-1 text-xs">
-              BG
-              <input disabled={!isController} type="color" value={background} onChange={(e) => setBackground(e.target.value)} className="h-8 w-8 rounded border border-border" />
-            </label>
-            {!canEdit ? <span className="text-xs text-amber-500">View only</span> : null}
-          </div>
-
-          {isController ? (
-            <div className="max-h-20 overflow-y-auto rounded-lg border border-border bg-card/70 p-2">
-              <p className="mb-1 text-xs font-medium">Allow editors</p>
-              <div className="flex flex-wrap gap-2">
-                {participants.map((participant) => (
-                  <label key={`wb-editor-${participant.id}`} className="inline-flex items-center gap-1 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={allowedEditorIds.includes(participant.id)}
-                      onChange={() => toggleEditor(participant.id)}
-                    />
-                    {participant.name}
-                  </label>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="h-full">
-        <canvas
-          ref={canvasRef}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          className="h-full w-full rounded-xl border border-border bg-card"
-        />
-      </div>
-    </div>
-  );
-}
