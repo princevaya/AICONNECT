@@ -17,7 +17,7 @@ export default function MeetingPage() {
   const meetingCode = params.code as string;
   const isHost = searchParams.get("host") === "1";
   const participantName =
-    searchParams.get("name")?.trim() || user?.fullName?.trim() || "Host";
+    searchParams.get("name")?.trim() || user?.fullName?.trim() || "Guest";
   const videoEnabled = searchParams.get("video") !== "0";
   const audioEnabled = searchParams.get("audio") !== "0";
 
@@ -217,7 +217,7 @@ export default function MeetingPage() {
     }
   };
 
-  if (!meetingCode || !isLoaded || !user) return null;
+  if (!meetingCode) return null;
 
   return (
     <div className="min-h-screen bg-background relative">

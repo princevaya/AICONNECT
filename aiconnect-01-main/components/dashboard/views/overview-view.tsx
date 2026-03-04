@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format, isToday } from "date-fns";
 import {
@@ -87,13 +87,6 @@ export default function OverviewView({
   const [upcomingMeetings, setUpcomingMeetings] = useState<UpcomingMeeting[]>([]);
   const [isLoadingUpcoming, setIsLoadingUpcoming] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
-
-
-  /* ✅ AUTO-FILL MEETING CODE (same style as create meeting page) */
-  useEffect(() => {
-    const newCode = crypto.randomUUID();
-    setMeetingCode(newCode);
-  }, []);
 
 
   const handleCreateMeeting = () => {

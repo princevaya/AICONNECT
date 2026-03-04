@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  ensureRoom,
   normalizeParticipantName,
   normalizeRoomId,
   rooms,
@@ -15,8 +16,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ approved: false, rejected: false });
   }
 
-  const isApproved = rooms[roomId].approved.includes(name);
-  const isRejected = rooms[roomId].rejected.includes(name);
+  const room = ensureRoom(roomId);
+  const isApproved = room.approved.includes(name);
+  const isRejected = room.rejected.includes(name);
 
   return NextResponse.json({ approved: isApproved, rejected: isRejected });
 }
