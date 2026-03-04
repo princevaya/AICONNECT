@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
-import { rooms } from "@/app/api/_utils/roomStore";
+import { ensureRoom, normalizeRoomId } from "@/app/api/_utils/roomStore";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const roomId = searchParams.get("roomId");
+  const rawRoomId = searchParams.get("roomId");
+  const roomId = rawRoomId ? normalizeRoomId(rawRoomId) : "";
 
-  if (!roomId || !rooms[roomId]) {
+  if (!roomId) {
     return NextResponse.json({ pending: [] });
   }
 
+  const room = ensureRoom(roomId);
+
   return NextResponse.json({
-    pending: rooms[roomId].pending,
+    pending: room.pending,
   });
 }

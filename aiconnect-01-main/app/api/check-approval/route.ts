@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
-import { rooms } from "@/app/api/_utils/roomStore";
+import {
+  normalizeParticipantName,
+  normalizeRoomId,
+  rooms,
+} from "@/app/api/_utils/roomStore";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
-  const roomId = searchParams.get("roomId");
-  const name = searchParams.get("name");
+  const rawRoomId = searchParams.get("roomId");
+  const rawName = searchParams.get("name");
+  const roomId = rawRoomId ? normalizeRoomId(rawRoomId) : "";
+  const name = rawName ? normalizeParticipantName(rawName) : "";
 
-  if (!roomId || !rooms[roomId]) {
-    return NextResponse.json({ approved: false });
+  if (!roomId || !name || !rooms[roomId]) {
+    return NextResponse.json({ approved: false, rejected: false });
   }
 
-  const isApproved = rooms[roomId].approved.includes(name || "");
+  const isApproved = rooms[roomId].approved.includes(name);
+  const isRejected = rooms[roomId].rejected.includes(name);
 
-  return NextResponse.json({ approved: isApproved });
+  return NextResponse.json({ approved: isApproved, rejected: isRejected });
 }
