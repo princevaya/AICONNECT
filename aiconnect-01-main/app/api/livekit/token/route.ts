@@ -11,16 +11,9 @@ export async function GET(req: NextRequest) {
     const { userId } = await auth();
     console.log("Auth result - userId:", userId);
 
-    if (!userId) {
-      console.error("No userId from Clerk");
-      return NextResponse.json(
-        { error: "Unauthorized - Clerk user not found" },
-        { status: 401 }
-      );
-    }
-
     const room = req.nextUrl.searchParams.get("room");
-    const username = req.nextUrl.searchParams.get("username");
+    const rawUsername = req.nextUrl.searchParams.get("username");
+    const username = rawUsername?.trim() || "Guest";
     const session = req.nextUrl.searchParams.get("session");
     const join = req.nextUrl.searchParams.get("join");
     console.log("Request params - room:", room, "username:", username, "session:", session, "join:", join);
@@ -59,7 +52,8 @@ export async function GET(req: NextRequest) {
 
     // Stable per-browser-tab identity avoids duplicate ghosts on reconnect
     // without force-kicking another active tab for the same user.
-    const sessionIdentity = `${userId}:${session}:${join}`;
+    const identityPrefix = userId ? userId : "guest";
+    const sessionIdentity = `${identityPrefix}:${session}:${join}`;
 
     const token = new AccessToken(apiKey, apiSecret, {
       identity: sessionIdentity,

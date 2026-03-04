@@ -1,9 +1,10 @@
 "use client";
 
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import PreJoinScreen from "@/components/meeting/pre-join-screen";
 
-export default function JoinMeetingPage() {
+function JoinMeetingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -12,10 +13,19 @@ export default function JoinMeetingPage() {
 
   const handleJoin = (
     name: string,
-    roomName?: string
+    roomName?: string,
+    video?: boolean,
+    audio?: boolean
   ) => {
     if (!roomName) return;
-    router.push(`/meeting/${roomName}`);
+
+    const params = new URLSearchParams({
+      name,
+      video: video === false ? "0" : "1",
+      audio: audio === false ? "0" : "1",
+    });
+
+    router.push(`/meeting/${encodeURIComponent(roomName)}?${params.toString()}`);
   };
 
   return (
@@ -24,5 +34,13 @@ export default function JoinMeetingPage() {
       meetingCode={meetingCode}
       isHost={false}
     />
+  );
+}
+
+export default function JoinMeetingPage() {
+  return (
+    <Suspense fallback={null}>
+      <JoinMeetingContent />
+    </Suspense>
   );
 }

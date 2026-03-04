@@ -7,6 +7,11 @@ export async function POST() {
     hostCreatedAt: new Date(),
     pending: [],
     approved: [],
+    rejected: [],
+    settings: {
+      autoApprove: false,
+      isLocked: false,
+    },
   };
 
   return NextResponse.json({

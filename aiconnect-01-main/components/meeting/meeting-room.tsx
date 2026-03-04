@@ -226,8 +226,7 @@ function trackFromPublication(pub: TrackPublication | undefined, kind: Track.Kin
 }
 
 function userKeyFromIdentity(identity: string) {
-  const [userKey] = identity.split(":");
-  return userKey || identity;
+  return identity;
 }
 
 function buildParticipantView(
@@ -1874,16 +1873,11 @@ export default function MeetingRoom({
         payload.message ||
           "Recording started. Ensure you shared the current meeting tab for full layout capture."
       );
-    } catch (error) {
+    } catch {
       if (uiRecorderRef.current) {
-        try {
-          await stopUiRootCapture({ skipUpload: true });
-        } catch {
-          // Ignore cleanup errors.
-        }
+        await stopUiRootCapture({ skipUpload: true });
       }
       setRecordingState("idle");
-      setRecordingMessage(error instanceof Error ? error.message : "Failed to start recording.");
     }
   }, [recordingState, roomName, setLocalRecordingAttribute, startUiRootCapture, stopUiRootCapture]);
 
@@ -1912,15 +1906,7 @@ export default function MeetingRoom({
       uiLocalSavedRef.current = false;
       if (uiRecorderRef.current) {
         uiCaptureAttempted = true;
-        try {
-          uiUrl = await stopUiRootCapture();
-        } catch (uiError) {
-          setRecordingMessage(
-            uiError instanceof Error
-              ? uiError.message
-              : "UI recording stopped but upload failed."
-          );
-        }
+        uiUrl = await stopUiRootCapture();
       }
 
       const listRes = await fetch(
@@ -1978,9 +1964,8 @@ export default function MeetingRoom({
       } else {
         setRecordingMessage("Recording stopped and metadata saved to S3.");
       }
-    } catch (error) {
+    } catch {
       setRecordingState("recording");
-      setRecordingMessage(error instanceof Error ? error.message : "Failed to stop recording.");
     }
   }, [
     recordingEgressId,
@@ -3517,4 +3502,3 @@ function AnnotateStage({
     </div>
   );
 }
-
