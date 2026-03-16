@@ -1,5 +1,9 @@
 # 🧩 Local Development Guide — Next.js Project (using pnpm)
 
+## Deployment
+
+- Frontend on Vercel + backend on Render: see `DEPLOY_VERCEL_RENDER.md`.
+
 ---
 
 ## **1. Prerequisites**

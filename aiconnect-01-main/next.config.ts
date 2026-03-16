@@ -29,6 +29,22 @@ const nextConfig: NextConfig = {
     config.resolve.symlinks = false;
     return config;
   },
+  async rewrites() {
+    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+
+    // When deployed on Vercel, proxy all /api requests to the Render backend.
+    // Keep this unset on backend/local deployments to use local app/api routes.
+    if (!apiBaseUrl) return [];
+
+    return {
+      beforeFiles: [
+        {
+          source: "/api/:path*",
+          destination: `${apiBaseUrl}/api/:path*`,
+        },
+      ],
+    };
+  },
 };
 
 export default nextConfig;
