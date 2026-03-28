@@ -127,34 +127,55 @@ export default function PreJoinScreen({
     }
 
     setWaitingForApproval(true);
-    alert("Waiting for host approval...");
   };
 
   // 🔥 Poll approval
   useEffect(() => {
     if (!waitingForApproval) return;
 
+    let cancelled = false;
+
+    const checkApproval = async () => {
+      try {
+        const res = await fetch(
+          `/api/check-approval?roomId=${encodeURIComponent(roomName)}&name=${encodeURIComponent(
+            participantName
+          )}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+
+        if (cancelled) return;
+
+        if (data.approved) {
+          setWaitingForApproval(false);
+          onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
+          return;
+        }
+
+        if (data.rejected) {
+          setWaitingForApproval(false);
+          setJoinError("Host rejected your join request.");
+        }
+      } catch {
+        if (!cancelled) {
+          setJoinError("Unable to check approval status. Please retry.");
+          setWaitingForApproval(false);
+        }
+      }
+    };
+
+    // Check immediately, then keep polling quickly for near-instant joins.
+    void checkApproval();
+
     const interval = setInterval(async () => {
-      const res = await fetch(
-        `/api/check-approval?roomId=${roomName}&name=${participantName}`
-      );
-      const data = await res.json();
+      void checkApproval();
+    }, 700);
 
-      if (data.approved) {
-        clearInterval(interval);
-        setWaitingForApproval(false);
-        onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
-        return;
-      }
-
-      if (data.rejected) {
-        clearInterval(interval);
-        setWaitingForApproval(false);
-        setJoinError("Host rejected your join request.");
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [waitingForApproval, participantName, roomName, isVideoEnabled, isAudioEnabled, onJoin]);
 
   return (
@@ -260,6 +281,9 @@ export default function PreJoinScreen({
 
                 {joinError ? (
                   <p className="text-sm text-red-600">{joinError}</p>
+                ) : null}
+                {waitingForApproval ? (
+                  <p className="text-sm text-amber-600">Waiting for host approval...</p>
                 ) : null}
               </CardContent>
             </Card>

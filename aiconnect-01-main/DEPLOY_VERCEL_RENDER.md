@@ -8,6 +8,33 @@ Use two deployments from the same repo:
 
 A conditional rewrite in `next.config.ts` now forwards `/api/*` from Vercel to Render when `NEXT_PUBLIC_API_BASE_URL` is set.
 
+## 0) Database Setup (Supabase or Neon)
+
+This app uses Prisma with PostgreSQL, so both Supabase and Neon work without code changes.
+
+1. Create a new Postgres project in **Supabase** or **Neon**.
+2. Copy the provider connection string and set:
+  - `DATABASE_URL=postgresql://...?...sslmode=require`
+3. In local development, put it in `.env.local`.
+4. Before first deploy, apply schema to the hosted database from your machine:
+
+```bash
+pnpm install
+pnpm exec prisma db push
+```
+
+If you prefer migration files instead of `db push`, run:
+
+```bash
+pnpm exec prisma migrate dev --name init
+pnpm exec prisma migrate deploy
+```
+
+Notes:
+- Use SSL-enabled connection strings (`sslmode=require`) for both Supabase and Neon.
+- If your provider offers pooled and direct URLs, start with the standard/direct Postgres URL for `DATABASE_URL`.
+- Do not commit `.env.local`; this repository already ignores it in `.gitignore`.
+
 ## 1) Deploy Backend on Render
 
 Create a new **Web Service** on Render.
@@ -36,6 +63,10 @@ Add backend environment variables in Render:
 - `AWS_S3_BUCKET`
 - `RESEND_API_KEY` (if email is used)
 - Any other app secrets currently used in local `.env`
+
+Database provider examples:
+- Supabase: use the project Postgres URI from **Project Settings -> Database**.
+- Neon: use the connection URI from the branch you deploy against.
 
 Important:
 - Do **not** set `NEXT_PUBLIC_API_BASE_URL` on Render backend.

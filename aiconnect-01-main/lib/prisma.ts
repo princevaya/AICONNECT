@@ -7,8 +7,27 @@ const globalForPrisma = globalThis as unknown as {
   prismaPool?: Pool;
 };
 
+function normalizeConnectionString(connectionString?: string) {
+  if (!connectionString) return connectionString;
+
+  try {
+    const parsed = new URL(connectionString);
+    const isSupabase = /supabase\.(co|com)/i.test(parsed.hostname);
+    const sslMode = parsed.searchParams.get("sslmode")?.toLowerCase();
+
+    if (isSupabase && sslMode === "require" && !parsed.searchParams.has("uselibpqcompat")) {
+      parsed.searchParams.set("uselibpqcompat", "true");
+      return parsed.toString();
+    }
+  } catch {
+    // Keep original value if URL parsing fails.
+  }
+
+  return connectionString;
+}
+
 function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = normalizeConnectionString(process.env.DATABASE_URL);
   if (!connectionString) {
     throw new Error("DATABASE_URL must be set.");
   }

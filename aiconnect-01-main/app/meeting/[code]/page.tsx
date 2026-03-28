@@ -64,7 +64,7 @@ export default function MeetingPage() {
     void pollPending();
     const interval = setInterval(() => {
       void pollPending();
-    }, 2000);
+    }, 700);
 
     return () => clearInterval(interval);
   }, [meetingCode, isHost]);
