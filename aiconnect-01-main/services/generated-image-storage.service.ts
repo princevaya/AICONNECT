@@ -2,7 +2,7 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
 import type { AppUser } from "@/services/user.service";
@@ -50,13 +50,23 @@ function buildS3Key(generationId: string, userId: string, mimeType: string) {
   return `${PREFIX}/${new Date().toISOString().slice(0, 10)}/${sanitize(userId)}/${sanitize(generationId)}-${randomUUID()}${ext}`;
 }
 
-async function uploadLocal(buffer: Buffer, generationId: string, mimeType: string) {
-  await fs.mkdir(LOCAL_ROOT, { recursive: true });
+function buildLocalKey(generationId: string, userKey: string, mimeType: string) {
   const ext = extensionForMime(mimeType);
   const name = `${sanitize(generationId)}-${randomUUID()}${ext}`;
-  const absolute = path.join(LOCAL_ROOT, name);
+  return {
+    relativeDir: path.posix.join("storage", "generated-images", sanitize(userKey)),
+    fileName: name,
+    key: path.posix.join("storage", "generated-images", sanitize(userKey), name),
+  };
+}
+
+async function uploadLocal(buffer: Buffer, generationId: string, userKey: string, mimeType: string) {
+  const target = buildLocalKey(generationId, userKey, mimeType);
+  const absoluteDir = path.join(process.cwd(), target.relativeDir);
+  await fs.mkdir(absoluteDir, { recursive: true });
+  const absolute = path.join(absoluteDir, target.fileName);
   await fs.writeFile(absolute, buffer);
-  return { provider: "local", key: path.posix.join("storage", "generated-images", name) } as const;
+  return { provider: "local", key: target.key } as const;
 }
 
 async function uploadS3(buffer: Buffer, generationId: string, userId: string, mimeType: string) {
@@ -77,13 +87,161 @@ async function uploadS3(buffer: Buffer, generationId: string, userId: string, mi
 
 export async function saveGeneratedImage(input: {
   generationId: string;
-  userId: string;
+  userKey: string;
   mimeType: string;
   buffer: Buffer;
 }) {
   return s3Client && BUCKET
-    ? uploadS3(input.buffer, input.generationId, input.userId, input.mimeType)
-    : uploadLocal(input.buffer, input.generationId, input.mimeType);
+    ? uploadS3(input.buffer, input.generationId, input.userKey, input.mimeType)
+    : uploadLocal(input.buffer, input.generationId, input.userKey, input.mimeType);
+}
+
+type StorageManifest = {
+  id: string;
+  prompt: string;
+  enhancedPrompt?: string | null;
+  stylePreset?: string | null;
+  aspectRatio?: string;
+  quality?: string;
+  background?: string | null;
+  provider: string;
+  model: string;
+  mimeType: string;
+  width?: number | null;
+  height?: number | null;
+  createdAt: string;
+  imageKey: string;
+};
+
+function manifestKeyForImageKey(imageKey: string) {
+  return imageKey.replace(/\.[^.]+$/, ".json");
+}
+
+export async function writeGeneratedImageManifest(input: {
+  manifest: StorageManifest;
+  storageProvider: string;
+  imageKey: string;
+}) {
+  const key = manifestKeyForImageKey(input.imageKey);
+  const body = JSON.stringify(input.manifest);
+
+  if (input.storageProvider === "s3") {
+    if (!s3Client || !BUCKET) throw new Error("Generated image S3 is not configured");
+    await s3Client.send(
+      new PutObjectCommand({
+        Bucket: BUCKET,
+        Key: key,
+        Body: body,
+        ContentType: "application/json",
+      })
+    );
+    return;
+  }
+
+  await fs.writeFile(path.join(process.cwd(), key), body, "utf8");
+}
+
+async function readS3Manifest(key: string) {
+  if (!s3Client || !BUCKET) return null;
+  const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+  const text = await response.Body?.transformToString();
+  if (!text) return null;
+  return JSON.parse(text) as StorageManifest;
+}
+
+async function readLocalManifest(key: string) {
+  const text = await fs.readFile(path.join(process.cwd(), key), "utf8");
+  return JSON.parse(text) as StorageManifest;
+}
+
+async function buildSignedImageUrl(key: string) {
+  if (!s3Client || !BUCKET) return null;
+  return getSignedUrl(s3Client, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: TTL });
+}
+
+export async function listGeneratedImageHistoryFromStorage(subjectKey: string) {
+  const safeKey = sanitize(subjectKey);
+
+  if (s3Client && BUCKET) {
+    const prefix = `${PREFIX}/`;
+    const listed = await s3Client.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, MaxKeys: 200 }));
+    const manifestKeys = (listed.Contents || [])
+      .map((item) => item.Key || "")
+      .filter((key) => key.endsWith(`/${safeKey}/`) || key.includes(`/${safeKey}/`))
+      .filter((key) => key.endsWith(".json"))
+      .sort()
+      .reverse()
+      .slice(0, Number(process.env.GENERATED_IMAGES_HISTORY_LIMIT || 24));
+
+    const manifests = await Promise.all(
+      manifestKeys.map(async (key) => {
+        try {
+          const manifest = await readS3Manifest(key);
+          if (!manifest) return null;
+          const imageUrl = await buildSignedImageUrl(manifest.imageKey);
+          return {
+            id: manifest.id,
+            status: "succeeded",
+            prompt: manifest.prompt,
+            enhancedPrompt: manifest.enhancedPrompt || null,
+            stylePreset: manifest.stylePreset || null,
+            aspectRatio: manifest.aspectRatio || "1:1",
+            quality: manifest.quality || "standard",
+            background: manifest.background || null,
+            provider: manifest.provider,
+            model: manifest.model,
+            mimeType: manifest.mimeType,
+            width: manifest.width || null,
+            height: manifest.height || null,
+            errorMessage: null,
+            imageUrl,
+            createdAt: manifest.createdAt,
+          };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }
+
+  const root = path.join(LOCAL_ROOT, safeKey);
+  const files = await fs.readdir(root).catch(() => [] as string[]);
+  const manifests = await Promise.all(
+    files
+      .filter((name) => name.endsWith(".json"))
+      .sort()
+      .reverse()
+      .slice(0, Number(process.env.GENERATED_IMAGES_HISTORY_LIMIT || 24))
+      .map(async (name) => {
+        try {
+          const manifest = await readLocalManifest(path.posix.join("storage", "generated-images", safeKey, name));
+          return {
+            id: manifest.id,
+            status: "succeeded",
+            prompt: manifest.prompt,
+            enhancedPrompt: manifest.enhancedPrompt || null,
+            stylePreset: manifest.stylePreset || null,
+            aspectRatio: manifest.aspectRatio || "1:1",
+            quality: manifest.quality || "standard",
+            background: manifest.background || null,
+            provider: manifest.provider,
+            model: manifest.model,
+            mimeType: manifest.mimeType,
+            width: manifest.width || null,
+            height: manifest.height || null,
+            errorMessage: null,
+            imageUrl: `/${manifest.imageKey}`,
+            createdAt: manifest.createdAt,
+          };
+        } catch {
+          return null;
+        }
+      })
+  );
+
+  return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
 export async function buildGeneratedImageDownload(input: { generationId: string; requester: AppUser }) {

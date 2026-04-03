@@ -79,7 +79,7 @@ export function toError(error: unknown, fallback: string, status = 500) {
     return NextResponse.json(
       {
         error:
-          "External chat database authentication failed. For Supabase pooler, use CHAT_DATABASE_URL username as postgres.<project-ref> (not plain postgres), then restart dev server.",
+          "External chat database authentication failed. For Supabase pooler, use the exact connection string from Supabase Connect. The username is usually postgres.<project-ref> and the host/region must match your project pooler exactly.",
         setupRequired: true,
       },
       { status: 503 }

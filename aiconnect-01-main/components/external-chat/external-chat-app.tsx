@@ -1355,17 +1355,28 @@ export default function ExternalChatApp() {
 
   if (setupRequired) {
     return (
-      <ChatShell>
-        <ChatPanel className="col-span-full p-4">
-          <div className="mx-auto mb-3 flex max-w-3xl justify-end">
+      <div className="flex h-full min-h-full items-center justify-center p-4 md:p-8">
+        <div className="w-full max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 shadow-sm backdrop-blur">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-amber-300">External Chat Setup Required</h2>
+              <p className="mt-1 text-sm text-amber-100/90">
+                External chat could not connect to its Postgres backend, so the workspace is temporarily unavailable.
+              </p>
+            </div>
             <ThemeToggle />
           </div>
-          <div className="mx-auto max-w-3xl rounded-xl border border-amber-500/40 bg-amber-500/10 p-6">
-            <h2 className="text-lg font-semibold text-amber-300">External Chat Setup Required</h2>
-            <p className="mt-2 text-sm text-amber-200/90">{error}</p>
+          <div className="rounded-xl border border-amber-500/20 bg-background/40 p-4 text-sm text-amber-50">
+            {error}
           </div>
-        </ChatPanel>
-      </ChatShell>
+          <div className="mt-4 space-y-2 text-sm text-amber-100/90">
+            <p>Checks:</p>
+            <p>1. Use the exact Supabase Connect string for `CHAT_DATABASE_URL`.</p>
+            <p>2. If you use the pooler, the host/region and `postgres.&lt;project-ref&gt;` username must match exactly.</p>
+            <p>3. If you want chat to share the primary DB, you can leave `CHAT_DATABASE_URL` unset and let it fall back to `DATABASE_URL`.</p>
+          </div>
+        </div>
+      </div>
     );
   }
 

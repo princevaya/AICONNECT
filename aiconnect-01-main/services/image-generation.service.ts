@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
 import type { AppUser } from "@/services/user.service";
 import { enforceRateLimit } from "@/services/rate-limit.service";
-import { saveGeneratedImage } from "@/services/generated-image-storage.service";
+import { listGeneratedImageHistoryFromStorage, saveGeneratedImage, writeGeneratedImageManifest } from "@/services/generated-image-storage.service";
 
 type CreateImageInput = {
   user: AppUser;
@@ -271,6 +271,22 @@ export async function listGeneratedImages(user: AppUser) {
   return items.map(toGeneratedImageDto);
 }
 
+export async function listGeneratedImagesFromStorage(clerkUserId: string) {
+  return listGeneratedImageHistoryFromStorage(clerkUserId);
+}
+
+export function isDatabaseConnectivityError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    message.includes("can't reach database server") ||
+    message.includes("can not reach database server") ||
+    message.includes("tenant or user not found") ||
+    message.includes("authentication failed") ||
+    message.includes("database is unreachable") ||
+    message.includes("connection terminated")
+  );
+}
+
 export async function createGeneratedImage(input: CreateImageInput) {
   const validated = validateInput(input);
   const config = getImageProvider();
@@ -323,9 +339,30 @@ export async function createGeneratedImage(input: CreateImageInput) {
 
     const stored = await saveGeneratedImage({
       generationId: generation.id,
-      userId: input.user.id,
+      userKey: input.user.clerkId,
       mimeType: result.mimeType,
       buffer: result.buffer,
+    });
+
+    await writeGeneratedImageManifest({
+      storageProvider: stored.provider,
+      imageKey: stored.key,
+      manifest: {
+        id: generation.id,
+        prompt: validated.prompt,
+        enhancedPrompt,
+        stylePreset: validated.stylePreset,
+        aspectRatio: validated.aspectRatio,
+        quality: validated.quality,
+        background: validated.background,
+        provider: config.provider,
+        model: config.model,
+        mimeType: result.mimeType,
+        width: result.width || null,
+        height: result.height || null,
+        createdAt: new Date().toISOString(),
+        imageKey: stored.key,
+      },
     });
 
     const saved = await prisma.generatedImage.update({
@@ -371,6 +408,90 @@ export async function createGeneratedImage(input: CreateImageInput) {
       },
     });
 
+    throw new Error(userFacingError(error));
+  }
+}
+
+export async function createGeneratedImageWithoutDatabase(input: Omit<CreateImageInput, "user"> & { clerkUserId: string }) {
+  const validated = validateInput({
+    user: {} as AppUser,
+    prompt: input.prompt,
+    stylePreset: input.stylePreset,
+    aspectRatio: input.aspectRatio,
+    quality: input.quality,
+    background: input.background,
+  });
+  const config = getImageProvider();
+  const generationId = `storage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const enhancedPrompt = buildPrompt(validated.prompt, validated.stylePreset);
+
+  try {
+    const result =
+      config.provider === "openai"
+        ? await generateWithOpenAI({
+            prompt: enhancedPrompt,
+            model: config.model,
+            aspectRatio: validated.aspectRatio,
+            quality: validated.quality,
+            background: validated.background,
+          })
+        : await generateWithHuggingFace({
+            prompt: enhancedPrompt,
+            model: config.model,
+            aspectRatio: validated.aspectRatio,
+          });
+
+    const stored = await saveGeneratedImage({
+      generationId,
+      userKey: input.clerkUserId,
+      mimeType: result.mimeType,
+      buffer: result.buffer,
+    });
+
+    await writeGeneratedImageManifest({
+      storageProvider: stored.provider,
+      imageKey: stored.key,
+      manifest: {
+        id: generationId,
+        prompt: validated.prompt,
+        enhancedPrompt,
+        stylePreset: validated.stylePreset,
+        aspectRatio: validated.aspectRatio,
+        quality: validated.quality,
+        background: validated.background,
+        provider: config.provider,
+        model: config.model,
+        mimeType: result.mimeType,
+        width: result.width || null,
+        height: result.height || null,
+        createdAt: new Date().toISOString(),
+        imageKey: stored.key,
+      },
+    });
+
+    const imageHistory = await listGeneratedImageHistoryFromStorage(input.clerkUserId);
+    const created = imageHistory.find((item) => item.id === generationId);
+    if (created) return created;
+
+    return {
+      id: generationId,
+      status: "succeeded",
+      prompt: validated.prompt,
+      enhancedPrompt,
+      stylePreset: validated.stylePreset,
+      aspectRatio: validated.aspectRatio,
+      quality: validated.quality,
+      background: validated.background,
+      provider: config.provider,
+      model: config.model,
+      mimeType: result.mimeType,
+      width: result.width || null,
+      height: result.height || null,
+      errorMessage: null,
+      imageUrl: null,
+      createdAt: new Date().toISOString(),
+    };
+  } catch (error) {
     throw new Error(userFacingError(error));
   }
 }
