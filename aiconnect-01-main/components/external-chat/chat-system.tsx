@@ -15,7 +15,7 @@ const TABS: Array<{ id: FilterTab; label: string }> = [
 
 export function ChatShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="chat-shell h-full min-h-screen p-2 md:p-3">
+    <div className="chat-shell h-full min-h-full p-2 md:p-3">
       <div className="chat-grid h-full">{children}</div>
     </div>
   );

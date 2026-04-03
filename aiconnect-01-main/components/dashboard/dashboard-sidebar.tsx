@@ -8,16 +8,16 @@ import {
   CalendarDays,
   Sparkles,
   Image as ImageIcon,
+  MessageSquareText,
 } from "lucide-react";
 import { DashboardView } from "@/app/dashboard/page";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 interface DashboardSidebarProps {
   activeView: DashboardView;
   onViewChange: (view: DashboardView) => void;
 }
 
-/* 🔹 MENU ITEMS (ONLY 3D IMAGE UPDATED) */
 const menuItems = [
   {
     id: "overview" as DashboardView,
@@ -43,6 +43,13 @@ const menuItems = [
     id: "ai-image" as DashboardView,
     label: "3D Image Generator",
     icon: ImageIcon,
+    href: "/dashboard/3d-image-generator",
+  },
+  {
+    id: "external-chat" as DashboardView,
+    label: "External Chat",
+    icon: MessageSquareText,
+    href: "/dashboard/external-chat",
   },
 ];
 
@@ -51,6 +58,7 @@ export default function DashboardSidebar({
   onViewChange,
 }: DashboardSidebarProps) {
   const router = useRouter();
+  const pathname = usePathname();
 
   return (
     <aside className="w-64 shrink-0">
@@ -58,15 +66,14 @@ export default function DashboardSidebar({
         <ul className="space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeView === item.id;
+            const isActive = item.href ? pathname === item.href : activeView === item.id;
 
             return (
               <li key={item.id}>
                 <button
                   onClick={() => {
-                    // ✅ ONLY FOR 3D IMAGE GENERATOR
-                    if (item.id === "ai-image") {
-                      router.push("/dashboard/3d-image-generator");
+                    if (item.href) {
+                      router.push(item.href);
                     } else {
                       onViewChange(item.id);
                     }

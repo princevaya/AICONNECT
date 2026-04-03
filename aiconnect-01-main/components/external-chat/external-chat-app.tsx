@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   Bookmark,
   BookmarkCheck,
@@ -388,7 +388,7 @@ export default function ExternalChatApp() {
     return "Direct chat";
   }, [activeRoom]);
 
-  const handleApiError = (err: unknown, fallback: string) => {
+  const handleApiError = useCallback((err: unknown, fallback: string) => {
     const e = err as ApiError;
     setError(e?.message || fallback);
     const needsSetup = Boolean(e?.setupRequired);
@@ -403,9 +403,9 @@ export default function ExternalChatApp() {
       setConnections([]);
       setActiveRoomCode("");
     }
-  };
+  }, []);
 
-  const loadConnections = async () => {
+  const loadConnections = useCallback(async () => {
     try {
       const data = await api<{ incoming: Pending[]; outgoing: Array<{ id: string; receiver: UserRow }>; connections: Connection[] }>("/api/external-chat/connections");
       setIncoming(data.incoming || []);
@@ -414,9 +414,9 @@ export default function ExternalChatApp() {
     } catch (err) {
       handleApiError(err, "Failed to load connections");
     }
-  };
+  }, [handleApiError]);
 
-  const loadRooms = async () => {
+  const loadRooms = useCallback(async () => {
     setLoadingRooms(true);
     try {
       const data = await api<{ rooms: Room[] }>("/api/external-chat/rooms");
@@ -431,9 +431,18 @@ export default function ExternalChatApp() {
     } finally {
       setLoadingRooms(false);
     }
-  };
+  }, [activeRoomCode, handleApiError]);
 
-  const loadMessages = async (roomCode: string) => {
+  const emit = useCallback(async (payload: unknown) => {
+    if (!activeRoomCode) return;
+    await fetch(`/api/external-chat/realtime/${encodeURIComponent(activeRoomCode)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload }),
+    }).catch(() => undefined);
+  }, [activeRoomCode]);
+
+  const loadMessages = useCallback(async (roomCode: string) => {
     if (!roomCode) return;
     const list = messageListRef.current;
     if (list) {
@@ -472,33 +481,24 @@ export default function ExternalChatApp() {
     } finally {
       setLoadingMessages(false);
     }
-  };
-
-  const emit = async (payload: unknown) => {
-    if (!activeRoomCode) return;
-    await fetch(`/api/external-chat/realtime/${encodeURIComponent(activeRoomCode)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload }),
-    }).catch(() => undefined);
-  };
+  }, [emit, handleApiError, pinnedOnly, search, selfUserId]);
 
   useEffect(() => {
     if (setupRequired) return;
     void loadConnections();
     void loadRooms();
-  }, [setupRequired]);
+  }, [loadConnections, loadRooms, setupRequired]);
 
   useEffect(() => {
     if (!activeRoomCode || setupRequired) return;
     void loadMessages(activeRoomCode);
-  }, [activeRoomCode, pinnedOnly, setupRequired]);
+  }, [activeRoomCode, loadMessages, setupRequired]);
 
   useEffect(() => {
     if (!activeRoomCode || setupRequired) return;
     const t = setTimeout(() => void loadMessages(activeRoomCode), 300);
     return () => clearTimeout(t);
-  }, [search, activeRoomCode, setupRequired]);
+  }, [activeRoomCode, loadMessages, search, setupRequired]);
 
   useEffect(() => {
     if (!activeRoomCode || setupRequired) return;
@@ -516,7 +516,7 @@ export default function ExternalChatApp() {
       s.close();
       eventRef.current = null;
     };
-  }, [activeRoomCode, setupRequired]);
+  }, [activeRoomCode, loadConnections, loadMessages, loadRooms, setupRequired]);
 
   useEffect(() => {
     const q = query.trim();
@@ -536,7 +536,7 @@ export default function ExternalChatApp() {
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [query]);
+  }, [handleApiError, query]);
 
   useEffect(() => {
     try {
@@ -656,7 +656,6 @@ export default function ExternalChatApp() {
       }
       return next;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, activeRoomCode]);
 
   useEffect(() => {

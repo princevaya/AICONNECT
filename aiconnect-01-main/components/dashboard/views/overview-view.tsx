@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format, isToday } from "date-fns";
 import {
@@ -18,7 +18,9 @@ import {
   Calendar,
   Users,
   PlayCircle,
+  ImageIcon,
   Loader2,
+  MessageSquareText,
   RefreshCw,
 } from "lucide-react";
 
@@ -276,6 +278,64 @@ const fetchUpcomingMeetings = useCallback(async () => {
             >
               <PlayCircle className="mr-2 h-5 w-5" />
               View Recordings
+            </Button>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <Card className="border-2 hover:border-primary/50 transition-colors">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-lg bg-amber-500/10">
+                <ImageIcon className="h-6 w-6 text-amber-600" />
+              </div>
+              <div>
+                <CardTitle>3D Image Generator</CardTitle>
+                <CardDescription>Create visual assets from your dashboard</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Generate polished 3D-style concepts, product visuals, and presentation-ready imagery without leaving AIConnect.
+            </p>
+            <Button
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={() => router.push("/dashboard/3d-image-generator")}
+            >
+              <ImageIcon className="mr-2 h-5 w-5" />
+              Open Generator
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2 hover:border-primary/50 transition-colors">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-lg bg-sky-500/10">
+                <MessageSquareText className="h-6 w-6 text-sky-600" />
+              </div>
+              <div>
+                <CardTitle>External Chat</CardTitle>
+                <CardDescription>Manage conversations and shared files</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Jump into your external collaboration hub for direct messages, room workflows, attachments, and realtime updates.
+            </p>
+            <Button
+              variant="outline"
+              className="w-full"
+              size="lg"
+              onClick={() => router.push("/dashboard/external-chat")}
+            >
+              <MessageSquareText className="mr-2 h-5 w-5" />
+              Open External Chat
             </Button>
           </CardContent>
         </Card>

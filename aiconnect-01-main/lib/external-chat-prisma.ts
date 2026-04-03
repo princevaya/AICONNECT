@@ -4,9 +4,9 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
-const rawConnectionString = process.env.CHAT_DATABASE_URL;
+const rawConnectionString = process.env.CHAT_DATABASE_URL || process.env.DATABASE_URL;
 if (!rawConnectionString) {
-  throw new Error("CHAT_DATABASE_URL must be set.");
+  throw new Error("CHAT_DATABASE_URL or DATABASE_URL must be set.");
 }
 
 export function normalizeExternalChatConnectionString(input: string) {

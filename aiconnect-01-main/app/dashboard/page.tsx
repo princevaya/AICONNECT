@@ -18,7 +18,8 @@ export type DashboardView =
   | "recording"
   | "schedule"
   | "interview"
-  | "ai-image";
+  | "ai-image"
+  | "external-chat";
 
 export default function DashboardPage() {
   const [activeView, setActiveView] = useState<DashboardView>("overview");

@@ -1,7 +1,19 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ArrowLeft, ImageIcon, Sparkles } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 
 type GeneratedImage = {
   id: string;
@@ -99,31 +111,49 @@ export default function ImageGeneratorPage() {
   const latest = items[0] || null;
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(80,120,255,0.18),transparent_30%),linear-gradient(135deg,#050816,#111827_55%,#0f172a)] px-4 py-10 text-white">
-      <div className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-        <section className="rounded-3xl border border-white/10 bg-white/6 p-6 shadow-2xl backdrop-blur-xl">
-          <p className="text-xs uppercase tracking-[0.28em] text-cyan-200/80">Production AI Imaging</p>
-          <h1 className="mt-3 text-3xl font-semibold">3D Image Generator</h1>
-          <p className="mt-2 max-w-2xl text-sm text-slate-300">
-            Generate polished 3D-style visuals with persisted history, provider-backed rendering, and deployable API controls.
-          </p>
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-2">
+          <Button variant="ghost" asChild className="px-0 text-muted-foreground hover:text-foreground">
+            <Link href="/dashboard">
+              <ArrowLeft className="h-4 w-4" />
+              Back to dashboard
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">3D Image Generator</h1>
+            <p className="text-sm text-muted-foreground">
+              Generate 3D-style visuals with saved history, provider-backed rendering, and production-safe controls.
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" onClick={() => void loadHistory()} disabled={loadingHistory}>
+          Refresh history
+        </Button>
+      </div>
 
-          <div className="mt-6 grid gap-4">
-            <label className="grid gap-2">
-              <span className="text-sm text-slate-200">Prompt</span>
-              <textarea
-                className="min-h-36 rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm outline-none ring-0 transition focus:border-cyan-300/40"
-                placeholder="Example: premium 3D render of a futuristic desk lamp with brushed aluminum body, soft blue ambient light, studio background"
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle>New Generation</CardTitle>
+            <CardDescription>Choose a preset, tune the output, and generate a deployable asset.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Prompt</label>
+              <Textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
+                className="min-h-36"
+                placeholder="Example: premium 3D render of a futuristic desk lamp with brushed aluminum body, blue ambient glow, clean studio background"
               />
-            </label>
+            </div>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <label className="grid gap-2">
-                <span className="text-sm text-slate-200">Style preset</span>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Style preset</label>
                 <select
-                  className="rounded-xl border border-white/10 bg-slate-950/70 p-3 text-sm"
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
                   value={stylePreset}
                   onChange={(e) => setStylePreset(e.target.value)}
                 >
@@ -133,12 +163,12 @@ export default function ImageGeneratorPage() {
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
 
-              <label className="grid gap-2">
-                <span className="text-sm text-slate-200">Aspect ratio</span>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Aspect ratio</label>
                 <select
-                  className="rounded-xl border border-white/10 bg-slate-950/70 p-3 text-sm"
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
                   value={aspectRatio}
                   onChange={(e) => setAspectRatio(e.target.value)}
                 >
@@ -146,24 +176,24 @@ export default function ImageGeneratorPage() {
                   <option value="16:9">16:9</option>
                   <option value="9:16">9:16</option>
                 </select>
-              </label>
+              </div>
 
-              <label className="grid gap-2">
-                <span className="text-sm text-slate-200">Quality</span>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Quality</label>
                 <select
-                  className="rounded-xl border border-white/10 bg-slate-950/70 p-3 text-sm"
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
                   value={quality}
                   onChange={(e) => setQuality(e.target.value)}
                 >
                   <option value="standard">Standard</option>
                   <option value="hd">HD</option>
                 </select>
-              </label>
+              </div>
 
-              <label className="grid gap-2">
-                <span className="text-sm text-slate-200">Background</span>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Background</label>
                 <select
-                  className="rounded-xl border border-white/10 bg-slate-950/70 p-3 text-sm"
+                  className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 flex h-10 w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
                   value={background}
                   onChange={(e) => setBackground(e.target.value)}
                 >
@@ -171,133 +201,129 @@ export default function ImageGeneratorPage() {
                   <option value="opaque">Opaque</option>
                   <option value="transparent">Transparent</option>
                 </select>
-              </label>
-            </div>
-
-            {error ? <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</p> : null}
-
-            <button
-              onClick={generateImage}
-              disabled={loading}
-              className="inline-flex items-center justify-center rounded-2xl bg-cyan-300 px-5 py-3 font-medium text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? "Generating..." : "Generate 3D Image"}
-            </button>
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-white/10 bg-slate-950/65 p-6 shadow-2xl">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Latest Output</p>
-              <h2 className="mt-1 text-xl font-semibold">Preview</h2>
-            </div>
-            <button
-              onClick={() => void loadHistory()}
-              className="rounded-xl border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:bg-white/6"
-              type="button"
-            >
-              Refresh
-            </button>
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-3xl border border-white/10 bg-black/40">
-            {latest?.imageUrl ? (
-              <div className="relative aspect-square w-full">
-                <Image
-                  src={latest.imageUrl}
-                  alt={latest.prompt}
-                  fill
-                  className="object-cover"
-                  sizes="(max-width: 1024px) 100vw, 40vw"
-                  unoptimized
-                />
               </div>
-            ) : (
-              <div className="flex aspect-square items-center justify-center p-8 text-center text-sm text-slate-400">
-                {loading ? "Rendering your image..." : "Your latest generated result will appear here."}
-              </div>
-            )}
-          </div>
-
-          {latest ? (
-            <div className="mt-4 grid gap-2 text-sm text-slate-300">
-              <p><span className="text-slate-500">Prompt:</span> {latest.prompt}</p>
-              <p><span className="text-slate-500">Provider:</span> {latest.provider} / {latest.model}</p>
-              <p><span className="text-slate-500">Settings:</span> {latest.stylePreset || "custom"} • {latest.aspectRatio} • {latest.quality}</p>
-              {latest.imageUrl ? (
-                <a
-                  href={latest.imageUrl}
-                  className="inline-flex w-fit rounded-xl border border-white/10 px-3 py-2 text-sm text-cyan-200 transition hover:bg-white/6"
-                >
-                  Download latest image
-                </a>
-              ) : null}
             </div>
-          ) : null}
-        </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/5 p-6 lg:col-span-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-semibold">Generation History</h2>
-              <p className="mt-1 text-sm text-slate-400">Persisted generations for the signed-in user.</p>
-            </div>
-            {loadingHistory ? <span className="text-sm text-slate-400">Loading...</span> : null}
-          </div>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((item) => (
-              <article key={item.id} className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950/55">
-                <div className="relative aspect-[4/3] w-full bg-black/50">
-                  {item.imageUrl ? (
-                    <Image
-                      src={item.imageUrl}
-                      alt={item.prompt}
-                      fill
-                      className="object-cover"
-                      sizes="(max-width: 1280px) 50vw, 25vw"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center px-4 text-center text-sm text-slate-500">
-                      {item.status === "failed" ? item.errorMessage || "Generation failed" : "Pending"}
-                    </div>
-                  )}
-                </div>
-                <div className="grid gap-2 p-4 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="rounded-full border border-white/10 px-2 py-1 text-xs uppercase tracking-[0.18em] text-slate-300">
-                      {item.status}
-                    </span>
-                    <span className="text-xs text-slate-500">
-                      {new Date(item.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="line-clamp-3 text-slate-100">{item.prompt}</p>
-                  <p className="text-xs text-slate-400">
-                    {item.provider} / {item.model} • {item.aspectRatio} • {item.quality}
-                  </p>
-                  {item.imageUrl ? (
-                    <a
-                      href={item.imageUrl}
-                      className="inline-flex w-fit rounded-xl border border-white/10 px-3 py-2 text-xs text-cyan-200 transition hover:bg-white/6"
-                    >
-                      Open image
-                    </a>
-                  ) : null}
-                </div>
-              </article>
-            ))}
-
-            {!loadingHistory && items.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/10 px-6 py-10 text-sm text-slate-400 md:col-span-2 xl:col-span-3">
-                No generations yet. Create your first production-ready 3D-style image above.
+            {error ? (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {error}
               </div>
             ) : null}
-          </div>
-        </section>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={generateImage} disabled={loading}>
+                <Sparkles className="h-4 w-4" />
+                {loading ? "Generating..." : "Generate image"}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Output is saved to your history and can be re-opened later.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Latest Output</CardTitle>
+            <CardDescription>Preview the most recent generated image and its settings.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="overflow-hidden rounded-xl border bg-muted/30">
+              {latest?.imageUrl ? (
+                <div className="relative aspect-square w-full">
+                  <Image
+                    src={latest.imageUrl}
+                    alt={latest.prompt}
+                    fill
+                    className="object-cover"
+                    sizes="(max-width: 1280px) 100vw, 35vw"
+                    unoptimized
+                  />
+                </div>
+              ) : (
+                <div className="flex aspect-square items-center justify-center p-8 text-center text-sm text-muted-foreground">
+                  {loading ? "Generating your latest image..." : "Your most recent generated image will appear here."}
+                </div>
+              )}
+            </div>
+
+            {latest ? (
+              <div className="space-y-2 text-sm">
+                <p className="font-medium">{latest.prompt}</p>
+                <p className="text-muted-foreground">
+                  {latest.provider} / {latest.model} • {latest.stylePreset || "custom"} • {latest.aspectRatio} • {latest.quality}
+                </p>
+                {latest.imageUrl ? (
+                  <Button variant="outline" asChild>
+                    <a href={latest.imageUrl}>Open latest image</a>
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Generation History</CardTitle>
+          <CardDescription>Review previous outputs created from this account.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loadingHistory ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="h-72 animate-pulse rounded-xl border bg-muted/40" />
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+              No generated images yet. Create one above to start building your asset library.
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {items.map((item) => (
+                <Card key={item.id} className="gap-0 overflow-hidden py-0">
+                  <div className="relative aspect-[4/3] w-full border-b bg-muted/30">
+                    {item.imageUrl ? (
+                      <Image
+                        src={item.imageUrl}
+                        alt={item.prompt}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 1280px) 50vw, 25vw"
+                        unoptimized
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                        {item.status === "failed" ? item.errorMessage || "Generation failed" : "Pending"}
+                      </div>
+                    )}
+                  </div>
+                  <CardContent className="space-y-3 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        <ImageIcon className="h-3.5 w-3.5" />
+                        {item.status}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(item.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="line-clamp-3 text-sm font-medium">{item.prompt}</p>
+                    <Input readOnly value={`${item.provider} / ${item.model}`} className="h-9 text-xs" />
+                    {item.imageUrl ? (
+                      <Button variant="outline" asChild className="w-full">
+                        <a href={item.imageUrl}>Open image</a>
+                      </Button>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
