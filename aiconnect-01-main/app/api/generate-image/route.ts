@@ -1,53 +1,52 @@
-import { NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
+import { NextRequest, NextResponse } from "next/server";
+import { createGeneratedImage, listGeneratedImages } from "@/services/image-generation.service";
+import { ensureLocalUser } from "@/services/user.service";
 
-export async function POST(req: Request) {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET() {
   try {
-    const { prompt } = await req.json();
+    const { userId } = await auth();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const user = await ensureLocalUser(userId);
+    const items = await listGeneratedImages(user);
+    return NextResponse.json({ items });
+  } catch (error) {
+    console.error("[generate-image] list failed", error);
+    return NextResponse.json({ error: "Failed to load image history" }, { status: 500 });
+  }
+}
 
-    if (!prompt) {
-      return NextResponse.json(
-        { error: "Prompt missing" },
-        { status: 400 }
-      );
-    }
+export async function POST(req: NextRequest) {
+  try {
+    const { userId } = await auth();
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = (await req.json().catch(() => null)) as
+      | {
+          prompt?: string;
+          stylePreset?: string;
+          aspectRatio?: string;
+          quality?: string;
+          background?: string;
+        }
+      | null;
 
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "image/png",
-        },
-        body: JSON.stringify({
-          inputs: `3D render, ultra realistic, cinematic lighting, ${prompt}`,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text);
-    }
-
-    const imageBuffer = await response.arrayBuffer();
-
-    return new NextResponse(imageBuffer, {
-      headers: {
-        "Content-Type": "image/png",
-      },
+    const user = await ensureLocalUser(userId);
+    const item = await createGeneratedImage({
+      user,
+      prompt: body?.prompt || "",
+      stylePreset: body?.stylePreset,
+      aspectRatio: body?.aspectRatio,
+      quality: body?.quality,
+      background: body?.background,
     });
 
-  } catch (error: any) {
-    console.error("HUGGING FACE IMAGE ERROR:", error.message);
-
-    return NextResponse.json(
-      {
-        error: "Hugging Face image generation failed",
-        details: error.message,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ item }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Image generation failed";
+    const status = /required|short|long|unsupported|configured|rate limit/i.test(message) ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
