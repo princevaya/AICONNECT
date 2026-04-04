@@ -555,8 +555,10 @@ export default function ExternalChatApp() {
     s.onopen = () => setRealtimeConnected(true);
     s.onerror = () => setRealtimeConnected(false);
     s.onmessage = (event) => {
+      let eventType: string | null = null;
       try {
         const body = JSON.parse(event.data) as { senderId?: string; payload?: { type?: string; user?: UserRow } };
+        eventType = body.payload?.type || null;
         if (body.payload?.type === "profile" && body.payload.user) {
           const nextUser = body.payload.user;
           setMessages((prev) =>
@@ -597,6 +599,26 @@ export default function ExternalChatApp() {
       } catch {
         // Ignore malformed realtime payloads and fall back to full reloads.
       }
+
+      if (!eventType) {
+        void loadConnections();
+        void loadRooms();
+        void loadMessages(activeRoomCode);
+        return;
+      }
+
+      if (eventType === "profile") {
+        void loadRooms();
+        void loadMessages(activeRoomCode);
+        return;
+      }
+
+      if (eventType === "message" || eventType === "reaction" || eventType === "seen" || eventType === "message_mutation" || eventType === "delete") {
+        void loadRooms();
+        void loadMessages(activeRoomCode);
+        return;
+      }
+
       void loadConnections();
       void loadRooms();
       void loadMessages(activeRoomCode);
