@@ -504,10 +504,19 @@ export async function toggleReaction(messageId: string, emoji: string, user: App
     await prisma.externalChatReaction.delete({ where: { id: existing.id } });
     return { active: false };
   }
-  await prisma.externalChatReaction.create({
-    data: { messageId, userId: user.id, emoji: value },
-  });
-  return { active: true };
+  try {
+    await prisma.externalChatReaction.create({
+      data: { messageId, userId: user.id, emoji: value },
+    });
+    return { active: true };
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error ? (error as { code?: string }).code : undefined;
+    if (code === "P2002") {
+      // A concurrent duplicate toggle can race between the existence check and create.
+      return { active: true };
+    }
+    throw error;
+  }
 }
 
 export async function updateMessage(input: {

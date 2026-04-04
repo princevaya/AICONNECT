@@ -252,9 +252,13 @@ export default function ExternalChatApp() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserRow[]>([]);
+  const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [createGroupName, setCreateGroupName] = useState("");
   const [searching, setSearching] = useState(false);
   const [messageSearchIndex, setMessageSearchIndex] = useState(0);
   const [menuOpenForRoomCode, setMenuOpenForRoomCode] = useState<string | null>(null);
+  const [messageMenuOpenId, setMessageMenuOpenId] = useState<string | null>(null);
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
@@ -703,10 +707,12 @@ export default function ExternalChatApp() {
       if (e.key === "Escape") {
         setMentionOpen(false);
         setMenuOpenForRoomCode(null);
+        setMessageMenuOpenId(null);
         setActionSheetOpen(false);
         setThreadOpen(false);
         setMobileSidebarOpen(false);
         setProfileSettingsOpen(false);
+        setCreateGroupOpen(false);
         setCallOverlayOpen(false);
         setHelpOpen(false);
         setLightboxImage(null);
@@ -882,6 +888,43 @@ export default function ExternalChatApp() {
       await loadRooms();
     } catch (e) {
       handleApiError(e, "Failed request");
+    }
+  };
+
+  const toggleGroupMember = (clerkId: string) => {
+    setSelectedGroupMemberIds((prev) =>
+      prev.includes(clerkId) ? prev.filter((id) => id !== clerkId) : [...prev, clerkId]
+    );
+  };
+
+  const createGroup = async () => {
+    const name = createGroupName.trim();
+    if (!name) {
+      setError("Group name is required");
+      return;
+    }
+    if (selectedGroupMemberIds.length === 0) {
+      setError("Select at least one member for the group");
+      return;
+    }
+
+    try {
+      const data = await api<{ room: Room }>("/api/external-chat/rooms", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          type: "group",
+          memberClerkIds: selectedGroupMemberIds,
+        }),
+      });
+      setCreateGroupOpen(false);
+      setCreateGroupName("");
+      setSelectedGroupMemberIds([]);
+      await loadRooms();
+      await loadConnections();
+      setActiveRoomCode(data.room.code);
+    } catch (err) {
+      handleApiError(err, "Failed to create group");
     }
   };
 
@@ -1563,9 +1606,15 @@ export default function ExternalChatApp() {
         </div>
 
         <div className="mb-3 space-y-2 rounded-lg border border-border/70 bg-muted/35 p-2">
-          <div className="relative">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)}>
+              <PlusCircle className="mr-1 h-4 w-4" />
+              Group
+            </Button>
           </div>
           <div className="max-h-36 space-y-1 overflow-y-auto">
             {searching ? <p className="text-xs text-muted-foreground">Searching...</p> : null}
@@ -1575,12 +1624,24 @@ export default function ExternalChatApp() {
                   <p className="truncate text-xs font-medium">{userLabel(u)}</p>
                   <p className="truncate text-[11px] text-muted-foreground">{u.email || "No email provided"}</p>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => void sendRequest(u.clerkId)}>
-                  <UserPlus className="h-4 w-4" />
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "outline"}
+                    onClick={() => toggleGroupMember(u.clerkId)}
+                  >
+                    <PlusCircle className="h-4 w-4" />
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void sendRequest(u.clerkId)}>
+                    <UserPlus className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
+          {selectedGroupMemberIds.length > 0 ? (
+            <p className="text-[11px] text-muted-foreground">{selectedGroupMemberIds.length} selected for group creation</p>
+          ) : null}
         </div>
 
         <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
@@ -2056,12 +2117,59 @@ export default function ExternalChatApp() {
                         {messageStatus(m)}
                       </div>
                       <div className="flex items-center gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => openMessageActions(m.id)}>
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      {m.failed ? (
-                        <Button size="sm" variant="outline" onClick={() => void retryOptimisticMessage(m.id)}>Retry</Button>
-                      ) : null}
+                        <div className="relative">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              if (typeof window !== "undefined" && window.innerWidth < 768) {
+                                openMessageActions(m.id);
+                                return;
+                              }
+                              setMessageMenuOpenId((cur) => (cur === m.id ? null : m.id));
+                            }}
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                          {messageMenuOpenId === m.id ? (
+                            <div
+                              className={`absolute z-30 mt-1 w-48 max-w-[min(18rem,calc(100vw-2rem))] rounded-md border border-border bg-card p-1 shadow-lg ${
+                                own ? "right-0 bottom-full mb-1 origin-bottom-right" : "left-0 bottom-full mb-1 origin-bottom-left"
+                              }`}
+                            >
+                              <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
+                                {REACTIONS.map((emoji) => (
+                                  <button
+                                    key={`${m.id}-menu-${emoji}`}
+                                    onClick={() =>
+                                      void api(`/api/external-chat/messages/${m.id}/reactions`, {
+                                        method: "POST",
+                                        body: JSON.stringify({ emoji }),
+                                      })
+                                        .then(() => emit({ type: "reaction" }))
+                                        .then(() => loadMessages(activeRoomCode))
+                                        .finally(() => setMessageMenuOpenId(null))
+                                        .catch((e) => setError(e instanceof Error ? e.message : "Reaction failed"))
+                                    }
+                                    className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent"
+                                  >
+                                    {emoji}
+                                  </button>
+                                ))}
+                              </div>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { setReplyToId(m.id); setMessageMenuOpenId(null); }}><Reply className="h-4 w-4" /> Reply</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { openThread(m); setMessageMenuOpenId(null); }}><ChevronRight className="h-4 w-4" /> Thread</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { toggleBookmark(m.id); setMessageMenuOpenId(null); }}>{bookmarkedMessageIds.includes(m.id) ? <StarOff className="h-4 w-4 text-amber-500" /> : <Star className="h-4 w-4" />} {bookmarkedMessageIds.includes(m.id) ? "Unstar" : "Star"}</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { void copyMessageContent(m); setMessageMenuOpenId(null); }}>Copy Message</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { void mutateMessage(m.id, { pinned: !Boolean(m.pinnedAt) }); setMessageMenuOpenId(null); }}>{m.pinnedAt ? "Unpin" : "Pin"}</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { const next = window.prompt("Edit message", m.content); if (next !== null) void mutateMessage(m.id, { content: next }); setMessageMenuOpenId(null); }}>Edit</button>
+                              <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-red-600 hover:bg-accent" onClick={() => { void deleteMessage(m.id); setMessageMenuOpenId(null); }}>Delete</button>
+                            </div>
+                          ) : null}
+                        </div>
+                        {m.failed ? (
+                          <Button size="sm" variant="outline" onClick={() => void retryOptimisticMessage(m.id)}>Retry</Button>
+                        ) : null}
                       <span className="text-[11px] text-muted-foreground">Seen by {m.seenBy.length}</span>
                       {m.seenBy.length > 0 ? (
                         <div className="ml-1 flex items-center -space-x-1">
@@ -2421,6 +2529,52 @@ export default function ExternalChatApp() {
             </div>
           </div>
         </aside>
+      </div>
+
+      <div className={`fixed inset-0 z-[57] transition ${createGroupOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+        <button
+          type="button"
+          aria-label="Close create group"
+          onClick={() => setCreateGroupOpen(false)}
+          className={`absolute inset-0 bg-black/35 transition-opacity ${createGroupOpen ? "opacity-100" : "opacity-0"}`}
+        />
+        <div className={`absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-xl transition-all duration-300 ${createGroupOpen ? "-translate-y-1/2 opacity-100" : "-translate-y-[45%] opacity-0"}`}>
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold">Create Group</p>
+              <p className="text-xs text-muted-foreground">Pick a name and choose the users to include.</p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setCreateGroupOpen(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <div className="space-y-3">
+            <Input value={createGroupName} onChange={(e) => setCreateGroupName(e.target.value)} placeholder="Group name" />
+            <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-border/70 p-2">
+              {results.length === 0 ? <p className="text-xs text-muted-foreground">Search users in the sidebar first, then select them here.</p> : null}
+              {results.map((u) => (
+                <button
+                  key={`group-pick-${u.id}`}
+                  type="button"
+                  onClick={() => toggleGroupMember(u.clerkId)}
+                  className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-sm ${
+                    selectedGroupMemberIds.includes(u.clerkId) ? "border-primary bg-primary/10" : "border-border/70 hover:bg-accent/60"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{userLabel(u)}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{u.email || "No email provided"}</p>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{selectedGroupMemberIds.includes(u.clerkId) ? "Selected" : "Add"}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">{selectedGroupMemberIds.length} member(s) selected</p>
+              <Button onClick={() => void createGroup()} disabled={!createGroupName.trim() || selectedGroupMemberIds.length === 0}>
+                Create group
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className={`fixed inset-0 z-[56] transition ${callOverlayOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
