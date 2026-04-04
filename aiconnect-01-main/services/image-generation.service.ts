@@ -180,8 +180,28 @@ async function generateWithHuggingFace(input: {
   });
 
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
     const text = await response.text().catch(() => "");
-    throw new Error(text || "Hugging Face image generation failed");
+    let details = text;
+
+    if (contentType.includes("application/json")) {
+      try {
+        const parsed = JSON.parse(text) as {
+          error?: string;
+          estimated_time?: number;
+        };
+        if (parsed.error) {
+          details = parsed.error;
+          if (parsed.estimated_time) {
+            details += ` (estimated time ${Math.ceil(parsed.estimated_time)}s)`;
+          }
+        }
+      } catch {
+        // keep original text when the upstream body isn't valid JSON
+      }
+    }
+
+    throw new Error(`Hugging Face image generation failed (${response.status}): ${details || "Unknown upstream error"}`);
   }
 
   return {
@@ -201,6 +221,21 @@ function userFacingError(error: unknown) {
   }
   if (message.includes("no image generation provider")) {
     return "Image generation is not configured on the server.";
+  }
+  if (message.includes("401") || message.includes("unauthorized") || message.includes("invalid token")) {
+    return "The configured image generation API key is invalid or expired.";
+  }
+  if (message.includes("402") || message.includes("quota") || message.includes("payment")) {
+    return "The image generation provider account has exhausted its quota.";
+  }
+  if (message.includes("404") || message.includes("not found")) {
+    return "The configured image model could not be found.";
+  }
+  if (message.includes("503") || message.includes("loading")) {
+    return "The image model is still warming up. Please try again in a moment.";
+  }
+  if (message.includes("504") || message.includes("timeout")) {
+    return "The image provider timed out while generating the image.";
   }
   return "Image generation failed. Please try again.";
 }
@@ -399,6 +434,11 @@ export async function createGeneratedImage(input: CreateImageInput) {
 
     return toGeneratedImageDto(saved);
   } catch (error) {
+    console.error("[generate-image] provider failure", {
+      provider: config.provider,
+      model: config.model,
+      error: error instanceof Error ? error.message : error,
+    });
     await prisma.generatedImage.update({
       where: { id: generation.id },
       data: {
@@ -492,6 +532,11 @@ export async function createGeneratedImageWithoutDatabase(input: Omit<CreateImag
       createdAt: new Date().toISOString(),
     };
   } catch (error) {
+    console.error("[generate-image] provider failure (storage fallback)", {
+      provider: config.provider,
+      model: config.model,
+      error: error instanceof Error ? error.message : error,
+    });
     throw new Error(userFacingError(error));
   }
 }
