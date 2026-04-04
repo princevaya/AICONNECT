@@ -265,6 +265,7 @@ export default function ExternalChatApp() {
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [selfUser, setSelfUser] = useState<UserRow | null>(null);
+  const selfUserId = selfUser?.id || null;
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
   const [meetingCodeInput, setMeetingCodeInput] = useState("");
   const [notificationSoundOn, setNotificationSoundOn] = useState(true);
@@ -322,7 +323,6 @@ export default function ExternalChatApp() {
   const swipeStartXRef = useRef<number | null>(null);
 
   const activeRoom = useMemo(() => rooms.find((r) => r.code === activeRoomCode) || null, [rooms, activeRoomCode]);
-  const selfUserId = selfUser?.id || null;
   const activeRoomPeer = useMemo(() => {
     if (!activeRoom || activeRoom.type !== "direct" || !selfUserId) return null;
     return activeRoom.members?.find((member) => member.user.id !== selfUserId)?.user || null;
