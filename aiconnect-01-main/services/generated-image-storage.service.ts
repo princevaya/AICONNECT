@@ -34,6 +34,28 @@ const s3Client =
         })
       : null;
 
+function shouldFallbackFromS3(error: unknown) {
+  const code =
+    typeof error === "object" && error !== null && "Code" in error
+      ? String((error as { Code?: unknown }).Code || "")
+      : "";
+  const name =
+    typeof error === "object" && error !== null && "name" in error
+      ? String((error as { name?: unknown }).name || "")
+      : "";
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  return (
+    code === "NoSuchBucket" ||
+    code === "InvalidAccessKeyId" ||
+    code === "AccessDenied" ||
+    name === "NoSuchBucket" ||
+    message.includes("no such bucket") ||
+    message.includes("the specified bucket does not exist") ||
+    message.includes("access denied")
+  );
+}
+
 function sanitize(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
 }
@@ -91,9 +113,15 @@ export async function saveGeneratedImage(input: {
   mimeType: string;
   buffer: Buffer;
 }) {
-  return s3Client && BUCKET
-    ? uploadS3(input.buffer, input.generationId, input.userKey, input.mimeType)
-    : uploadLocal(input.buffer, input.generationId, input.userKey, input.mimeType);
+  if (s3Client && BUCKET) {
+    try {
+      return await uploadS3(input.buffer, input.generationId, input.userKey, input.mimeType);
+    } catch (error) {
+      if (!shouldFallbackFromS3(error)) throw error;
+    }
+  }
+
+  return uploadLocal(input.buffer, input.generationId, input.userKey, input.mimeType);
 }
 
 type StorageManifest = {
@@ -126,18 +154,24 @@ export async function writeGeneratedImageManifest(input: {
   const body = JSON.stringify(input.manifest);
 
   if (input.storageProvider === "s3") {
-    if (!s3Client || !BUCKET) throw new Error("Generated image S3 is not configured");
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: BUCKET,
-        Key: key,
-        Body: body,
-        ContentType: "application/json",
-      })
-    );
-    return;
+    if (s3Client && BUCKET) {
+      try {
+        await s3Client.send(
+          new PutObjectCommand({
+            Bucket: BUCKET,
+            Key: key,
+            Body: body,
+            ContentType: "application/json",
+          })
+        );
+        return;
+      } catch (error) {
+        if (!shouldFallbackFromS3(error)) throw error;
+      }
+    }
   }
 
+  await fs.mkdir(path.dirname(path.join(process.cwd(), key)), { recursive: true });
   await fs.writeFile(path.join(process.cwd(), key), body, "utf8");
 }
 
@@ -164,46 +198,50 @@ export async function listGeneratedImageHistoryFromStorage(subjectKey: string) {
 
   if (s3Client && BUCKET) {
     const prefix = `${PREFIX}/`;
-    const listed = await s3Client.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, MaxKeys: 200 }));
-    const manifestKeys = (listed.Contents || [])
-      .map((item) => item.Key || "")
-      .filter((key) => key.endsWith(`/${safeKey}/`) || key.includes(`/${safeKey}/`))
-      .filter((key) => key.endsWith(".json"))
-      .sort()
-      .reverse()
-      .slice(0, Number(process.env.GENERATED_IMAGES_HISTORY_LIMIT || 24));
+    try {
+      const listed = await s3Client.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, MaxKeys: 200 }));
+      const manifestKeys = (listed.Contents || [])
+        .map((item) => item.Key || "")
+        .filter((key) => key.endsWith(`/${safeKey}/`) || key.includes(`/${safeKey}/`))
+        .filter((key) => key.endsWith(".json"))
+        .sort()
+        .reverse()
+        .slice(0, Number(process.env.GENERATED_IMAGES_HISTORY_LIMIT || 24));
 
-    const manifests = await Promise.all(
-      manifestKeys.map(async (key) => {
-        try {
-          const manifest = await readS3Manifest(key);
-          if (!manifest) return null;
-          const imageUrl = await buildSignedImageUrl(manifest.imageKey);
-          return {
-            id: manifest.id,
-            status: "succeeded",
-            prompt: manifest.prompt,
-            enhancedPrompt: manifest.enhancedPrompt || null,
-            stylePreset: manifest.stylePreset || null,
-            aspectRatio: manifest.aspectRatio || "1:1",
-            quality: manifest.quality || "standard",
-            background: manifest.background || null,
-            provider: manifest.provider,
-            model: manifest.model,
-            mimeType: manifest.mimeType,
-            width: manifest.width || null,
-            height: manifest.height || null,
-            errorMessage: null,
-            imageUrl,
-            createdAt: manifest.createdAt,
-          };
-        } catch {
-          return null;
-        }
-      })
-    );
+      const manifests = await Promise.all(
+        manifestKeys.map(async (key) => {
+          try {
+            const manifest = await readS3Manifest(key);
+            if (!manifest) return null;
+            const imageUrl = await buildSignedImageUrl(manifest.imageKey);
+            return {
+              id: manifest.id,
+              status: "succeeded",
+              prompt: manifest.prompt,
+              enhancedPrompt: manifest.enhancedPrompt || null,
+              stylePreset: manifest.stylePreset || null,
+              aspectRatio: manifest.aspectRatio || "1:1",
+              quality: manifest.quality || "standard",
+              background: manifest.background || null,
+              provider: manifest.provider,
+              model: manifest.model,
+              mimeType: manifest.mimeType,
+              width: manifest.width || null,
+              height: manifest.height || null,
+              errorMessage: null,
+              imageUrl,
+              createdAt: manifest.createdAt,
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
 
-    return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
+      return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
+    } catch (error) {
+      if (!shouldFallbackFromS3(error)) throw error;
+    }
   }
 
   const root = path.join(LOCAL_ROOT, safeKey);

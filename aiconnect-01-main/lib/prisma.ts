@@ -28,10 +28,7 @@ function normalizeConnectionString(input: string) {
 
 const primaryConnectionString = process.env.DATABASE_URL || "";
 const fallbackConnectionString = process.env.CHAT_DATABASE_URL || "";
-const rawConnectionString =
-  primaryConnectionString && /db\.[a-z0-9]+\.supabase\.co/i.test(primaryConnectionString) && fallbackConnectionString
-    ? fallbackConnectionString
-    : primaryConnectionString || fallbackConnectionString;
+const rawConnectionString = primaryConnectionString || fallbackConnectionString;
 
 if (!rawConnectionString) {
   throw new Error("DATABASE_URL or CHAT_DATABASE_URL must be set.");

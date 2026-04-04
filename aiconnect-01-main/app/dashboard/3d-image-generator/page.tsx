@@ -111,31 +111,23 @@ export default function ImageGeneratorPage() {
   const latest = items[0] || null;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <Button variant="ghost" asChild className="px-0 text-muted-foreground hover:text-foreground">
-            <Link href="/dashboard">
-              <ArrowLeft className="h-4 w-4" />
-              Back to dashboard
-            </Link>
-          </Button>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">3D Image Generator</h1>
-            <p className="text-sm text-muted-foreground">
-              Generate 3D-style visuals with saved history, provider-backed rendering, and production-safe controls.
-            </p>
-          </div>
-        </div>
+    <div className="-my-20 relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] min-h-screen w-screen bg-background px-6 py-10">
+      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 pb-6">
+        <Button variant="outline" asChild>
+          <Link href="/dashboard">
+            <ArrowLeft className="h-4 w-4" />
+            Return to dashboard
+          </Link>
+        </Button>
         <Button variant="outline" onClick={() => void loadHistory()} disabled={loadingHistory}>
           Refresh history
         </Button>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="mx-auto grid w-full max-w-7xl gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card>
           <CardHeader>
-            <CardTitle>New Generation</CardTitle>
+            <CardTitle>3D Image Generator</CardTitle>
             <CardDescription>Choose a preset, tune the output, and generate a deployable asset.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -264,66 +256,68 @@ export default function ImageGeneratorPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Generation History</CardTitle>
-          <CardDescription>Review previous outputs created from this account.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loadingHistory ? (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <div key={index} className="h-72 animate-pulse rounded-xl border bg-muted/40" />
-              ))}
-            </div>
-          ) : items.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-              No generated images yet. Create one above to start building your asset library.
-            </div>
-          ) : (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {items.map((item) => (
-                <Card key={item.id} className="gap-0 overflow-hidden py-0">
-                  <div className="relative aspect-[4/3] w-full border-b bg-muted/30">
-                    {item.imageUrl ? (
-                      <Image
-                        src={item.imageUrl}
-                        alt={item.prompt}
-                        fill
-                        className="object-cover"
-                        sizes="(max-width: 1280px) 50vw, 25vw"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
-                        {item.status === "failed" ? item.errorMessage || "Generation failed" : "Pending"}
-                      </div>
-                    )}
-                  </div>
-                  <CardContent className="space-y-3 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                        <ImageIcon className="h-3.5 w-3.5" />
-                        {item.status}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(item.createdAt).toLocaleString()}
-                      </span>
+      <div className="mx-auto mt-6 w-full max-w-7xl">
+        <Card>
+          <CardHeader>
+            <CardTitle>Generation History</CardTitle>
+            <CardDescription>Review previous outputs created from this account.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loadingHistory ? (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="h-72 animate-pulse rounded-xl border bg-muted/40" />
+                ))}
+              </div>
+            ) : items.length === 0 ? (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                No generated images yet. Create one above to start building your asset library.
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {items.map((item) => (
+                  <Card key={item.id} className="gap-0 overflow-hidden py-0">
+                    <div className="relative aspect-[4/3] w-full border-b bg-muted/30">
+                      {item.imageUrl ? (
+                        <Image
+                          src={item.imageUrl}
+                          alt={item.prompt}
+                          fill
+                          className="object-cover"
+                          sizes="(max-width: 1280px) 50vw, 25vw"
+                          unoptimized
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                          {item.status === "failed" ? item.errorMessage || "Generation failed" : "Pending"}
+                        </div>
+                      )}
                     </div>
-                    <p className="line-clamp-3 text-sm font-medium">{item.prompt}</p>
-                    <Input readOnly value={`${item.provider} / ${item.model}`} className="h-9 text-xs" />
-                    {item.imageUrl ? (
-                      <Button variant="outline" asChild className="w-full">
-                        <a href={item.imageUrl}>Open image</a>
-                      </Button>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                    <CardContent className="space-y-3 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          <ImageIcon className="h-3.5 w-3.5" />
+                          {item.status}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(item.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="line-clamp-3 text-sm font-medium">{item.prompt}</p>
+                      <Input readOnly value={`${item.provider} / ${item.model}`} className="h-9 text-xs" />
+                      {item.imageUrl ? (
+                        <Button variant="outline" asChild className="w-full">
+                          <a href={item.imageUrl}>Open image</a>
+                        </Button>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
