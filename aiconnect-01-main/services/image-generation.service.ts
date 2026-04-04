@@ -159,7 +159,7 @@ async function generateWithHuggingFace(input: {
   if (!apiKey) throw new Error("HUGGINGFACE_API_KEY is not configured");
 
   const size = toHuggingFaceSize(input.aspectRatio);
-  const response = await fetch(`https://api-inference.huggingface.co/models/${encodeURIComponent(input.model)}`, {
+  const response = await fetch(`https://router.huggingface.co/hf-inference/models/${encodeURIComponent(input.model)}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
