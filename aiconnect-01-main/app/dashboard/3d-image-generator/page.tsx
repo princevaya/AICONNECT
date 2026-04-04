@@ -264,9 +264,12 @@ export default function ImageGeneratorPage() {
           </CardHeader>
           <CardContent>
             {loadingHistory ? (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="flex gap-4 overflow-hidden">
                 {Array.from({ length: 3 }).map((_, index) => (
-                  <div key={index} className="h-72 animate-pulse rounded-xl border bg-muted/40" />
+                  <div
+                    key={index}
+                    className="h-72 min-w-[calc(100%-0rem)] animate-pulse rounded-xl border bg-muted/40 md:min-w-[calc(50%-0.5rem)] xl:min-w-[calc((100%-2rem)/3)]"
+                  />
                 ))}
               </div>
             ) : items.length === 0 ? (
@@ -274,9 +277,16 @@ export default function ImageGeneratorPage() {
                 No generated images yet. Create one above to start building your asset library.
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  Showing three cards at a time. Swipe or scroll sideways to browse older generations.
+                </p>
+                <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2">
                 {items.map((item) => (
-                  <Card key={item.id} className="gap-0 overflow-hidden py-0">
+                  <Card
+                    key={item.id}
+                    className="min-w-[calc(100%-0rem)] snap-start gap-0 overflow-hidden py-0 md:min-w-[calc(50%-0.5rem)] xl:min-w-[calc((100%-2rem)/3)]"
+                  >
                     <div className="relative aspect-[4/3] w-full border-b bg-muted/30">
                       {item.imageUrl ? (
                         <Image
@@ -313,6 +323,7 @@ export default function ImageGeneratorPage() {
                     </CardContent>
                   </Card>
                 ))}
+                </div>
               </div>
             )}
           </CardContent>
