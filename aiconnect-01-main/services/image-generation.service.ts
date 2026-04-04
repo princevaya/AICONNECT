@@ -21,9 +21,9 @@ type ProviderResult = {
   seed?: string | null;
 };
 
-const openaiClient = process.env.OPENAI_API_KEY
+const openaiClient = process.env.THREE_D_GENERATION_OPENAI_API_KEY || process.env.OPENAI_API_KEY
   ? new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.THREE_D_GENERATION_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
     })
   : null;
 
@@ -155,7 +155,7 @@ async function generateWithHuggingFace(input: {
   model: string;
   aspectRatio: string;
 }): Promise<ProviderResult> {
-  const apiKey = process.env.HUGGINGFACE_API_KEY;
+  const apiKey = process.env.THREE_D_GENERATION_API_KEY || process.env.HUGGINGFACE_API_KEY;
   if (!apiKey) throw new Error("HUGGINGFACE_API_KEY is not configured");
 
   const size = toHuggingFaceSize(input.aspectRatio);

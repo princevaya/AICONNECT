@@ -5,7 +5,9 @@ loadEnv();
 loadEnv({ path: ".env.local", override: true });
 
 const databaseUrl =
-  process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/postgres";
+  process.env.DIRECT_URL ??
+  process.env.DATABASE_URL ??
+  "postgresql://postgres:postgres@localhost:5432/postgres";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",

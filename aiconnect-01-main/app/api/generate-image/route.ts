@@ -7,7 +7,7 @@ import {
   listGeneratedImages,
   listGeneratedImagesFromStorage,
 } from "@/services/image-generation.service";
-import { ensureLocalUser } from "@/services/user.service";
+import { ensureLocalUser, getAuthenticatedProfile } from "@/services/user.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +16,7 @@ export async function GET() {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    await getAuthenticatedProfile(userId);
     let items;
     try {
       const user = await ensureLocalUser(userId);
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    await getAuthenticatedProfile(userId);
     const body = (await req.json().catch(() => null)) as
       | {
           prompt?: string;
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ item }, { status: 201 });
   } catch (error) {
+    console.error("[generate-image] create failed", error);
     const message = error instanceof Error ? error.message : "Image generation failed";
     const status = /required|short|long|unsupported|configured|rate limit/i.test(message) ? 400 : 500;
     return NextResponse.json({ error: message }, { status });
