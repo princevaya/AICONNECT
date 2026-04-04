@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { ensureExternalChatUser } from "@/services/external-chat/user.service";
 import { externalChatPrisma } from "@/lib/external-chat-prisma";
+import { publishRoomEvent } from "@/lib/external-chat-realtime";
 import { parseJson, toError } from "@/app/api/external-chat/_utils";
 
 export const runtime = "nodejs";
@@ -45,6 +46,34 @@ export async function PATCH(req: NextRequest) {
       data: { imageUrl: nextImage || null },
       select: { id: true, clerkId: true, name: true, email: true, imageUrl: true },
     });
+
+    const memberships = await externalChatPrisma.externalChatRoomMember.findMany({
+      where: {
+        userId: user.id,
+        removedAt: null,
+        leftAt: null,
+      },
+      select: {
+        room: {
+          select: {
+            code: true,
+          },
+        },
+      },
+    });
+
+    await Promise.allSettled(
+      memberships.map((membership) =>
+        publishRoomEvent(membership.room.code, {
+          senderId: user.id,
+          payload: {
+            type: "profile",
+            user: updated,
+          },
+        })
+      )
+    );
+
     return NextResponse.json({ user: updated });
   } catch (error) {
     return toError(error, "Failed to update profile");

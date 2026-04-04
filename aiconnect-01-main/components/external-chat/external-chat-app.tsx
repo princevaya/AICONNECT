@@ -47,7 +47,7 @@ import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
 
 type Room = { id: string; code: string; name: string; type: "direct" | "group" | "channel"; unreadCount: number };
-type UserRow = { id: string; clerkId: string; name: string | null; email: string | null };
+type UserRow = { id: string; clerkId: string; name: string | null; email: string | null; imageUrl?: string | null };
 type Pending = { id: string; sender: UserRow; receiver: UserRow };
 type Connection = {
   id: string;
@@ -118,6 +118,23 @@ function userInitials(label: string) {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase() || "")
     .join("") || "U";
+}
+
+function UserAvatar({
+  user,
+  className,
+  fallbackClassName,
+}: {
+  user: Pick<UserRow, "name" | "email" | "imageUrl"> | null | undefined;
+  className: string;
+  fallbackClassName?: string;
+}) {
+  const label = userLabel(user || { name: null, email: null });
+  if (user?.imageUrl) {
+    return <img src={user.imageUrl} alt={label} className={className} />;
+  }
+
+  return <div className={fallbackClassName || className}>{userInitials(label)}</div>;
 }
 
 function firstUrl(content: string) {
@@ -220,7 +237,6 @@ export default function ExternalChatApp() {
   const [setupRequired, setSetupRequired] = useState(false);
 
   const [incoming, setIncoming] = useState<Pending[]>([]);
-  const [outgoing, setOutgoing] = useState<Array<{ id: string; receiver: UserRow }>>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserRow[]>([]);
@@ -237,12 +253,14 @@ export default function ExternalChatApp() {
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [selfUser, setSelfUser] = useState<UserRow | null>(null);
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
   const [meetingCodeInput, setMeetingCodeInput] = useState("");
   const [notificationSoundOn, setNotificationSoundOn] = useState(true);
   const [privacyModeOn, setPrivacyModeOn] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
   const [profileImageUrl, setProfileImageUrl] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingMs, setRecordingMs] = useState(0);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -253,7 +271,6 @@ export default function ExternalChatApp() {
   const [linkPreviews, setLinkPreviews] = useState<Record<string, LinkPreview | null>>({});
   const [pendingNewCount, setPendingNewCount] = useState(0);
   const [draftByRoom, setDraftByRoom] = useState<Record<string, string>>({});
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [lightboxImage, setLightboxImage] = useState<{ src: string; alt: string } | null>(null);
   const [realtimeConnected, setRealtimeConnected] = useState(true);
   const [networkOnline, setNetworkOnline] = useState(true);
@@ -307,14 +324,7 @@ export default function ExternalChatApp() {
     () => messages.filter((m) => Boolean(m.attachment)).slice(-6),
     [messages]
   );
-  const selfUserId = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of connections) {
-      counts.set(c.userA.id, (counts.get(c.userA.id) || 0) + 1);
-      counts.set(c.userB.id, (counts.get(c.userB.id) || 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
-  }, [connections]);
+  const selfUserId = selfUser?.id || null;
   const messageMatches = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return [] as string[];
@@ -399,17 +409,28 @@ export default function ExternalChatApp() {
       setRooms([]);
       setMessages([]);
       setIncoming([]);
-      setOutgoing([]);
       setConnections([]);
       setActiveRoomCode("");
     }
   }, []);
 
+  const loadProfile = useCallback(async () => {
+    try {
+      const data = await api<{ user: UserRow }>("/api/external-chat/profile");
+      setSelfUser(data.user);
+      setProfileImageUrl((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return data.user.imageUrl || null;
+      });
+    } catch (err) {
+      handleApiError(err, "Failed to load profile");
+    }
+  }, [handleApiError]);
+
   const loadConnections = useCallback(async () => {
     try {
       const data = await api<{ incoming: Pending[]; outgoing: Array<{ id: string; receiver: UserRow }>; connections: Connection[] }>("/api/external-chat/connections");
       setIncoming(data.incoming || []);
-      setOutgoing(data.outgoing || []);
       setConnections(data.connections || []);
     } catch (err) {
       handleApiError(err, "Failed to load connections");
@@ -485,9 +506,10 @@ export default function ExternalChatApp() {
 
   useEffect(() => {
     if (setupRequired) return;
+    void loadProfile();
     void loadConnections();
     void loadRooms();
-  }, [loadConnections, loadRooms, setupRequired]);
+  }, [loadConnections, loadProfile, loadRooms, setupRequired]);
 
   useEffect(() => {
     if (!activeRoomCode || setupRequired) return;
@@ -507,7 +529,49 @@ export default function ExternalChatApp() {
     eventRef.current = s;
     s.onopen = () => setRealtimeConnected(true);
     s.onerror = () => setRealtimeConnected(false);
-    s.onmessage = () => {
+    s.onmessage = (event) => {
+      try {
+        const body = JSON.parse(event.data) as { senderId?: string; payload?: { type?: string; user?: UserRow } };
+        if (body.payload?.type === "profile" && body.payload.user) {
+          const nextUser = body.payload.user;
+          setMessages((prev) =>
+            prev.map((message) => ({
+              ...message,
+              sender: message.sender.id === nextUser.id ? { ...message.sender, ...nextUser } : message.sender,
+              reactions: message.reactions?.map((reaction) =>
+                reaction.user.id === nextUser.id ? { ...reaction, user: { ...reaction.user, ...nextUser } } : reaction
+              ),
+              seenBy: message.seenBy.map((entry) =>
+                entry.userId === nextUser.id
+                  ? {
+                      ...entry,
+                      user: {
+                        ...(entry.user || { id: nextUser.id, clerkId: nextUser.clerkId, name: null, email: null }),
+                        ...nextUser,
+                      },
+                    }
+                  : entry
+              ),
+            }))
+          );
+          setConnections((prev) =>
+            prev.map((connection) => ({
+              ...connection,
+              userA: connection.userA.id === nextUser.id ? { ...connection.userA, ...nextUser } : connection.userA,
+              userB: connection.userB.id === nextUser.id ? { ...connection.userB, ...nextUser } : connection.userB,
+            }))
+          );
+          if (selfUserId === nextUser.id) {
+            setSelfUser(nextUser);
+            setProfileImageUrl((prev) => {
+              if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+              return nextUser.imageUrl || null;
+            });
+          }
+        }
+      } catch {
+        // Ignore malformed realtime payloads and fall back to full reloads.
+      }
       void loadConnections();
       void loadRooms();
       void loadMessages(activeRoomCode);
@@ -516,7 +580,7 @@ export default function ExternalChatApp() {
       s.close();
       eventRef.current = null;
     };
-  }, [activeRoomCode, loadConnections, loadMessages, loadRooms, setupRequired]);
+  }, [activeRoomCode, loadConnections, loadMessages, loadRooms, selfUserId, setupRequired]);
 
   useEffect(() => {
     const q = query.trim();
@@ -862,7 +926,7 @@ export default function ExternalChatApp() {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMessage: Message = {
       id: tempId,
-      sender: { id: "self", clerkId: "self", name: "You", email: null },
+      sender: selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl },
       content,
       type: messageType,
       metadata: poll ? { poll } : null,
@@ -1061,11 +1125,46 @@ export default function ExternalChatApp() {
   const onProfileImageChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const next = URL.createObjectURL(file);
-    setProfileImageUrl((prev) => {
-      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return next;
-    });
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file");
+      return;
+    }
+    if (file.size > 550_000) {
+      setError("Profile image is too large");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const imageDataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!imageDataUrl) {
+        setError("Failed to read image");
+        return;
+      }
+
+      try {
+        setSavingProfile(true);
+        const data = await api<{ user: UserRow }>("/api/external-chat/profile", {
+          method: "PATCH",
+          body: JSON.stringify({ imageDataUrl }),
+        });
+        setSelfUser(data.user);
+        setProfileImageUrl((prev) => {
+          if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+          return data.user.imageUrl || null;
+        });
+        await loadConnections();
+        await loadRooms();
+        if (activeRoomCode) await loadMessages(activeRoomCode);
+      } catch (err) {
+        handleApiError(err, "Failed to update profile");
+      } finally {
+        setSavingProfile(false);
+        if (profileImageInputRef.current) profileImageInputRef.current.value = "";
+      }
+    };
+    reader.onerror = () => setError("Failed to read image");
+    reader.readAsDataURL(file);
   };
 
   const isOwnMessage = (m: Message) => {
@@ -1088,14 +1187,6 @@ export default function ExternalChatApp() {
     const node = messageNodeRefs.current[id];
     if (!node) return;
     node.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
-
-  const messageDeepLink = (id: string) => {
-    if (typeof window === "undefined") return `#m=${id}`;
-    const url = new URL(window.location.href);
-    if (activeRoomCode) url.searchParams.set("room", activeRoomCode);
-    url.hash = `m=${id}`;
-    return url.toString();
   };
 
   const jumpMatch = (dir: 1 | -1) => {
@@ -1224,20 +1315,8 @@ export default function ExternalChatApp() {
     if (!m.content?.trim()) return;
     try {
       await navigator.clipboard.writeText(m.content);
-      setCopiedMessageId(m.id);
-      setTimeout(() => setCopiedMessageId((cur) => (cur === m.id ? null : cur)), 1200);
     } catch {
       setError("Copy failed");
-    }
-  };
-
-  const copyMessageLink = async (m: Message) => {
-    try {
-      await navigator.clipboard.writeText(messageDeepLink(m.id));
-      setCopiedMessageId(m.id);
-      setTimeout(() => setCopiedMessageId((cur) => (cur === m.id ? null : cur)), 1200);
-    } catch {
-      setError("Copy link failed");
     }
   };
 
@@ -1395,11 +1474,11 @@ export default function ExternalChatApp() {
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="h-9 w-9 overflow-hidden rounded-full border border-border/70 bg-primary/15">
-                {profileImageUrl ? (
-                  <img src={profileImageUrl} alt="Profile" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-primary">ME</div>
-                )}
+                <UserAvatar
+                  user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
+                  className="h-full w-full object-cover"
+                  fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
+                />
               </div>
               <div>
                 <p className="text-xs font-semibold">My Profile</p>
@@ -1778,7 +1857,16 @@ export default function ExternalChatApp() {
                     onTouchCancel={clearLongPress}
                   >
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold">{own ? "You" : userLabel(m.sender)}</p>
+                      <div className="flex items-center gap-2">
+                        <div className="h-6 w-6 overflow-hidden rounded-full border border-border/70 bg-primary/15">
+                          <UserAvatar
+                            user={m.sender}
+                            className="h-full w-full object-cover"
+                            fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
+                          />
+                        </div>
+                        <p className="text-xs font-semibold">{own ? "You" : userLabel(m.sender)}</p>
+                      </div>
                       <div className="flex items-center gap-2">
                         {m.optimistic ? <span className="text-[10px] text-amber-500">Sending...</span> : null}
                         {m.failed ? <span className="text-[10px] text-red-500">Failed</span> : null}
@@ -1898,10 +1986,14 @@ export default function ExternalChatApp() {
                           {m.seenBy.slice(0, 3).map((s) => (
                             <span
                               key={`${m.id}-seen-${s.userId}`}
-                              className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-background bg-primary/20 text-[10px] font-semibold"
+                              className="inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full border border-background bg-primary/20 text-[10px] font-semibold"
                               title={userLabel(s.user || { name: null, email: null })}
                             >
-                              {userInitials(userLabel(s.user || { name: null, email: null }))}
+                              <UserAvatar
+                                user={s.user}
+                                className="h-full w-full object-cover"
+                                fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold"
+                              />
                             </span>
                           ))}
                         </div>
@@ -2067,8 +2159,12 @@ export default function ExternalChatApp() {
               return (
                 <div key={c.id} className="flex items-center justify-between rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-                      {userInitials(label)}
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
+                      <UserAvatar
+                        user={user}
+                        className="h-full w-full object-cover"
+                        fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
+                      />
                     </div>
                     <span className="text-xs">{label}</span>
                   </div>
@@ -2163,28 +2259,45 @@ export default function ExternalChatApp() {
               <p className="text-xs font-semibold">Profile Photo</p>
               <div className="mt-2 flex items-center gap-3">
                 <div className="h-16 w-16 overflow-hidden rounded-full border border-border/70 bg-primary/15">
-                  {profileImageUrl ? (
-                    <img src={profileImageUrl} alt="Profile preview" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-primary">ME</div>
-                  )}
+                  <UserAvatar
+                    user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
+                    className="h-full w-full object-cover"
+                    fallbackClassName="flex h-full w-full items-center justify-center text-sm font-semibold text-primary"
+                  />
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <input ref={profileImageInputRef} type="file" accept="image/*" className="hidden" onChange={onProfileImageChange} />
-                  <Button size="sm" variant="outline" onClick={() => profileImageInputRef.current?.click()}>
+                  <Button size="sm" variant="outline" onClick={() => profileImageInputRef.current?.click()} disabled={savingProfile}>
                     <Upload className="mr-1 h-4 w-4" /> Change
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => {
-                      setProfileImageUrl((prev) => {
-                        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-                        return null;
-                      });
+                    disabled={savingProfile}
+                    onClick={async () => {
+                      try {
+                        setSavingProfile(true);
+                        const data = await api<{ user: UserRow }>("/api/external-chat/profile", {
+                          method: "PATCH",
+                          body: JSON.stringify({ imageDataUrl: null }),
+                        });
+                        setSelfUser(data.user);
+                        setProfileImageUrl((prev) => {
+                          if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+                          return data.user.imageUrl || null;
+                        });
+                        await loadConnections();
+                        await loadRooms();
+                        if (activeRoomCode) await loadMessages(activeRoomCode);
+                      } catch (err) {
+                        handleApiError(err, "Failed to update profile");
+                      } finally {
+                        setSavingProfile(false);
+                        if (profileImageInputRef.current) profileImageInputRef.current.value = "";
+                      }
                     }}
                   >
-                    Remove
+                    {savingProfile ? "Saving..." : "Remove"}
                   </Button>
                 </div>
               </div>
