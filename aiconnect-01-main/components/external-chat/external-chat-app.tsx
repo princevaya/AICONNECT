@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
-  Bookmark,
-  BookmarkCheck,
   Check,
   CheckCheck,
   Bell,
@@ -21,8 +19,6 @@ import {
   PanelLeft,
   Paperclip,
   Pin,
-  PinOff,
-  Pencil,
   Upload,
   Phone,
   PlusCircle,
@@ -31,7 +27,8 @@ import {
   Reply,
   Search,
   Send,
-  Trash2,
+  Star,
+  StarOff,
   UserPlus,
   UserX,
   Video,
@@ -46,7 +43,16 @@ import { Textarea } from "@/components/ui/textarea";
 import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
 
-type Room = { id: string; code: string; name: string; type: "direct" | "group" | "channel"; unreadCount: number };
+type Room = {
+  id: string;
+  code: string;
+  name: string;
+  type: "direct" | "group" | "channel";
+  unreadCount: number;
+  description?: string | null;
+  isPrivate?: boolean;
+  members?: Array<{ id: string; userId: string; role: string; user: UserRow }>;
+};
 type UserRow = { id: string; clerkId: string; name: string | null; email: string | null; imageUrl?: string | null };
 type Pending = { id: string; sender: UserRow; receiver: UserRow };
 type Connection = {
@@ -57,6 +63,7 @@ type Connection = {
 };
 type Message = {
   id: string;
+  roomId?: string;
   sender: UserRow;
   content: string;
   type: "text" | "note" | "poll";
@@ -135,6 +142,11 @@ function UserAvatar({
   }
 
   return <div className={fallbackClassName || className}>{userInitials(label)}</div>;
+}
+
+function roomAvatarUser(room: Room, selfUserId: string | null) {
+  if (room.type !== "direct" || !selfUserId) return null;
+  return room.members?.find((member) => member.user.id !== selfUserId)?.user || null;
 }
 
 function firstUrl(content: string) {
@@ -243,7 +255,6 @@ export default function ExternalChatApp() {
   const [searching, setSearching] = useState(false);
   const [messageSearchIndex, setMessageSearchIndex] = useState(0);
   const [menuOpenForRoomCode, setMenuOpenForRoomCode] = useState<string | null>(null);
-  const [messageMenuOpenId, setMessageMenuOpenId] = useState<string | null>(null);
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
@@ -311,6 +322,11 @@ export default function ExternalChatApp() {
   const swipeStartXRef = useRef<number | null>(null);
 
   const activeRoom = useMemo(() => rooms.find((r) => r.code === activeRoomCode) || null, [rooms, activeRoomCode]);
+  const selfUserId = selfUser?.id || null;
+  const activeRoomPeer = useMemo(() => {
+    if (!activeRoom || activeRoom.type !== "direct" || !selfUserId) return null;
+    return activeRoom.members?.find((member) => member.user.id !== selfUserId)?.user || null;
+  }, [activeRoom, selfUserId]);
   const replying = useMemo(() => (replyToId ? messages.find((m) => m.id === replyToId) || null : null), [messages, replyToId]);
   const filteredRooms = useMemo(() => {
     return rooms.filter((room) => {
@@ -324,7 +340,6 @@ export default function ExternalChatApp() {
     () => messages.filter((m) => Boolean(m.attachment)).slice(-6),
     [messages]
   );
-  const selfUserId = selfUser?.id || null;
   const messageMatches = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return [] as string[];
@@ -369,6 +384,15 @@ export default function ExternalChatApp() {
     () => messages.filter((m) => bookmarkedMessageIds.includes(m.id)),
     [messages, bookmarkedMessageIds]
   );
+  const mutualGroups = useMemo(() => {
+    if (!selfUserId || !activeRoomPeer) return [] as Room[];
+    return rooms.filter(
+      (room) =>
+        room.type === "group" &&
+        room.members?.some((member) => member.user.id === selfUserId) &&
+        room.members?.some((member) => member.user.id === activeRoomPeer.id)
+    );
+  }, [activeRoomPeer, rooms, selfUserId]);
   const messageTextClass = fontScale === "sm" ? "text-[13px]" : fontScale === "lg" ? "text-[15px]" : "text-sm";
   const pinnedMessages = useMemo(
     () => messages.filter((m) => Boolean(m.pinnedAt)).slice(-4),
@@ -393,10 +417,11 @@ export default function ExternalChatApp() {
   }, [messages]);
   const activeRoomSubtitle = useMemo(() => {
     if (!activeRoom) return "No conversation selected";
+    if (activeRoom.type === "direct" && activeRoomPeer) return activeRoomPeer.email || "Direct chat";
     if (activeRoom.type === "group") return "Group chat";
     if (activeRoom.type === "channel") return "Channel";
     return "Direct chat";
-  }, [activeRoom]);
+  }, [activeRoom, activeRoomPeer]);
 
   const handleApiError = useCallback((err: unknown, fallback: string) => {
     const e = err as ApiError;
@@ -678,7 +703,6 @@ export default function ExternalChatApp() {
       if (e.key === "Escape") {
         setMentionOpen(false);
         setMenuOpenForRoomCode(null);
-        setMessageMenuOpenId(null);
         setActionSheetOpen(false);
         setThreadOpen(false);
         setMobileSidebarOpen(false);
@@ -914,6 +938,23 @@ export default function ExternalChatApp() {
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!activeRoomCode) return;
+    if (undoSend && undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      const pending = messages.find((m) => m.id === undoSend.tempId);
+      if (pending) {
+        const queuedPoll = pending.type === "poll" ? (pollMeta(pending.metadata) as { question: string; options: string[] } | null) : null;
+        void submitQueuedMessage({
+          tempId: pending.id,
+          roomCode: activeRoomCode,
+          content: pending.content,
+          type: pending.type,
+          replyToId: pending.replyToId,
+          attachment: pending.attachment,
+          poll: queuedPoll,
+        });
+      }
+      setUndoSend(null);
+    }
     const content = text.trim();
     const poll = messageType === "poll"
       ? { question: pollQuestion.trim(), options: pollOptions.map((x) => x.trim()).filter(Boolean) }
@@ -945,47 +986,17 @@ export default function ExternalChatApp() {
     setUndoSend({ tempId, until: Date.now() + 4000 });
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     undoTimerRef.current = setTimeout(() => setUndoSend((cur) => (cur?.tempId === tempId ? null : cur)), 4000);
-    try {
-      setSending(true);
-      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          content,
-          type: messageType,
-          replyToId,
-          attachmentId: attachment?.id || null,
-          poll,
-        }),
+    undoTimerRef.current = setTimeout(() => {
+      void submitQueuedMessage({
+        tempId,
+        roomCode: activeRoomCode,
+        content,
+        type: messageType,
+        replyToId,
+        attachment,
+        poll,
       });
-      setText("");
-      setDraftByRoom((prev) => {
-        if (!activeRoomCode) return prev;
-        const next = { ...prev, [activeRoomCode]: "" };
-        try {
-          localStorage.setItem("external-chat-drafts", JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-        return next;
-      });
-      setReplyToId(null);
-      setAttachment(null);
-      setMessageType("text");
-      setPollQuestion("");
-      setPollOptions(["", ""]);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      await emit({ type: "message" });
-      await loadRooms();
-      await loadMessages(activeRoomCode);
-      setUndoSend((cur) => (cur?.tempId === tempId ? null : cur));
-    } catch (err) {
-      handleApiError(err, "Send failed");
-      setMessages((prev) =>
-        prev.map((m) => (m.id === tempId ? { ...m, failed: true, optimistic: false } : m))
-      );
-    } finally {
-      setSending(false);
-    }
+    }, 4000);
   };
 
   const mutateMessage = async (id: string, body: Record<string, unknown>) => {
@@ -1327,6 +1338,61 @@ export default function ExternalChatApp() {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
   };
 
+  const submitQueuedMessage = useCallback(
+    async (payload: {
+      tempId: string;
+      roomCode: string;
+      content: string;
+      type: "text" | "note" | "poll";
+      replyToId: string | null;
+      attachment: { id: string; fileName: string; downloadUrl: string } | null;
+      poll: { question: string; options: string[] } | null;
+    }) => {
+      try {
+        setSending(true);
+        await api(`/api/external-chat/rooms/${encodeURIComponent(payload.roomCode)}/messages`, {
+          method: "POST",
+          body: JSON.stringify({
+            content: payload.content,
+            type: payload.type,
+            replyToId: payload.replyToId,
+            attachmentId: payload.attachment?.id || null,
+            poll: payload.poll,
+          }),
+        });
+        setMessages((prev) => prev.filter((m) => m.id !== payload.tempId));
+        setText("");
+        setDraftByRoom((prev) => {
+          const next = { ...prev, [payload.roomCode]: "" };
+          try {
+            localStorage.setItem("external-chat-drafts", JSON.stringify(next));
+          } catch {
+            // ignore
+          }
+          return next;
+        });
+        setReplyToId(null);
+        setAttachment(null);
+        setMessageType("text");
+        setPollQuestion("");
+        setPollOptions(["", ""]);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        await emit({ type: "message" });
+        await loadRooms();
+        await loadMessages(payload.roomCode);
+      } catch (err) {
+        handleApiError(err, "Send failed");
+        setMessages((prev) =>
+          prev.map((m) => (m.id === payload.tempId ? { ...m, failed: true, optimistic: false } : m))
+        );
+      } finally {
+        setSending(false);
+        setUndoSend((cur) => (cur?.tempId === payload.tempId ? null : cur));
+      }
+    },
+    [emit, handleApiError, loadMessages, loadRooms]
+  );
+
   const markRoomRead = async () => {
     if (!selfUserId) return;
     const targets = messages.filter(
@@ -1349,6 +1415,11 @@ export default function ExternalChatApp() {
     setBookmarkedMessageIds((prev) =>
       prev.includes(messageId) ? prev.filter((id) => id !== messageId) : [...prev, messageId]
     );
+  };
+
+  const openMessageActions = (messageId: string) => {
+    setActionSheetMessageId(messageId);
+    setActionSheetOpen(true);
   };
 
   const cycleFontScale = () => {
@@ -1530,6 +1601,25 @@ export default function ExternalChatApp() {
           </div>
         </div>
 
+        <div className="mb-3 rounded-md border border-border/70 bg-muted/25 p-2">
+          <p className="mb-1 text-xs font-semibold">Starred Messages</p>
+          <div className="max-h-28 space-y-1 overflow-y-auto">
+            {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-muted-foreground">No starred messages</p> : null}
+            {bookmarkedMessages.slice(-3).reverse().map((m) => (
+              <button
+                key={`sidebar-starred-${m.id}`}
+                type="button"
+                onClick={() => {
+                  scrollToMessageById(m.id);
+                }}
+                className="w-full rounded border border-border/70 px-2 py-1 text-left hover:bg-accent/60"
+              >
+                <p className="line-clamp-2 text-xs">{m.content || "Attachment"}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="max-h-[calc(100%-330px)] space-y-1 overflow-y-auto pr-1">
           {loadingRooms ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading chats...</div> : null}
           {filteredRooms.map((room) => {
@@ -1551,12 +1641,20 @@ export default function ExternalChatApp() {
                 className={`chat-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "chat-row-active" : "border-border/70"} cursor-pointer`}
               >
                 <div className="flex items-start gap-2">
-                  <div className="relative">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                      {(room.name || "DM").slice(0, 2).toUpperCase()}
+                    <div className="relative">
+                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                        {roomAvatarUser(room, selfUserId) ? (
+                          <UserAvatar
+                            user={roomAvatarUser(room, selfUserId)}
+                            className="h-full w-full object-cover"
+                            fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
+                          />
+                        ) : (
+                          (room.name || "DM").slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <OnlineDot />
                     </div>
-                    <OnlineDot />
-                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-sm font-medium">{room.name}</p>
@@ -1599,8 +1697,16 @@ export default function ExternalChatApp() {
                 <PanelLeft className="h-4 w-4" />
               </Button>
               <div className="relative">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                  {(activeRoom?.name || "CH").slice(0, 2).toUpperCase()}
+                <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                  {activeRoom && roomAvatarUser(activeRoom, selfUserId) ? (
+                    <UserAvatar
+                      user={roomAvatarUser(activeRoom, selfUserId)}
+                      className="h-full w-full object-cover"
+                      fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
+                    />
+                  ) : (
+                    (activeRoom?.name || "CH").slice(0, 2).toUpperCase()
+                  )}
                 </div>
                 <OnlineDot />
               </div>
@@ -1950,33 +2056,9 @@ export default function ExternalChatApp() {
                         {messageStatus(m)}
                       </div>
                       <div className="flex items-center gap-1">
-                      <div className="relative">
-                        <Button size="sm" variant="ghost" onClick={() => setMessageMenuOpenId((cur) => (cur === m.id ? null : m.id))}>
+                        <Button size="sm" variant="ghost" onClick={() => openMessageActions(m.id)}>
                           <MoreVertical className="h-4 w-4" />
                         </Button>
-                        {messageMenuOpenId === m.id ? (
-                          <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-border bg-card p-1 shadow-lg">
-                            <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
-                              {REACTIONS.map((emoji) => (
-                                <button
-                                  key={`${m.id}-menu-${emoji}`}
-                                  onClick={() => void api(`/api/external-chat/messages/${m.id}/reactions`, { method: "POST", body: JSON.stringify({ emoji }) }).then(() => emit({ type: "reaction" })).then(() => loadMessages(activeRoomCode)).catch((e) => setError(e instanceof Error ? e.message : "Reaction failed"))}
-                                  className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent"
-                                >
-                                  {emoji}
-                                </button>
-                              ))}
-                            </div>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { setReplyToId(m.id); setMessageMenuOpenId(null); }}><Reply className="h-4 w-4" /> Reply</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { openThread(m); setMessageMenuOpenId(null); }}><ChevronRight className="h-4 w-4" /> Thread</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { toggleBookmark(m.id); setMessageMenuOpenId(null); }}>{bookmarkedMessageIds.includes(m.id) ? <BookmarkCheck className="h-4 w-4 text-amber-500" /> : <Bookmark className="h-4 w-4" />} {bookmarkedMessageIds.includes(m.id) ? "Unbookmark" : "Bookmark"}</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { void copyMessageContent(m); setMessageMenuOpenId(null); }}><span className="text-xs">Copy</span> Message</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { void mutateMessage(m.id, { pinned: !Boolean(m.pinnedAt) }); setMessageMenuOpenId(null); }}>{m.pinnedAt ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />} {m.pinnedAt ? "Unpin" : "Pin"}</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent" onClick={() => { const next = window.prompt("Edit message", m.content); if (next !== null) void mutateMessage(m.id, { content: next }); setMessageMenuOpenId(null); }}><Pencil className="h-4 w-4" /> Edit</button>
-                            <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-red-600 hover:bg-accent" onClick={() => { void deleteMessage(m.id); setMessageMenuOpenId(null); }}><Trash2 className="h-4 w-4" /> Delete</button>
-                          </div>
-                        ) : null}
-                      </div>
                       {m.failed ? (
                         <Button size="sm" variant="outline" onClick={() => void retryOptimisticMessage(m.id)}>Retry</Button>
                       ) : null}
@@ -2153,11 +2235,12 @@ export default function ExternalChatApp() {
         <div className="mb-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Members</p>
           <div className="space-y-2">
-            {connections.slice(0, 6).map((c) => {
-              const user = c.directRoom.code === activeRoomCode ? c.userB : c.userA;
-              const label = userLabel(user);
+            {!activeRoom?.members?.length ? <p className="text-xs text-muted-foreground">No room members loaded yet</p> : null}
+            {activeRoom?.members?.map((member) => {
+              const user = member.user;
+              const label = user.id === selfUserId ? "You" : userLabel(user);
               return (
-                <div key={c.id} className="flex items-center justify-between rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+                <div key={`${activeRoom?.id}-${member.userId}`} className="flex items-center justify-between rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
                   <div className="flex items-center gap-2">
                     <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
                       <UserAvatar
@@ -2168,12 +2251,32 @@ export default function ExternalChatApp() {
                     </div>
                     <span className="text-xs">{label}</span>
                   </div>
-                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600">Online</span>
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600">{member.role}</span>
                 </div>
               );
             })}
           </div>
         </div>
+
+        {activeRoom?.type === "direct" ? (
+          <div className="mb-4">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Shared Groups</p>
+            <div className="space-y-2">
+              {mutualGroups.length === 0 ? <p className="text-xs text-muted-foreground">No shared groups yet</p> : null}
+              {mutualGroups.map((room) => (
+                <button
+                  key={`mutual-${room.id}`}
+                  type="button"
+                  onClick={() => setActiveRoomCode(room.code)}
+                  className="w-full rounded-md border border-border/70 bg-muted/20 px-2 py-1.5 text-left hover:bg-accent/60"
+                >
+                  <p className="truncate text-xs font-medium">{room.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{room.members?.length || 0} members</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="mb-4">
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Mentions</p>
@@ -2194,12 +2297,12 @@ export default function ExternalChatApp() {
         </div>
 
         <div className="mb-4">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Bookmarks</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Starred Messages</p>
           <div className="space-y-2">
-            {bookmarkedMessages.length === 0 ? <p className="text-xs text-muted-foreground">No bookmarks yet</p> : null}
+            {bookmarkedMessages.length === 0 ? <p className="text-xs text-muted-foreground">No starred messages yet</p> : null}
             {bookmarkedMessages.slice(-6).map((m) => (
               <button
-                key={`bookmark-${m.id}`}
+                key={`starred-${m.id}`}
                 type="button"
                 onClick={() => scrollToMessageById(m.id)}
                 className="w-full rounded-md border border-border/70 bg-muted/20 px-2 py-1.5 text-left hover:bg-accent/60"
@@ -2386,7 +2489,20 @@ export default function ExternalChatApp() {
                   className={`chat-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "chat-row-active" : "border-border/70"}`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium">{room.name}</p>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
+                        {roomAvatarUser(room, selfUserId) ? (
+                          <UserAvatar
+                            user={roomAvatarUser(room, selfUserId)}
+                            className="h-full w-full object-cover"
+                            fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
+                          />
+                        ) : (
+                          (room.name || "DM").slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <p className="truncate text-sm font-medium">{room.name}</p>
+                    </div>
                     <div className="flex items-center gap-1">
                       {starred ? <Pin className="h-3.5 w-3.5 text-amber-500" /> : null}
                       {room.unreadCount > 0 ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">{room.unreadCount}</span> : null}
@@ -2407,16 +2523,43 @@ export default function ExternalChatApp() {
           onClick={() => setActionSheetOpen(false)}
           className={`absolute inset-0 bg-black/35 transition-opacity ${actionSheetOpen ? "opacity-100" : "opacity-0"}`}
         />
-        <div className={`absolute bottom-0 left-0 right-0 rounded-t-2xl border-t border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${actionSheetOpen ? "translate-y-0" : "translate-y-full"}`}>
+        <div className={`absolute bottom-0 left-0 right-0 rounded-t-2xl border-t border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 md:left-1/2 md:bottom-auto md:top-1/2 md:w-[92vw] md:max-w-md md:-translate-x-1/2 md:rounded-2xl md:border md:shadow-2xl ${actionSheetOpen ? "translate-y-0 md:-translate-y-1/2" : "translate-y-full md:-translate-x-1/2 md:-translate-y-[45%]"}`}>
           <p className="mb-2 text-xs font-semibold text-muted-foreground">Message actions</p>
           {!actionSheetMessage ? <p className="text-sm text-muted-foreground">No message selected.</p> : null}
           {actionSheetMessage ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-1">
+                {REACTIONS.map((emoji) => (
+                  <button
+                    key={`sheet-${actionSheetMessage.id}-${emoji}`}
+                    onClick={() =>
+                      void api(`/api/external-chat/messages/${actionSheetMessage.id}/reactions`, {
+                        method: "POST",
+                        body: JSON.stringify({ emoji }),
+                      })
+                        .then(() => emit({ type: "reaction" }))
+                        .then(() => loadMessages(activeRoomCode))
+                        .finally(() => setActionSheetOpen(false))
+                        .catch((e) => setError(e instanceof Error ? e.message : "Reaction failed"))
+                    }
+                    className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-accent"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
               <Button variant="outline" onClick={() => { setReplyToId(actionSheetMessage.id); setActionSheetOpen(false); }}>Reply</Button>
               <Button variant="outline" onClick={() => { openThread(actionSheetMessage); setActionSheetOpen(false); }}>Thread</Button>
+              <Button variant="outline" onClick={() => { toggleBookmark(actionSheetMessage.id); setActionSheetOpen(false); }}>
+                {bookmarkedMessageIds.includes(actionSheetMessage.id) ? <StarOff className="mr-1 h-4 w-4 text-amber-500" /> : <Star className="mr-1 h-4 w-4" />}
+                {bookmarkedMessageIds.includes(actionSheetMessage.id) ? "Unstar" : "Star"}
+              </Button>
+              <Button variant="outline" onClick={() => { void copyMessageContent(actionSheetMessage); setActionSheetOpen(false); }}>Copy</Button>
               <Button variant="outline" onClick={() => { void mutateMessage(actionSheetMessage.id, { pinned: !Boolean(actionSheetMessage.pinnedAt) }); setActionSheetOpen(false); }}>{actionSheetMessage.pinnedAt ? "Unpin" : "Pin"}</Button>
               <Button variant="outline" onClick={() => { const next = window.prompt("Edit message", actionSheetMessage.content); if (next !== null) void mutateMessage(actionSheetMessage.id, { content: next }); setActionSheetOpen(false); }}>Edit</Button>
               <Button variant="destructive" className="col-span-2" onClick={() => { void deleteMessage(actionSheetMessage.id); setActionSheetOpen(false); }}>Delete</Button>
+              </div>
             </div>
           ) : null}
         </div>
