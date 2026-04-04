@@ -317,6 +317,7 @@ export function isDatabaseConnectivityError(error: unknown) {
     message.includes("can not reach database server") ||
     message.includes("tenant or user not found") ||
     message.includes("authentication failed") ||
+    message.includes("connection failure during authentication") ||
     message.includes("database is unreachable") ||
     message.includes("connection terminated")
   );
@@ -400,53 +401,99 @@ export async function createGeneratedImage(input: CreateImageInput) {
       },
     });
 
-    const saved = await prisma.generatedImage.update({
-      where: { id: generation.id },
-      data: {
-        status: "succeeded",
-        mimeType: result.mimeType,
-        width: result.width,
-        height: result.height,
-        seed: result.seed || null,
-        storageProvider: stored.provider,
-        storageKey: stored.key,
-        errorCode: null,
-        errorMessage: null,
-      },
-      select: {
-        id: true,
-        status: true,
-        prompt: true,
-        enhancedPrompt: true,
-        stylePreset: true,
-        aspectRatio: true,
-        quality: true,
-        background: true,
-        provider: true,
-        model: true,
-        mimeType: true,
-        width: true,
-        height: true,
-        errorMessage: true,
-        createdAt: true,
-      },
-    });
+    try {
+      const saved = await prisma.generatedImage.update({
+        where: { id: generation.id },
+        data: {
+          status: "succeeded",
+          mimeType: result.mimeType,
+          width: result.width,
+          height: result.height,
+          seed: result.seed || null,
+          storageProvider: stored.provider,
+          storageKey: stored.key,
+          errorCode: null,
+          errorMessage: null,
+        },
+        select: {
+          id: true,
+          status: true,
+          prompt: true,
+          enhancedPrompt: true,
+          stylePreset: true,
+          aspectRatio: true,
+          quality: true,
+          background: true,
+          provider: true,
+          model: true,
+          mimeType: true,
+          width: true,
+          height: true,
+          errorMessage: true,
+          createdAt: true,
+        },
+      });
 
-    return toGeneratedImageDto(saved);
+      return toGeneratedImageDto(saved);
+    } catch (databaseError) {
+      if (!isDatabaseConnectivityError(databaseError)) {
+        throw databaseError;
+      }
+
+      console.warn("[generate-image] database update failed after image was stored", {
+        generationId: generation.id,
+        error: databaseError instanceof Error ? databaseError.message : databaseError,
+      });
+
+      return {
+        id: generation.id,
+        status: "succeeded",
+        prompt: validated.prompt,
+        enhancedPrompt,
+        stylePreset: validated.stylePreset,
+        aspectRatio: validated.aspectRatio,
+        quality: validated.quality,
+        background: validated.background,
+        provider: config.provider,
+        model: config.model,
+        mimeType: result.mimeType,
+        width: result.width || null,
+        height: result.height || null,
+        errorMessage: null,
+        imageUrl: `/api/generated-images/${generation.id}`,
+        createdAt: new Date().toISOString(),
+      };
+    }
   } catch (error) {
+    if (isDatabaseConnectivityError(error)) {
+      throw error;
+    }
+
     console.error("[generate-image] provider failure", {
       provider: config.provider,
       model: config.model,
       error: error instanceof Error ? error.message : error,
     });
-    await prisma.generatedImage.update({
-      where: { id: generation.id },
-      data: {
-        status: "failed",
-        errorCode: "generation_failed",
-        errorMessage: userFacingError(error),
-      },
-    });
+
+    try {
+      await prisma.generatedImage.update({
+        where: { id: generation.id },
+        data: {
+          status: "failed",
+          errorCode: "generation_failed",
+          errorMessage: userFacingError(error),
+        },
+      });
+    } catch (databaseError) {
+      if (!isDatabaseConnectivityError(databaseError)) {
+        throw databaseError;
+      }
+
+      console.warn("[generate-image] failed to persist provider error to database", {
+        generationId: generation.id,
+        error: databaseError instanceof Error ? databaseError.message : databaseError,
+      });
+    }
 
     throw new Error(userFacingError(error));
   }
