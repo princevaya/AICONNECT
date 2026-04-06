@@ -233,14 +233,21 @@ export default function MeetingPage() {
         <Button
           onClick={() => setIsHostPanelCollapsed(false)}
           size="sm"
-          className="fixed top-6 right-6 z-50 rounded-full shadow-lg"
+          className="fixed bottom-24 right-3 z-50 rounded-full shadow-lg sm:bottom-auto sm:right-6 sm:top-6"
         >
           Host Panel ({pendingUsers.length})
         </Button>
       )}
 
       {isHost && !isHostPanelCollapsed && (
-        <div className="fixed top-6 right-6 z-50 w-[25rem] space-y-3 rounded-lg border border-border bg-card/95 p-4 text-card-foreground shadow-xl backdrop-blur-sm">
+        <>
+          <button
+            type="button"
+            aria-label="Close host panel backdrop"
+            onClick={() => setIsHostPanelCollapsed(true)}
+            className="fixed inset-0 z-40 bg-black/35 sm:hidden"
+          />
+          <div className="fixed bottom-3 left-2 right-2 z-50 max-h-[86vh] overflow-hidden rounded-xl border border-border bg-card/95 p-3 text-card-foreground shadow-xl backdrop-blur-sm sm:bottom-auto sm:left-auto sm:right-6 sm:top-6 sm:w-[25rem] sm:p-4">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-lg">Host Panel</h3>
             <div className="flex items-center gap-2">
@@ -258,14 +265,14 @@ export default function MeetingPage() {
             </div>
           </div>
 
-          <Tabs defaultValue="requests" className="w-full">
+          <Tabs defaultValue="requests" className="mt-3 flex h-[calc(86vh-4.5rem)] w-full flex-col sm:h-[min(70vh,42rem)]">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="requests">Requests</TabsTrigger>
               <TabsTrigger value="info">Meeting Info</TabsTrigger>
               <TabsTrigger value="settings">Host Settings</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="requests" className="space-y-3">
+            <TabsContent value="requests" className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
               {approvalMessage ? (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
               ) : null}
@@ -316,7 +323,7 @@ export default function MeetingPage() {
               )}
             </TabsContent>
 
-            <TabsContent value="info" className="space-y-3">
+            <TabsContent value="info" className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">Room code</p>
                 <div className="flex gap-2">
@@ -364,7 +371,7 @@ export default function MeetingPage() {
               ) : null}
             </TabsContent>
 
-            <TabsContent value="settings" className="space-y-3">
+            <TabsContent value="settings" className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
               {isLoadingSettings ? (
                 <p className="text-sm text-muted-foreground">Loading settings...</p>
               ) : (
@@ -420,6 +427,7 @@ export default function MeetingPage() {
             </TabsContent>
           </Tabs>
         </div>
+        </>
       )}
     </div>
   );

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ImageIcon, Sparkles } from "lucide-react";
+import { ArrowLeft, ImageIcon, Sparkles, X } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -52,6 +52,15 @@ export default function ImageGeneratorPage() {
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notices, setNotices] = useState<Array<{ id: string; kind: "info" | "success" | "error"; text: string }>>([]);
+
+  const pushNotice = (kind: "info" | "success" | "error", text: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setNotices((prev) => [{ id, kind, text }, ...prev].slice(0, 6));
+    setTimeout(() => {
+      setNotices((prev) => prev.filter((n) => n.id !== id));
+    }, 6000);
+  };
 
   const loadHistory = async () => {
     try {
@@ -62,6 +71,7 @@ export default function ImageGeneratorPage() {
       setItems(body.items || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load image history");
+      pushNotice("error", err instanceof Error ? err.message : "Failed to load image history");
     } finally {
       setLoadingHistory(false);
     }
@@ -101,8 +111,11 @@ export default function ImageGeneratorPage() {
       setItems((prev) => [body.item!, ...prev.filter((item) => item.id !== body.item!.id)]);
       setPrompt("");
       await loadHistory();
+      pushNotice("success", "Image generated and saved to history.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Image generation failed. Try again.");
+      const message = err instanceof Error ? err.message : "Image generation failed. Try again.";
+      setError(message);
+      pushNotice("error", message);
     } finally {
       setLoading(false);
     }
@@ -111,8 +124,27 @@ export default function ImageGeneratorPage() {
   const latest = items[0] || null;
 
   return (
-    <div className="-my-20 relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] min-h-screen w-screen bg-background px-6 py-10">
-      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-4 pb-6">
+    <div className="min-h-screen bg-background px-4 py-6 sm:px-6 sm:py-8">
+      <div className="mx-auto mb-3 w-full max-w-7xl space-y-2">
+        {notices.map((notice) => (
+          <div
+            key={notice.id}
+            className={`flex items-center justify-between rounded-md border px-3 py-2 text-sm ${
+              notice.kind === "error"
+                ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                : notice.kind === "success"
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-border bg-muted/30 text-foreground"
+            }`}
+          >
+            <span>{notice.text}</span>
+            <button type="button" onClick={() => setNotices((prev) => prev.filter((item) => item.id !== notice.id))}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 pb-4">
         <Button variant="outline" asChild>
           <Link href="/dashboard">
             <ArrowLeft className="h-4 w-4" />
@@ -124,7 +156,7 @@ export default function ImageGeneratorPage() {
         </Button>
       </div>
 
-      <div className="mx-auto grid w-full max-w-7xl gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="mx-auto grid w-full max-w-7xl gap-4 lg:gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <Card>
           <CardHeader>
             <CardTitle>3D Image Generator</CardTitle>
@@ -141,7 +173,7 @@ export default function ImageGeneratorPage() {
               />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Style preset</label>
                 <select
@@ -203,7 +235,7 @@ export default function ImageGeneratorPage() {
             ) : null}
 
             <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={generateImage} disabled={loading}>
+              <Button onClick={generateImage} disabled={loading} className="w-full sm:w-auto">
                 <Sparkles className="h-4 w-4" />
                 {loading ? "Generating..." : "Generate image"}
               </Button>
@@ -256,7 +288,7 @@ export default function ImageGeneratorPage() {
         </Card>
       </div>
 
-      <div className="mx-auto mt-6 w-full max-w-7xl">
+      <div className="mx-auto mt-4 w-full max-w-7xl sm:mt-6">
         <Card>
           <CardHeader>
             <CardTitle>Generation History</CardTitle>
@@ -264,14 +296,14 @@ export default function ImageGeneratorPage() {
           </CardHeader>
           <CardContent>
             {loadingHistory ? (
-              <div className="flex gap-4 overflow-hidden">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="h-72 min-w-[calc(100%-0rem)] animate-pulse rounded-xl border bg-muted/40 md:min-w-[calc(50%-0.5rem)] xl:min-w-[calc((100%-2rem)/3)]"
-                  />
-                ))}
-              </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div
+                      key={index}
+                      className="h-64 animate-pulse rounded-xl border bg-muted/40 sm:h-72"
+                    />
+                  ))}
+                </div>
             ) : items.length === 0 ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 No generated images yet. Create one above to start building your asset library.
@@ -281,11 +313,11 @@ export default function ImageGeneratorPage() {
                 <p className="text-xs text-muted-foreground">
                   Showing three cards at a time. Swipe or scroll sideways to browse older generations.
                 </p>
-                <div className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2">
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {items.map((item) => (
                   <Card
                     key={item.id}
-                    className="min-w-[calc(100%-0rem)] snap-start gap-0 overflow-hidden py-0 md:min-w-[calc(50%-0.5rem)] xl:min-w-[calc((100%-2rem)/3)]"
+                    className="gap-0 overflow-hidden py-0"
                   >
                     <div className="relative aspect-[4/3] w-full border-b bg-muted/30">
                       {item.imageUrl ? (

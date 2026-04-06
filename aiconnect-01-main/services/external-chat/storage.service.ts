@@ -54,6 +54,10 @@ const ALLOWED = new Set([
   "audio/mpeg",
   "audio/wav",
   "audio/webm",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
 ]);
 
 function sanitize(name: string) {
@@ -77,12 +81,13 @@ function inferMimeFromBytes(buffer: Buffer) {
 }
 
 function validateFile(file: File, buffer: Buffer) {
+  const normalizedType = (file.type || "").split(";")[0]?.trim().toLowerCase();
   if (!file) throw new Error("file is required");
   if (file.size <= 0) throw new Error("file is empty");
   if (file.size > MAX_SIZE) throw new Error(`file exceeds ${Math.floor(MAX_SIZE / (1024 * 1024))}MB`);
-  if (!ALLOWED.has(file.type)) throw new Error("file type is not allowed");
+  if (!normalizedType || !ALLOWED.has(normalizedType)) throw new Error("file type is not allowed");
   const inferred = inferMimeFromBytes(buffer);
-  if (inferred && inferred !== file.type && !(inferred === "application/zip" && file.type.includes("officedocument"))) {
+  if (inferred && inferred !== normalizedType && !(inferred === "application/zip" && normalizedType.includes("officedocument"))) {
     throw new Error("file content does not match file type");
   }
 }
@@ -148,7 +153,7 @@ export async function uploadAttachment(input: {
       roomId: input.roomId,
       uploadedBy: input.uploader.id,
       fileName: input.file.name,
-      mimeType: input.file.type || "application/octet-stream",
+      mimeType: (input.file.type || "application/octet-stream").split(";")[0]?.trim().toLowerCase() || "application/octet-stream",
       sizeBytes: BigInt(input.file.size),
       storageProvider: stored.provider,
       storageKey: stored.key,
@@ -171,16 +176,31 @@ export async function buildAttachmentDownload(input: { attachmentId: string; req
       room: {
         include: {
           members: {
-            where: { userId: input.requester.id, removedAt: null },
-            select: { id: true },
+            where: { userId: input.requester.id },
+            select: { id: true, leftAt: true, removedAt: true },
           },
         },
       },
     },
   });
   if (!file) throw new Error("Attachment not found");
-  if (file.room.members.length === 0 && input.requester.role.toLowerCase() !== "admin") {
+  const membership = file.room.members[0] || null;
+  if (!membership && input.requester.role.toLowerCase() !== "admin") {
     throw new Error("Not allowed");
+  }
+  const historyCutoff = membership?.removedAt || membership?.leftAt || null;
+  if (historyCutoff) {
+    const messageBeforeCutoff = await prisma.externalChatMessage.findFirst({
+      where: {
+        roomId: file.room.id,
+        attachmentId: file.id,
+        createdAt: { lte: historyCutoff },
+      },
+      select: { id: true },
+    });
+    if (!messageBeforeCutoff) {
+      throw new Error("Not allowed");
+    }
   }
 
   if (file.storageProvider === "s3") {

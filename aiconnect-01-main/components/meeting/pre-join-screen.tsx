@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Video, VideoOff, Mic, MicOff } from "lucide-react";
+import { Loader2, Video, VideoOff, Mic, MicOff } from "lucide-react";
 
 interface PreJoinScreenProps {
   onJoin: (
@@ -27,6 +27,9 @@ export default function PreJoinScreen({
   const [roomName, setRoomName] = useState(meetingCode || "");
   const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinMessage, setJoinMessage] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [mediaBusy, setMediaBusy] = useState(false);
 
   const inviteLink =
     typeof window !== "undefined" && meetingCode
@@ -49,48 +52,86 @@ export default function PreJoinScreen({
     }
   }, [stream]);
 
+  useEffect(() => {
+    return () => {
+      stream?.getTracks().forEach((track) => track.stop());
+    };
+  }, [stream]);
+
+  const mergeStreamTracks = useCallback((nextTracks: MediaStreamTrack[], kind: "audio" | "video") => {
+    setStream((prev) => {
+      const keepTracks = (prev?.getTracks() || []).filter((track) => track.kind !== kind);
+      return new MediaStream([...keepTracks, ...nextTracks]);
+    });
+  }, []);
+
   const toggleVideo = async () => {
     if (!canUseMediaApi()) return;
-
-    if (!isVideoEnabled) {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-      });
-      setStream(newStream);
-      setIsVideoEnabled(true);
-    } else {
-      stream?.getTracks().forEach((track) => track.stop());
-      setStream(null);
-      setIsVideoEnabled(false);
+    setJoinError(null);
+    setMediaBusy(true);
+    try {
+      if (!isVideoEnabled) {
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const videoTracks = videoStream.getVideoTracks();
+        mergeStreamTracks(videoTracks, "video");
+        setIsVideoEnabled(videoTracks.length > 0);
+      } else {
+        stream?.getVideoTracks().forEach((track) => track.stop());
+        setStream((prev) => {
+          const keepTracks = (prev?.getTracks() || []).filter((track) => track.kind !== "video");
+          return keepTracks.length ? new MediaStream(keepTracks) : null;
+        });
+        setIsVideoEnabled(false);
+      }
+    } catch {
+      setJoinError("Camera permission was denied or unavailable.");
+    } finally {
+      setMediaBusy(false);
     }
   };
 
   const toggleAudio = async () => {
     if (!canUseMediaApi()) return;
-
-    if (!isAudioEnabled) {
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      });
-      setStream(newStream);
-      setIsAudioEnabled(true);
-    } else {
-      stream?.getTracks().forEach((track) => track.stop());
-      setStream(null);
-      setIsAudioEnabled(false);
+    setJoinError(null);
+    setMediaBusy(true);
+    try {
+      if (!isAudioEnabled) {
+        const audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        const audioTracks = audioStream.getAudioTracks();
+        mergeStreamTracks(audioTracks, "audio");
+        setIsAudioEnabled(audioTracks.length > 0);
+      } else {
+        stream?.getAudioTracks().forEach((track) => track.stop());
+        setStream((prev) => {
+          const keepTracks = (prev?.getTracks() || []).filter((track) => track.kind !== "audio");
+          return keepTracks.length ? new MediaStream(keepTracks) : null;
+        });
+        setIsAudioEnabled(false);
+      }
+    } catch {
+      setJoinError("Microphone permission was denied or unavailable.");
+    } finally {
+      setMediaBusy(false);
     }
   };
 
   const handleJoinMeeting = async () => {
     setJoinError(null);
+    setJoinMessage(null);
 
     if (!participantName.trim()) {
-      alert("Please enter your display name");
+      setJoinError("Please enter your display name.");
       return;
     }
 
     if (!roomName.trim()) {
-      alert("Room code missing");
+      setJoinError("Room code missing.");
       return;
     }
 
@@ -127,7 +168,7 @@ export default function PreJoinScreen({
     }
 
     setWaitingForApproval(true);
-    alert("Waiting for host approval...");
+    setJoinMessage("Join request sent. Waiting for host approval.");
   };
 
   // 🔥 Poll approval
@@ -143,6 +184,7 @@ export default function PreJoinScreen({
       if (data.approved) {
         clearInterval(interval);
         setWaitingForApproval(false);
+        setJoinMessage("Approved. Joining now...");
         onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
         return;
       }
@@ -157,21 +199,32 @@ export default function PreJoinScreen({
     return () => clearInterval(interval);
   }, [waitingForApproval, participantName, roomName, isVideoEnabled, isAudioEnabled, onJoin]);
 
+  const copyToClipboard = async (text: string, successLabel: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyMessage(successLabel);
+      setTimeout(() => setCopyMessage(null), 1800);
+    } catch {
+      setCopyMessage("Copy failed. Please copy manually.");
+      setTimeout(() => setCopyMessage(null), 2200);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-background p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="min-h-screen bg-background px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-6xl space-y-5 sm:space-y-6">
         <header>
-          <h1 className="text-3xl font-bold">Ready to join?</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-2xl font-bold sm:text-3xl">Ready to join?</h1>
+          <p className="text-sm text-muted-foreground sm:text-base">
             Set up your camera and microphone before joining
           </p>
         </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
           {/* Video Preview */}
           <div className="lg:col-span-2">
             <Card>
-              <CardContent className="p-6">
+              <CardContent className="p-3 sm:p-6">
                 <div className="relative aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
                   {isVideoEnabled ? (
                     <video
@@ -191,10 +244,11 @@ export default function PreJoinScreen({
                   )}
                 </div>
 
-                <div className="flex justify-center gap-4 mt-6">
+                <div className="mt-4 flex justify-center gap-3 sm:mt-6 sm:gap-4">
                   <Button
                     variant={isVideoEnabled ? "default" : "outline"}
                     onClick={toggleVideo}
+                    disabled={mediaBusy}
                   >
                     {isVideoEnabled ? <Video /> : <VideoOff />}
                   </Button>
@@ -202,6 +256,7 @@ export default function PreJoinScreen({
                   <Button
                     variant={isAudioEnabled ? "default" : "outline"}
                     onClick={toggleAudio}
+                    disabled={mediaBusy}
                   >
                     {isAudioEnabled ? <Mic /> : <MicOff />}
                   </Button>
@@ -239,8 +294,7 @@ export default function PreJoinScreen({
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        navigator.clipboard.writeText(roomName.trim());
-                        alert("Link copied!");
+                        void copyToClipboard(roomName.trim(), "Room code copied.");
                       }}
                       disabled={!roomName.trim()}
                     >
@@ -259,8 +313,7 @@ export default function PreJoinScreen({
                         <Button
                           size="sm"
                           onClick={() => {
-                            navigator.clipboard.writeText(inviteLink);
-                            alert("Link copied!");
+                            void copyToClipboard(inviteLink, "Invite link copied.");
                           }}
                         >
                           Copy
@@ -273,10 +326,13 @@ export default function PreJoinScreen({
                 {joinError ? (
                   <p className="text-sm text-red-600">{joinError}</p>
                 ) : null}
+                {joinMessage ? <p className="text-sm text-emerald-600">{joinMessage}</p> : null}
+                {copyMessage ? <p className="text-xs text-muted-foreground">{copyMessage}</p> : null}
               </CardContent>
             </Card>
 
-            <Button className="w-full" onClick={handleJoinMeeting}>
+            <Button className="w-full" onClick={handleJoinMeeting} disabled={waitingForApproval || mediaBusy}>
+              {waitingForApproval ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {isHost ? "Start Meeting" : "Join Meeting"}
             </Button>
           </div>

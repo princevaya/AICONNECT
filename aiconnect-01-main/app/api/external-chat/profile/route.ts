@@ -37,7 +37,7 @@ export async function PATCH(req: NextRequest) {
     if (nextImage && !nextImage.startsWith("data:image/")) {
       return NextResponse.json({ error: "Invalid image format" }, { status: 400 });
     }
-    if (nextImage.length > 800_000) {
+    if (nextImage.length > 2_400_000) {
       return NextResponse.json({ error: "Image too large" }, { status: 400 });
     }
 

@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
-import { rooms } from "@/app/api/_utils/roomStore";
+import { ensureRoom } from "@/app/api/_utils/roomStore";
 export async function POST() {
   const roomId = crypto.randomUUID();
 
-  rooms[roomId] = {
-    hostCreatedAt: new Date(),
-    pending: [],
-    approved: [],
-  };
+  ensureRoom(roomId);
 
   return NextResponse.json({
     roomId,

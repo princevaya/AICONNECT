@@ -31,8 +31,13 @@ export default function CreateMeetingPage() {
     audio?: boolean
   ) => {
     if (!roomName) return;
-
-    router.push(`/meeting/${roomName}`);
+    const params = new URLSearchParams({
+      host: "1",
+      name: name || "Host",
+      video: video ? "1" : "0",
+      audio: audio ? "1" : "0",
+    });
+    router.push(`/meeting/${roomName}?${params.toString()}`);
   };
 
   if (!roomId) {

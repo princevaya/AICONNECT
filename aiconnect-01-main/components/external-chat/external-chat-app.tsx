@@ -13,6 +13,7 @@ import {
   HelpCircle,
   LogIn,
   Loader2,
+  LayoutDashboard,
   MessageSquare,
   Mic,
   MoreVertical,
@@ -35,7 +36,9 @@ import {
   Vote,
   X,
   Type,
+  Trash2,
 } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +54,11 @@ type Room = {
   unreadCount: number;
   description?: string | null;
   isPrivate?: boolean;
+  avatarUrl?: string | null;
+  archivedAt?: string | null;
+  hiddenAt?: string | null;
+  canSend?: boolean;
+  viewerMembership?: { role: string; leftAt?: string | null; removedAt?: string | null } | null;
   members?: Array<{ id: string; userId: string; role: string; user: UserRow }>;
 };
 type UserRow = { id: string; clerkId: string; name: string | null; email: string | null; imageUrl?: string | null };
@@ -88,24 +96,61 @@ type LinkPreview = {
   siteName?: string;
 };
 
+type InAppNotification = {
+  id: string;
+  level: "info" | "success" | "error";
+  title: string;
+  message?: string;
+  createdAt: number;
+};
+type ActivityLog = {
+  id: string;
+  action: string;
+  details?: Record<string, unknown> | null;
+  createdAt: string;
+  user: UserRow;
+};
+type InvitePreview = {
+  room: { id: string; code: string; name: string; description?: string | null; avatarUrl?: string | null; memberCount: number };
+  alreadyMember: boolean;
+};
+
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "🔥"];
+const MESSAGE_PAGE_SIZE = 60;
+const TIMELINE_WINDOW_SIZE = 260;
+const NOTE_COLORS = [
+  { id: "amber", label: "Amber", className: "border-amber-500/40 bg-amber-500/18" },
+  { id: "emerald", label: "Emerald", className: "border-emerald-500/40 bg-emerald-500/16" },
+  { id: "sky", label: "Sky", className: "border-sky-500/40 bg-sky-500/16" },
+  { id: "rose", label: "Rose", className: "border-rose-500/40 bg-rose-500/16" },
+  { id: "violet", label: "Violet", className: "border-violet-500/40 bg-violet-500/16" },
+] as const;
+type NoteColorId = (typeof NOTE_COLORS)[number]["id"];
 
 async function api<T>(url: string, init?: RequestInit) {
-  const res = await fetch(url, {
+  const method = (init?.method || "GET").toUpperCase();
+  const requestInit: RequestInit = {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    credentials: "same-origin",
     cache: "no-store",
-  });
+  };
+  let res = await fetch(url, requestInit);
+  if (res.status === 401 && (method === "GET" || method === "HEAD")) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    res = await fetch(url, requestInit);
+  }
   const body = (await res.json().catch(() => ({}))) as T & { error?: string; setupRequired?: boolean };
   if (!res.ok) {
     const e = new Error(body.error || "Request failed");
     (e as Error & { setupRequired?: boolean }).setupRequired = body.setupRequired;
+    (e as Error & { status?: number }).status = res.status;
     throw e;
   }
   return body;
 }
 
-type ApiError = Error & { setupRequired?: boolean };
+type ApiError = Error & { setupRequired?: boolean; status?: number };
 
 function pollMeta(metadata: unknown) {
   if (!metadata || typeof metadata !== "object") return null;
@@ -147,6 +192,19 @@ function UserAvatar({
 function roomAvatarUser(room: Room, selfUserId: string | null) {
   if (room.type !== "direct" || !selfUserId) return null;
   return room.members?.find((member) => member.user.id !== selfUserId)?.user || null;
+}
+
+function noteColorFromMetadata(metadata: unknown): NoteColorId {
+  if (!metadata || typeof metadata !== "object") return "amber";
+  const value = (metadata as { noteColor?: string }).noteColor;
+  return NOTE_COLORS.some((item) => item.id === value) ? (value as NoteColorId) : "amber";
+}
+
+function roomAvatarImage(room: Room, selfUserId: string | null) {
+  const directPeer = roomAvatarUser(room, selfUserId);
+  if (directPeer?.imageUrl) return directPeer.imageUrl;
+  if (room.type !== "direct" && room.avatarUrl) return room.avatarUrl;
+  return null;
 }
 
 function firstUrl(content: string) {
@@ -209,6 +267,27 @@ function highlightContent(content: string, q: string): ReactNode {
   );
 }
 
+function renderMessageContent(content: string, q: string): ReactNode {
+  const parts = content.split(/(https?:\/\/[^\s]+)/gi);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    if (/^https?:\/\/[^\s]+$/i.test(part)) {
+      return (
+        <a
+          key={`url-${idx}`}
+          href={part}
+          target="_blank"
+          rel="noreferrer"
+          className="break-all underline decoration-primary/50 underline-offset-2 hover:text-primary"
+        >
+          {part}
+        </a>
+      );
+    }
+    return <span key={`txt-${idx}`}>{highlightContent(part, q)}</span>;
+  });
+}
+
 function formatDuration(ms: number) {
   const total = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(total / 60)
@@ -218,12 +297,46 @@ function formatDuration(ms: number) {
   return `${m}:${s}`;
 }
 
+function preferredAudioMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
+  const supported = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return supported.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
 function reactionSummary(reactions: Array<{ emoji: string; user: UserRow }> | undefined) {
   const map = new Map<string, number>();
   for (const r of reactions || []) {
     map.set(r.emoji, (map.get(r.emoji) || 0) + 1);
   }
   return [...map.entries()].map(([emoji, count]) => ({ emoji, count }));
+}
+
+async function imageFileToDataUrl(file: File, maxDimension = 720, quality = 0.82) {
+  const source = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(new Error("Failed to read image"));
+    reader.readAsDataURL(file);
+  });
+  if (!source) throw new Error("Failed to read image");
+
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Failed to decode image"));
+    img.src = source;
+  });
+
+  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas unavailable");
+  ctx.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
 }
 
 function dayLabel(value: string) {
@@ -238,6 +351,7 @@ function dayLabel(value: string) {
 
 export default function ExternalChatApp() {
   const router = useRouter();
+  const { isLoaded: authLoaded, userId: authUserId } = useAuth();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeRoomCode, setActiveRoomCode] = useState("");
@@ -245,8 +359,12 @@ export default function ExternalChatApp() {
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [messagesHasMore, setMessagesHasMore] = useState(false);
+  const [messagesNextCursor, setMessagesNextCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [setupRequired, setSetupRequired] = useState(false);
+  const [authCooldownUntil, setAuthCooldownUntil] = useState(0);
 
   const [incoming, setIncoming] = useState<Pending[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -262,12 +380,35 @@ export default function ExternalChatApp() {
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
+  const [archivedOpen, setArchivedOpen] = useState(true);
+  const [hiddenRoomCodes, setHiddenRoomCodes] = useState<string[]>([]);
   const [threadParentId, setThreadParentId] = useState<string | null>(null);
   const [threadOpen, setThreadOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [actionSheetOpen, setActionSheetOpen] = useState(false);
   const [actionSheetMessageId, setActionSheetMessageId] = useState<string | null>(null);
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [groupSettingsTab, setGroupSettingsTab] = useState<"general" | "members" | "activity">("general");
+  const [groupNameDraft, setGroupNameDraft] = useState("");
+  const [groupDescriptionDraft, setGroupDescriptionDraft] = useState("");
+  const [groupAvatarDraft, setGroupAvatarDraft] = useState("");
+  const [groupActivityLogs, setGroupActivityLogs] = useState<ActivityLog[]>([]);
+  const [loadingGroupActivity, setLoadingGroupActivity] = useState(false);
+  const [createGroupQuery, setCreateGroupQuery] = useState("");
+  const [createGroupResults, setCreateGroupResults] = useState<UserRow[]>([]);
+  const [creatingGroupSearch, setCreatingGroupSearch] = useState(false);
+  const [groupMemberSearch, setGroupMemberSearch] = useState("");
+  const [groupMemberSearchResults, setGroupMemberSearchResults] = useState<UserRow[]>([]);
+  const [groupMemberSearchLoading, setGroupMemberSearchLoading] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [inAppNotifications, setInAppNotifications] = useState<InAppNotification[]>([]);
+  const [inviteShareOpen, setInviteShareOpen] = useState(false);
+  const [inviteShareText, setInviteShareText] = useState("");
+  const [inviteJoinOpen, setInviteJoinOpen] = useState(false);
+  const [inviteJoinCode, setInviteJoinCode] = useState("");
+  const [invitePreview, setInvitePreview] = useState<InvitePreview | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [selfUser, setSelfUser] = useState<UserRow | null>(null);
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
   const [meetingCodeInput, setMeetingCodeInput] = useState("");
@@ -301,6 +442,7 @@ export default function ExternalChatApp() {
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [pollQuestion, setPollQuestion] = useState("");
   const [pollOptions, setPollOptions] = useState(["", ""]);
+  const [noteColor, setNoteColor] = useState<NoteColorId>("amber");
   const [attachment, setAttachment] = useState<{ id: string; fileName: string; downloadUrl: string } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -308,9 +450,11 @@ export default function ExternalChatApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const profileImageInputRef = useRef<HTMLInputElement>(null);
+  const groupAvatarInputRef = useRef<HTMLInputElement>(null);
   const composerFormRef = useRef<HTMLFormElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const draftByRoomRef = useRef<Record<string, string>>({});
+  const roomsRef = useRef<Room[]>([]);
   const skipNextDraftPersistRef = useRef(false);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageNodeRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -322,24 +466,37 @@ export default function ExternalChatApp() {
   const lastSeenMessageIdRef = useRef<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const eventRef = useRef<EventSource | null>(null);
+  const realtimeRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const swipeStartXRef = useRef<number | null>(null);
+  const lastGroupSettingsRoomRef = useRef<string | null>(null);
+  const inviteParamHandledRef = useRef(false);
 
   const activeRoom = useMemo(() => rooms.find((r) => r.code === activeRoomCode) || null, [rooms, activeRoomCode]);
   const selfUserId = selfUser?.id || null;
+  const pushNotification = useCallback((entry: Omit<InAppNotification, "id" | "createdAt">) => {
+    const id = `n-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setInAppNotifications((prev) => [{ ...entry, id, createdAt: Date.now() }, ...prev].slice(0, 30));
+  }, []);
+  const dismissNotification = useCallback((id: string) => {
+    setInAppNotifications((prev) => prev.filter((item) => item.id !== id));
+  }, []);
   const activeRoomPeer = useMemo(() => {
     if (!activeRoom || activeRoom.type !== "direct" || !selfUserId) return null;
     return activeRoom.members?.find((member) => member.user.id !== selfUserId)?.user || null;
   }, [activeRoom, selfUserId]);
   const replying = useMemo(() => (replyToId ? messages.find((m) => m.id === replyToId) || null : null), [messages, replyToId]);
+  const visibleRooms = useMemo(() => rooms.filter((room) => !hiddenRoomCodes.includes(room.code)), [rooms, hiddenRoomCodes]);
+  const archivedRooms = useMemo(() => visibleRooms.filter((room) => Boolean(room.archivedAt)), [visibleRooms]);
   const filteredRooms = useMemo(() => {
-    return rooms.filter((room) => {
+    return visibleRooms.filter((room) => {
+      if (room.archivedAt) return false;
       if (filterTab === "unread") return room.unreadCount > 0;
       if (filterTab === "groups") return room.type === "group";
       if (filterTab === "starred") return starredRoomCodes.includes(room.code);
       return true;
     });
-  }, [rooms, filterTab, starredRoomCodes]);
+  }, [visibleRooms, filterTab, starredRoomCodes]);
   const sharedMedia = useMemo(
     () => messages.filter((m) => Boolean(m.attachment)).slice(-6),
     [messages]
@@ -384,6 +541,11 @@ export default function ExternalChatApp() {
     }
     return items;
   }, [messages, firstUnreadMessageId]);
+  const visibleTimelineItems = useMemo(() => {
+    if (search.trim() || pinnedOnly) return timelineItems;
+    const offset = Math.max(0, timelineItems.length - TIMELINE_WINDOW_SIZE);
+    return timelineItems.slice(offset);
+  }, [timelineItems, search, pinnedOnly]);
   const bookmarkedMessages = useMemo(
     () => messages.filter((m) => bookmarkedMessageIds.includes(m.id)),
     [messages, bookmarkedMessageIds]
@@ -426,10 +588,33 @@ export default function ExternalChatApp() {
     if (activeRoom.type === "channel") return "Channel";
     return "Direct chat";
   }, [activeRoom, activeRoomPeer]);
+  const activeViewerRole = activeRoom?.viewerMembership?.role || null;
+  const canManageMembers = activeRoom?.type === "group" && (activeViewerRole === "owner" || activeViewerRole === "admin");
+  const isOwnerInActiveRoom = activeViewerRole === "owner";
+  const canSendInActiveRoom = Boolean(activeRoom?.canSend);
+  const isFormerMemberInActiveRoom = Boolean(
+    activeRoom?.viewerMembership && (activeRoom.viewerMembership.leftAt || activeRoom.viewerMembership.removedAt)
+  );
+  const authCoolingDown = authCooldownUntil > Date.now();
+  const authReady = authLoaded && Boolean(authUserId);
+
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
 
   const handleApiError = useCallback((err: unknown, fallback: string) => {
     const e = err as ApiError;
-    setError(e?.message || fallback);
+    if (e?.status === 401) {
+      // Pause background refresh briefly to avoid 401 storms during auth refresh windows.
+      setAuthCooldownUntil(Date.now() + 8000);
+      setError("");
+      eventRef.current?.close();
+      eventRef.current = null;
+      return;
+    }
+    const message = e?.message || fallback;
+    setError(message);
+    pushNotification({ level: "error", title: "Action failed", message });
     const needsSetup = Boolean(e?.setupRequired);
     setSetupRequired(needsSetup);
     if (needsSetup) {
@@ -441,9 +626,10 @@ export default function ExternalChatApp() {
       setConnections([]);
       setActiveRoomCode("");
     }
-  }, []);
+  }, [pushNotification]);
 
   const loadProfile = useCallback(async () => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return false;
     try {
       const data = await api<{ user: UserRow }>("/api/external-chat/profile");
       setSelfUser(data.user);
@@ -451,12 +637,15 @@ export default function ExternalChatApp() {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return data.user.imageUrl || null;
       });
+      return true;
     } catch (err) {
       handleApiError(err, "Failed to load profile");
+      return false;
     }
-  }, [handleApiError]);
+  }, [authCooldownUntil, authLoaded, authUserId, handleApiError]);
 
   const loadConnections = useCallback(async () => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
     try {
       const data = await api<{ incoming: Pending[]; outgoing: Array<{ id: string; receiver: UserRow }>; connections: Connection[] }>("/api/external-chat/connections");
       setIncoming(data.incoming || []);
@@ -464,24 +653,31 @@ export default function ExternalChatApp() {
     } catch (err) {
       handleApiError(err, "Failed to load connections");
     }
-  }, [handleApiError]);
+  }, [authCooldownUntil, authLoaded, authUserId, handleApiError]);
 
-  const loadRooms = useCallback(async () => {
-    setLoadingRooms(true);
+  const loadRooms = useCallback(async (options?: { silent?: boolean }) => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
+    if (!options?.silent) setLoadingRooms(true);
     try {
-      const data = await api<{ rooms: Room[] }>("/api/external-chat/rooms");
-      const nextRooms = data.rooms || [];
+      const data = await api<{ rooms: Room[]; archivedRooms?: Room[] }>("/api/external-chat/rooms");
+      const nextRooms = [...(data.rooms || []), ...(data.archivedRooms || [])];
+      const serverHiddenCodes = nextRooms.filter((room) => Boolean(room.hiddenAt)).map((room) => room.code);
+      const effectiveHidden = new Set([...hiddenRoomCodes, ...serverHiddenCodes]);
+      if (serverHiddenCodes.length > 0) {
+        setHiddenRoomCodes((prev) => Array.from(new Set([...prev, ...serverHiddenCodes])));
+      }
+      const nextVisibleRooms = nextRooms.filter((room) => !effectiveHidden.has(room.code));
       setRooms(nextRooms);
-      if (!activeRoomCode && nextRooms[0]) setActiveRoomCode(nextRooms[0].code);
-      if (activeRoomCode && !nextRooms.find((r) => r.code === activeRoomCode)) setActiveRoomCode(nextRooms[0]?.code || "");
+      if (!activeRoomCode && nextVisibleRooms[0]) setActiveRoomCode(nextVisibleRooms[0].code);
+      if (activeRoomCode && !nextVisibleRooms.find((r) => r.code === activeRoomCode)) setActiveRoomCode(nextVisibleRooms[0]?.code || "");
       setError("");
       setSetupRequired(false);
     } catch (err) {
       handleApiError(err, "Failed to load rooms");
     } finally {
-      setLoadingRooms(false);
+      if (!options?.silent) setLoadingRooms(false);
     }
-  }, [activeRoomCode, handleApiError]);
+  }, [activeRoomCode, authCooldownUntil, authLoaded, authUserId, handleApiError, hiddenRoomCodes]);
 
   const emit = useCallback(async (payload: unknown) => {
     if (!activeRoomCode) return;
@@ -492,29 +688,57 @@ export default function ExternalChatApp() {
     }).catch(() => undefined);
   }, [activeRoomCode]);
 
-  const loadMessages = useCallback(async (roomCode: string) => {
+  const loadMessages = useCallback(async (
+    roomCode: string,
+    options?: { before?: string; appendOlder?: boolean; silent?: boolean }
+  ) => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
     if (!roomCode) return;
+    const appendOlder = Boolean(options?.appendOlder);
     const list = messageListRef.current;
-    if (list) {
+    const prevScrollHeight = appendOlder && list ? list.scrollHeight : 0;
+    const prevScrollTop = appendOlder && list ? list.scrollTop : 0;
+    if (list && !appendOlder) {
       const distanceFromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
       shouldStickToBottomRef.current = distanceFromBottom < 120;
     }
-    setLoadingMessages(true);
+    if (appendOlder) {
+      setLoadingOlderMessages(true);
+    } else if (!options?.silent) {
+      setLoadingMessages(true);
+    }
     try {
       const q = new URLSearchParams();
       if (search.trim()) q.set("search", search.trim());
       if (pinnedOnly) q.set("pinned", "1");
-      const data = await api<{ messages: Message[] }>(`/api/external-chat/rooms/${encodeURIComponent(roomCode)}/messages?${q.toString()}`);
-      setMessages(data.messages || []);
+      if (options?.before) q.set("before", options.before);
+      q.set("limit", String(MESSAGE_PAGE_SIZE));
+      const data = await api<{ messages: Message[]; hasMore?: boolean; nextCursor?: string | null }>(
+        `/api/external-chat/rooms/${encodeURIComponent(roomCode)}/messages?${q.toString()}`
+      );
+      const nextMessages = data.messages || [];
+      if (appendOlder) {
+        setMessages((prev) => [...nextMessages, ...prev]);
+      } else {
+        setMessages(nextMessages);
+      }
+      setMessagesHasMore(Boolean(data.hasMore));
+      setMessagesNextCursor(data.nextCursor || null);
       requestAnimationFrame(() => {
         if (!messageListRef.current) return;
+        if (appendOlder) {
+          const nextHeight = messageListRef.current.scrollHeight;
+          messageListRef.current.scrollTop = Math.max(0, nextHeight - prevScrollHeight + prevScrollTop);
+          return;
+        }
         if (shouldStickToBottomRef.current) {
           messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
           setPendingNewCount(0);
         }
       });
-      if (selfUserId) {
-        const unseenForViewer = (data.messages || []).filter(
+      const roomCanReceiveNew = roomsRef.current.find((room) => room.code === roomCode)?.canSend !== false;
+      if (selfUserId && roomCanReceiveNew) {
+        const unseenForViewer = nextMessages.filter(
           (msg) => msg.sender.id !== selfUserId && !msg.seenBy.some((s) => s.userId === selfUserId)
         );
         if (unseenForViewer.length > 0) {
@@ -529,38 +753,96 @@ export default function ExternalChatApp() {
     } catch (err) {
       handleApiError(err, "Failed to load messages");
     } finally {
-      setLoadingMessages(false);
+      if (appendOlder) {
+        setLoadingOlderMessages(false);
+      } else if (!options?.silent) {
+        setLoadingMessages(false);
+      }
     }
-  }, [emit, handleApiError, pinnedOnly, search, selfUserId]);
+  }, [authCooldownUntil, authLoaded, authUserId, emit, handleApiError, pinnedOnly, search, selfUserId]);
+
+  const scheduleRealtimeRefresh = useCallback(() => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
+    if (realtimeRefreshTimerRef.current) clearTimeout(realtimeRefreshTimerRef.current);
+    realtimeRefreshTimerRef.current = setTimeout(() => {
+      void loadConnections();
+      void loadRooms({ silent: true });
+      if (activeRoomCode) {
+        void loadMessages(activeRoomCode, { silent: true });
+      }
+    }, 420);
+  }, [activeRoomCode, authCooldownUntil, authLoaded, authUserId, loadConnections, loadMessages, loadRooms]);
 
   useEffect(() => {
-    if (setupRequired) return;
-    void loadProfile();
-    void loadConnections();
-    void loadRooms();
-  }, [loadConnections, loadProfile, loadRooms, setupRequired]);
+    if (!authReady || setupRequired || authCoolingDown) return;
+    let cancelled = false;
+    const bootstrap = async () => {
+      const profileLoaded = await loadProfile();
+      if (!profileLoaded || cancelled) return;
+      await Promise.all([loadConnections(), loadRooms()]);
+    };
+    void bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [authCoolingDown, authReady, loadConnections, loadProfile, loadRooms, setupRequired]);
 
   useEffect(() => {
-    if (!activeRoomCode || setupRequired) return;
+    if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
     void loadMessages(activeRoomCode);
-  }, [activeRoomCode, loadMessages, setupRequired]);
+  }, [activeRoomCode, authCoolingDown, authReady, loadMessages, setupRequired]);
 
   useEffect(() => {
-    if (!activeRoomCode || setupRequired) return;
-    const t = setTimeout(() => void loadMessages(activeRoomCode), 300);
+    if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
+    const t = setTimeout(() => void loadMessages(activeRoomCode, { silent: !search.trim() }), 300);
     return () => clearTimeout(t);
-  }, [activeRoomCode, loadMessages, search, setupRequired]);
+  }, [activeRoomCode, authCoolingDown, authReady, loadMessages, search, setupRequired]);
 
   useEffect(() => {
-    if (!activeRoomCode || setupRequired) return;
+    if (!authReady || setupRequired || authCoolingDown) return;
+    const timer = setInterval(() => {
+      void loadConnections();
+      void loadRooms({ silent: true });
+      if (activeRoomCode) {
+        void loadMessages(activeRoomCode, { silent: true });
+      }
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [activeRoomCode, authCoolingDown, authReady, loadConnections, loadMessages, loadRooms, setupRequired]);
+
+  useEffect(() => {
+    if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
+    const currentRoom = rooms.find((room) => room.code === activeRoomCode);
+    if (currentRoom?.canSend === false) {
+      setRealtimeConnected(true);
+      eventRef.current?.close();
+      eventRef.current = null;
+      return;
+    }
     eventRef.current?.close();
     const s = new EventSource(`/api/external-chat/realtime/${encodeURIComponent(activeRoomCode)}`);
     eventRef.current = s;
     s.onopen = () => setRealtimeConnected(true);
     s.onerror = () => setRealtimeConnected(false);
     s.onmessage = (event) => {
+      let eventType = "";
       try {
         const body = JSON.parse(event.data) as { senderId?: string; payload?: { type?: string; user?: UserRow } };
+        eventType = body.payload?.type || "";
+        if (body.senderId && selfUserId && body.senderId !== selfUserId && body.payload?.type) {
+          const titleMap: Record<string, string> = {
+            message: "New message",
+            reaction: "New reaction",
+          };
+          const title = titleMap[body.payload.type] || "New activity";
+          if (body.payload.type === "message" || body.payload.type === "reaction") {
+            pushNotification({
+              level: "info",
+              title,
+              message: activeRoom?.name || "Current room",
+            });
+          }
+        }
         if (body.payload?.type === "profile" && body.payload.user) {
           const nextUser = body.payload.user;
           setMessages((prev) =>
@@ -601,15 +883,18 @@ export default function ExternalChatApp() {
       } catch {
         // Ignore malformed realtime payloads and fall back to full reloads.
       }
-      void loadConnections();
-      void loadRooms();
-      void loadMessages(activeRoomCode);
+      if (eventType === "profile") return;
+      if (eventType === "seen") {
+        void loadMessages(activeRoomCode, { silent: true });
+        return;
+      }
+      scheduleRealtimeRefresh();
     };
     return () => {
       s.close();
       eventRef.current = null;
     };
-  }, [activeRoomCode, loadConnections, loadMessages, loadRooms, selfUserId, setupRequired]);
+  }, [activeRoom?.name, activeRoomCode, authCoolingDown, authReady, loadMessages, pushNotification, scheduleRealtimeRefresh, selfUserId, setupRequired]);
 
   useEffect(() => {
     const q = query.trim();
@@ -649,6 +934,7 @@ export default function ExternalChatApp() {
       }
       const prefs = JSON.parse(raw) as {
         starred?: string[];
+        hiddenRoomCodes?: string[];
         filterTab?: FilterTab;
         compactMode?: boolean;
         notificationSoundOn?: boolean;
@@ -657,6 +943,7 @@ export default function ExternalChatApp() {
         fontScale?: "sm" | "md" | "lg";
       };
       if (Array.isArray(prefs.starred)) setStarredRoomCodes(prefs.starred);
+      if (Array.isArray(prefs.hiddenRoomCodes)) setHiddenRoomCodes(prefs.hiddenRoomCodes);
       if (prefs.filterTab) setFilterTab(prefs.filterTab);
       if (typeof prefs.compactMode === "boolean") setCompactMode(prefs.compactMode);
       if (typeof prefs.notificationSoundOn === "boolean") setNotificationSoundOn(prefs.notificationSoundOn);
@@ -677,6 +964,7 @@ export default function ExternalChatApp() {
         "external-chat-prefs",
         JSON.stringify({
           starred: starredRoomCodes,
+          hiddenRoomCodes,
           filterTab,
           compactMode,
           notificationSoundOn,
@@ -688,7 +976,7 @@ export default function ExternalChatApp() {
     } catch {
       // ignore localStorage failures
     }
-  }, [prefsLoaded, starredRoomCodes, filterTab, compactMode, notificationSoundOn, privacyModeOn, bookmarkedMessageIds, fontScale]);
+  }, [prefsLoaded, starredRoomCodes, hiddenRoomCodes, filterTab, compactMode, notificationSoundOn, privacyModeOn, bookmarkedMessageIds, fontScale]);
 
   useEffect(() => {
     draftByRoomRef.current = draftByRoom;
@@ -712,6 +1000,7 @@ export default function ExternalChatApp() {
         setThreadOpen(false);
         setMobileSidebarOpen(false);
         setProfileSettingsOpen(false);
+        setGroupSettingsOpen(false);
         setCreateGroupOpen(false);
         setCallOverlayOpen(false);
         setHelpOpen(false);
@@ -771,10 +1060,36 @@ export default function ExternalChatApp() {
   }, [error]);
 
   useEffect(() => {
+    if (inAppNotifications.length === 0) return;
+    const timer = setInterval(() => {
+      setInAppNotifications((prev) => {
+        const cutoff = Date.now() - 12000;
+        return prev.filter((item) => notificationsOpen || item.createdAt >= cutoff);
+      });
+    }, 1500);
+    return () => clearInterval(timer);
+  }, [inAppNotifications.length, notificationsOpen]);
+
+  useEffect(() => {
+    if (!activeRoom || activeRoom.type !== "group") return;
+    if (lastGroupSettingsRoomRef.current !== activeRoom.code) {
+      setGroupSettingsTab("general");
+      setGroupMemberSearch("");
+      setGroupMemberSearchResults([]);
+      setSelectedGroupMemberIds([]);
+      lastGroupSettingsRoomRef.current = activeRoom.code;
+    }
+    setGroupNameDraft(activeRoom.name || "");
+    setGroupDescriptionDraft(activeRoom.description || "");
+    setGroupAvatarDraft((activeRoom as Room & { avatarUrl?: string | null }).avatarUrl || "");
+  }, [activeRoom]);
+
+  useEffect(() => {
     return () => {
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      if (realtimeRefreshTimerRef.current) clearTimeout(realtimeRefreshTimerRef.current);
       if (recordingStreamRef.current) {
         recordingStreamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -813,14 +1128,24 @@ export default function ExternalChatApp() {
   }, [messages]);
 
   useEffect(() => {
-    if (!rooms.length || typeof window === "undefined") return;
+    if (!authReady || !rooms.length || typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const room = params.get("room");
-    if (!room) return;
-    if (rooms.some((r) => r.code === room)) {
+    const invite = params.get("invite");
+    if (room && rooms.some((r) => r.code === room)) {
       setActiveRoomCode(room);
     }
-  }, [rooms]);
+    if (invite && !inviteParamHandledRef.current) {
+      inviteParamHandledRef.current = true;
+      setInviteJoinCode(invite);
+      setInviteJoinOpen(true);
+      setInviteLoading(true);
+      void api<InvitePreview>(`/api/external-chat/invite/join?inviteCode=${encodeURIComponent(invite)}`)
+        .then((data) => setInvitePreview(data))
+        .catch(() => setInvitePreview(null))
+        .finally(() => setInviteLoading(false));
+    }
+  }, [authReady, rooms]);
 
   useEffect(() => {
     const urls = Array.from(new Set(messages.map((m) => firstUrl(m.content)).filter((u): u is string => Boolean(u))));
@@ -881,6 +1206,73 @@ export default function ExternalChatApp() {
     lastSeenMessageIdRef.current = latestId;
   }, [messages]);
 
+  useEffect(() => {
+    if (!createGroupOpen) return;
+    const term = createGroupQuery.trim();
+    if (!term) {
+      setCreateGroupResults([]);
+      setCreatingGroupSearch(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setCreatingGroupSearch(true);
+      try {
+        const data = await api<{ users: UserRow[] }>(`/api/external-chat/users?q=${encodeURIComponent(term)}`);
+        setCreateGroupResults(data.users || []);
+      } catch {
+        setCreateGroupResults([]);
+      } finally {
+        setCreatingGroupSearch(false);
+      }
+    }, 220);
+    return () => clearTimeout(t);
+  }, [createGroupOpen, createGroupQuery]);
+
+  useEffect(() => {
+    if (!groupSettingsOpen || groupSettingsTab !== "members") return;
+    const term = groupMemberSearch.trim();
+    if (!term) {
+      setGroupMemberSearchResults([]);
+      setGroupMemberSearchLoading(false);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setGroupMemberSearchLoading(true);
+      try {
+        const data = await api<{ users: UserRow[] }>(`/api/external-chat/users?q=${encodeURIComponent(term)}`);
+        const currentUserIds = new Set((activeRoom?.members || []).map((member) => member.user.id));
+        setGroupMemberSearchResults((data.users || []).filter((user) => !currentUserIds.has(user.id)));
+      } catch {
+        setGroupMemberSearchResults([]);
+      } finally {
+        setGroupMemberSearchLoading(false);
+      }
+    }, 220);
+    return () => clearTimeout(t);
+  }, [activeRoom?.members, groupMemberSearch, groupSettingsOpen, groupSettingsTab]);
+
+  useEffect(() => {
+    if (!groupSettingsOpen || groupSettingsTab !== "activity" || !activeRoomCode) return;
+    let cancelled = false;
+    setLoadingGroupActivity(true);
+    void api<{ logs: ActivityLog[] }>(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/activity?limit=80`)
+      .then((data) => {
+        if (cancelled) return;
+        setGroupActivityLogs(data.logs || []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGroupActivityLogs([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingGroupActivity(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoomCode, groupSettingsOpen, groupSettingsTab]);
+
   const sendRequest = async (clerkId: string) => {
     try {
       await api("/api/external-chat/connections", { method: "POST", body: JSON.stringify({ targetClerkId: clerkId }) });
@@ -919,12 +1311,232 @@ export default function ExternalChatApp() {
       });
       setCreateGroupOpen(false);
       setCreateGroupName("");
+      setCreateGroupQuery("");
+      setCreateGroupResults([]);
       setSelectedGroupMemberIds([]);
       await loadRooms();
       await loadConnections();
       setActiveRoomCode(data.room.code);
+      pushNotification({ level: "success", title: "Group created", message: data.room.name });
     } catch (err) {
       handleApiError(err, "Failed to create group");
+    }
+  };
+
+  const toggleArchiveRoom = async (archive: boolean, roomCodeOverride?: string) => {
+    const targetRoomCode = roomCodeOverride || activeRoomCode;
+    if (!targetRoomCode) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(targetRoomCode)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ archive }),
+      });
+      await loadRooms();
+      if (activeRoomCode === targetRoomCode) {
+        await loadMessages(activeRoomCode);
+      }
+      pushNotification({ level: "success", title: archive ? "Group archived" : "Group unarchived" });
+    } catch (err) {
+      handleApiError(err, archive ? "Failed to archive group" : "Failed to unarchive group");
+    }
+  };
+
+  const leaveActiveGroup = async () => {
+    if (!activeRoomCode) return;
+    if (!window.confirm("Leave this group? You will keep chat history but cannot send or receive new messages.")) return;
+    try {
+      const leavingRoomCode = activeRoomCode;
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members/leave`, {
+        method: "POST",
+      });
+      if (activeRoomCode === leavingRoomCode) {
+        setActiveRoomCode("");
+        setMessages([]);
+      }
+      await loadRooms();
+      pushNotification({ level: "info", title: "Left group", message: "You can still view old messages in read-only mode." });
+    } catch (err) {
+      handleApiError(err, "Failed to leave group");
+    }
+  };
+
+  const addSelectedMembersToActiveGroup = async () => {
+    if (!activeRoomCode) return;
+    if (selectedGroupMemberIds.length === 0) {
+      setError("Select users first");
+      return;
+    }
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members`, {
+        method: "POST",
+        body: JSON.stringify({ memberClerkIds: selectedGroupMemberIds }),
+      });
+      await emit({ type: "room_updated" });
+      setSelectedGroupMemberIds([]);
+      await loadRooms();
+      await loadMessages(activeRoomCode);
+      pushNotification({ level: "success", title: "Members added" });
+    } catch (err) {
+      handleApiError(err, "Failed to add members");
+    }
+  };
+
+  const removeGroupMember = async (targetUserId: string) => {
+    if (!activeRoomCode) return;
+    if (!window.confirm("Remove this member from the group?")) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members/manage`, {
+        method: "DELETE",
+        body: JSON.stringify({ targetUserId }),
+      });
+      await loadRooms();
+      await loadMessages(activeRoomCode);
+      pushNotification({ level: "info", title: "Member removed" });
+    } catch (err) {
+      handleApiError(err, "Failed to remove member");
+    }
+  };
+
+  const changeGroupMemberRole = async (targetUserId: string, newRole: "admin" | "member") => {
+    if (!activeRoomCode) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members/manage`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "changeRole",
+          targetUserId,
+          newRole,
+        }),
+      });
+      await loadRooms();
+      pushNotification({ level: "success", title: newRole === "admin" ? "Admin assigned" : "Admin removed" });
+    } catch (err) {
+      handleApiError(err, "Failed to update role");
+    }
+  };
+
+  const transferGroupOwnership = async (targetUserId: string) => {
+    if (!activeRoomCode) return;
+    if (!window.confirm("Transfer ownership to this member?")) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members/manage`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "transfer",
+          targetUserId,
+        }),
+      });
+      await loadRooms();
+      pushNotification({ level: "success", title: "Ownership transferred" });
+    } catch (err) {
+      handleApiError(err, "Failed to transfer ownership");
+    }
+  };
+
+  const deassignSelfLeadership = async () => {
+    if (!activeRoomCode) return;
+    if (!window.confirm("Remove your owner/admin role and continue as a member?")) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/members/remove-leader`, {
+        method: "POST",
+      });
+      await loadRooms();
+      pushNotification({ level: "success", title: "Leadership removed" });
+    } catch (err) {
+      handleApiError(err, "Failed to deassign leadership");
+    }
+  };
+
+  const saveGroupSettings = async () => {
+    if (!activeRoomCode) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: groupNameDraft.trim() || activeRoom?.name,
+          description: groupDescriptionDraft.trim(),
+          avatarUrl: groupAvatarDraft.trim() || null,
+        }),
+      });
+      await emit({ type: "room_updated" });
+      setGroupSettingsOpen(false);
+      await loadRooms();
+      pushNotification({ level: "success", title: "Group settings saved" });
+    } catch (err) {
+      handleApiError(err, "Failed to update group settings");
+    }
+  };
+
+  const openInviteShareComposer = async () => {
+    if (!activeRoom || activeRoom.type !== "group") return;
+    try {
+      const data = await api<{ inviteCode: string }>(`/api/external-chat/rooms/${encodeURIComponent(activeRoom.code)}/invite`, {
+        method: "POST",
+      });
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const link = `${origin}/dashboard/external-chat?invite=${encodeURIComponent(data.inviteCode)}`;
+      setInviteShareText(`Hey join my group: ${link}`);
+      setInviteShareOpen(true);
+    } catch (err) {
+      handleApiError(err, "Failed to generate group invite");
+    }
+  };
+
+  const joinInviteGroup = async () => {
+    if (!inviteJoinCode.trim()) return;
+    try {
+      const joined = await api<{ room: Room }>(`/api/external-chat/invite/join`, {
+        method: "POST",
+        body: JSON.stringify({ inviteCode: inviteJoinCode.trim() }),
+      });
+      await loadRooms({ silent: true });
+      setActiveRoomCode(joined.room.code);
+      setInviteJoinOpen(false);
+      setInvitePreview(null);
+      setInviteJoinCode("");
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("invite");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+      }
+      pushNotification({ level: "success", title: "Joined group", message: joined.room.name });
+    } catch (err) {
+      handleApiError(err, "Failed to join invite");
+    }
+  };
+
+  const deleteChatForMe = async (roomCode: string) => {
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(roomCode)}/visibility`, { method: "POST" });
+      setHiddenRoomCodes((prev) => {
+        if (prev.includes(roomCode)) return prev;
+        const nextHidden = [...prev, roomCode];
+        if (activeRoomCode === roomCode) {
+          const nextVisible = rooms.find((room) => !nextHidden.includes(room.code));
+          setActiveRoomCode(nextVisible?.code || "");
+          setMessages([]);
+        }
+        return nextHidden;
+      });
+      pushNotification({ level: "success", title: "Chat removed", message: "This group is deleted from your side." });
+    } catch (err) {
+      handleApiError(err, "Failed to delete chat for you");
+    }
+  };
+
+  const deleteGroupForEveryone = async () => {
+    if (!activeRoom || activeRoom.type !== "group") return;
+    if (!window.confirm("Delete this group for all members? This cannot be undone.")) return;
+    try {
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoom.code)}`, { method: "DELETE" });
+      setGroupSettingsOpen(false);
+      setRooms((prev) => prev.filter((room) => room.code !== activeRoom.code));
+      setMessages([]);
+      const nextRoom = rooms.find((room) => room.code !== activeRoom.code && !hiddenRoomCodes.includes(room.code));
+      setActiveRoomCode(nextRoom?.code || "");
+      pushNotification({ level: "success", title: "Group deleted", message: "Deleted for all members." });
+    } catch (err) {
+      handleApiError(err, "Failed to delete group");
     }
   };
 
@@ -955,6 +1567,10 @@ export default function ExternalChatApp() {
 
   const uploadFileAttachment = async (file: File) => {
     if (!file || !activeRoom) return;
+    if (!canSendInActiveRoom) {
+      setError("This conversation is read-only for you.");
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
@@ -981,6 +1597,10 @@ export default function ExternalChatApp() {
   const sendMessage = async (e: FormEvent) => {
     e.preventDefault();
     if (!activeRoomCode) return;
+    if (!canSendInActiveRoom) {
+      setError("This conversation is read-only for you.");
+      return;
+    }
     if (undoSend && undoTimerRef.current) {
       clearTimeout(undoTimerRef.current);
       const pending = messages.find((m) => m.id === undoSend.tempId);
@@ -991,6 +1611,7 @@ export default function ExternalChatApp() {
           roomCode: activeRoomCode,
           content: pending.content,
           type: pending.type,
+          noteColor: pending.type === "note" ? noteColorFromMetadata(pending.metadata) : undefined,
           replyToId: pending.replyToId,
           attachment: pending.attachment,
           poll: queuedPoll,
@@ -1013,7 +1634,7 @@ export default function ExternalChatApp() {
       sender: selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl },
       content,
       type: messageType,
-      metadata: poll ? { poll } : null,
+      metadata: poll ? { poll } : messageType === "note" ? { noteColor } : null,
       mentions: [],
       replyToId,
       editedAt: null,
@@ -1035,6 +1656,7 @@ export default function ExternalChatApp() {
         roomCode: activeRoomCode,
         content,
         type: messageType,
+        noteColor: messageType === "note" ? noteColor : undefined,
         replyToId,
         attachment,
         poll,
@@ -1071,6 +1693,10 @@ export default function ExternalChatApp() {
   const retryOptimisticMessage = async (tempId: string) => {
     const msg = messages.find((m) => m.id === tempId);
     if (!msg || !activeRoomCode) return;
+    if (!canSendInActiveRoom) {
+      setError("This conversation is read-only for you.");
+      return;
+    }
     try {
       setSending(true);
       setMessages((prev) =>
@@ -1083,6 +1709,7 @@ export default function ExternalChatApp() {
           type: msg.type,
           replyToId: msg.replyToId,
           attachmentId: msg.attachment?.id || null,
+          noteColor: msg.type === "note" ? noteColorFromMetadata(msg.metadata) : undefined,
           poll: msg.type === "poll" ? pollMeta(msg.metadata) : null,
         }),
       });
@@ -1183,21 +1810,15 @@ export default function ExternalChatApp() {
       setError("Please choose an image file");
       return;
     }
-    if (file.size > 550_000) {
+    if (file.size > 4_000_000) {
       setError("Profile image is too large");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const imageDataUrl = typeof reader.result === "string" ? reader.result : "";
-      if (!imageDataUrl) {
-        setError("Failed to read image");
-        return;
-      }
-
+    void (async () => {
       try {
         setSavingProfile(true);
+        const imageDataUrl = await imageFileToDataUrl(file, 640, 0.82);
         const data = await api<{ user: UserRow }>("/api/external-chat/profile", {
           method: "PATCH",
           body: JSON.stringify({ imageDataUrl }),
@@ -1208,14 +1829,36 @@ export default function ExternalChatApp() {
           return data.user.imageUrl || null;
         });
         await loadConnections();
-        await loadRooms();
-        if (activeRoomCode) await loadMessages(activeRoomCode);
+        await loadRooms({ silent: true });
+        if (activeRoomCode) await loadMessages(activeRoomCode, { silent: true });
       } catch (err) {
         handleApiError(err, "Failed to update profile");
       } finally {
         setSavingProfile(false);
         if (profileImageInputRef.current) profileImageInputRef.current.value = "";
       }
+    })();
+  };
+
+  const onGroupAvatarChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file");
+      return;
+    }
+    if (file.size > 700_000) {
+      setError("Group image is too large");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imageDataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!imageDataUrl) {
+        setError("Failed to read image");
+        return;
+      }
+      setGroupAvatarDraft(imageDataUrl);
     };
     reader.onerror = () => setError("Failed to read image");
     reader.readAsDataURL(file);
@@ -1365,6 +2008,11 @@ export default function ExternalChatApp() {
     setPendingNewCount(0);
   };
 
+  const loadOlderMessages = async () => {
+    if (!activeRoomCode || !messagesHasMore || !messagesNextCursor || loadingOlderMessages) return;
+    await loadMessages(activeRoomCode, { before: messagesNextCursor, appendOlder: true });
+  };
+
   const copyMessageContent = async (m: Message) => {
     if (!m.content?.trim()) return;
     try {
@@ -1387,10 +2035,15 @@ export default function ExternalChatApp() {
       roomCode: string;
       content: string;
       type: "text" | "note" | "poll";
+      noteColor?: NoteColorId;
       replyToId: string | null;
       attachment: { id: string; fileName: string; downloadUrl: string } | null;
       poll: { question: string; options: string[] } | null;
     }) => {
+      if (!canSendInActiveRoom) {
+        setError("This conversation is read-only for you.");
+        return;
+      }
       try {
         setSending(true);
         await api(`/api/external-chat/rooms/${encodeURIComponent(payload.roomCode)}/messages`, {
@@ -1400,6 +2053,7 @@ export default function ExternalChatApp() {
             type: payload.type,
             replyToId: payload.replyToId,
             attachmentId: payload.attachment?.id || null,
+            noteColor: payload.type === "note" ? payload.noteColor || "amber" : undefined,
             poll: payload.poll,
           }),
         });
@@ -1433,7 +2087,7 @@ export default function ExternalChatApp() {
         setUndoSend((cur) => (cur?.tempId === payload.tempId ? null : cur));
       }
     },
-    [emit, handleApiError, loadMessages, loadRooms]
+    [canSendInActiveRoom, emit, handleApiError, loadMessages, loadRooms]
   );
 
   const markRoomRead = async () => {
@@ -1490,8 +2144,17 @@ export default function ExternalChatApp() {
 
   const uploadRecordedAudio = async (blob: Blob) => {
     if (!activeRoom) return;
-    const ext = blob.type.includes("webm") ? "webm" : blob.type.includes("wav") ? "wav" : "mp3";
-    const file = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: blob.type || "audio/webm" });
+    const ext = blob.type.includes("webm")
+      ? "webm"
+      : blob.type.includes("ogg")
+        ? "ogg"
+        : blob.type.includes("mp4")
+          ? "m4a"
+          : blob.type.includes("wav")
+            ? "wav"
+            : "mp3";
+    const mimeType = blob.type || (ext === "m4a" ? "audio/mp4" : ext === "ogg" ? "audio/ogg" : "audio/webm");
+    const file = new File([blob], `voice-note-${Date.now()}.${ext}`, { type: mimeType });
     setUploading(true);
     try {
       const fd = new FormData();
@@ -1512,6 +2175,10 @@ export default function ExternalChatApp() {
   };
 
   const toggleRecording = async () => {
+    if (!canSendInActiveRoom) {
+      setError("This conversation is read-only for you.");
+      return;
+    }
     if (recording) {
       mediaRecorderRef.current?.stop();
       return;
@@ -1521,8 +2188,15 @@ export default function ExternalChatApp() {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const mimeType = preferredAudioMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
       recordingStreamRef.current = stream;
       mediaRecorderRef.current = recorder;
       recordingChunksRef.current = [];
@@ -1533,16 +2207,32 @@ export default function ExternalChatApp() {
       recorder.onstop = () => {
         const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || "audio/webm" });
         if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
         setRecording(false);
         stream.getTracks().forEach((t) => t.stop());
         recordingStreamRef.current = null;
         void uploadRecordedAudio(blob);
       };
+      recorder.onerror = () => {
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+        setRecording(false);
+        stream.getTracks().forEach((t) => t.stop());
+        recordingStreamRef.current = null;
+        setError("Microphone recording failed. Please try again.");
+      };
       recorder.start();
       setRecording(true);
       recordingTimerRef.current = setInterval(() => setRecordingMs((prev) => prev + 250), 250);
     } catch (err) {
-      handleApiError(err, "Could not start recording");
+      const name = err && typeof err === "object" && "name" in err ? String((err as { name?: string }).name || "") : "";
+      if (name === "NotAllowedError") {
+        setError("Microphone permission denied. Please allow mic access.");
+      } else if (name === "NotFoundError") {
+        setError("No microphone device detected.");
+      } else {
+        handleApiError(err, "Could not start recording");
+      }
     }
   };
 
@@ -1704,12 +2394,8 @@ export default function ExternalChatApp() {
                 <div className="flex items-start gap-2">
                     <div className="relative">
                       <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                        {roomAvatarUser(room, selfUserId) ? (
-                          <UserAvatar
-                            user={roomAvatarUser(room, selfUserId)}
-                            className="h-full w-full object-cover"
-                            fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
-                          />
+                        {roomAvatarImage(room, selfUserId) ? (
+                          <img src={roomAvatarImage(room, selfUserId) || ""} alt={room.name} className="h-full w-full object-cover" />
                         ) : (
                           (room.name || "DM").slice(0, 2).toUpperCase()
                         )}
@@ -1735,12 +2421,54 @@ export default function ExternalChatApp() {
                         {room.unreadCount > 0 ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">{room.unreadCount}</span> : null}
                       </div>
                     </div>
-                    <p className="text-[11px] text-muted-foreground">{room.type === "group" ? "Group" : "Direct"} chat</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {room.type === "group" ? "Group" : "Direct"} chat{room.archivedAt ? " · Archived" : ""}
+                    </p>
                   </div>
                 </div>
               </div>
             );
           })}
+          {archivedRooms.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 p-2">
+              <button
+                type="button"
+                className="mb-2 flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                onClick={() => setArchivedOpen((v) => !v)}
+              >
+                <span>Archived</span>
+                <ChevronRight className={`h-3.5 w-3.5 transition ${archivedOpen ? "rotate-90" : ""}`} />
+              </button>
+              {archivedOpen ? <div className="space-y-1">
+                {archivedRooms.map((room) => {
+                  const role = room.viewerMembership?.role;
+                  const canUnarchive = role === "owner" || role === "admin";
+                  return (
+                    <div key={`archived-${room.id}`} className="rounded-md border border-border/70 bg-card/50 p-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveRoomCode(room.code)}
+                        className="w-full text-left"
+                      >
+                        <p className="truncate text-sm font-medium">{room.name}</p>
+                        <p className="text-[11px] text-muted-foreground">Read-only archived chat</p>
+                      </button>
+                      <div className="mt-2 flex items-center gap-1">
+                        {canUnarchive ? (
+                          <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(false, room.code)}>
+                            Unarchive
+                          </Button>
+                        ) : null}
+                        <Button size="sm" variant="ghost" onClick={() => void deleteChatForMe(room.code)}>
+                          <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete For Me
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div> : null}
+            </div>
+          ) : null}
         </div>
       </ChatPanel>
 
@@ -1759,12 +2487,8 @@ export default function ExternalChatApp() {
               </Button>
               <div className="relative">
                 <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                  {activeRoom && roomAvatarUser(activeRoom, selfUserId) ? (
-                    <UserAvatar
-                      user={roomAvatarUser(activeRoom, selfUserId)}
-                      className="h-full w-full object-cover"
-                      fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
-                    />
+                  {activeRoom && roomAvatarImage(activeRoom, selfUserId) ? (
+                    <img src={roomAvatarImage(activeRoom, selfUserId) || ""} alt={activeRoom.name} className="h-full w-full object-cover" />
                   ) : (
                     (activeRoom?.name || "CH").slice(0, 2).toUpperCase()
                   )}
@@ -1777,6 +2501,9 @@ export default function ExternalChatApp() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")}>
+                <LayoutDashboard className="mr-1 h-4 w-4" /> Dashboard
+              </Button>
               <Button
                 size="sm"
                 variant={infoPanelCollapsed ? "outline" : "default"}
@@ -1785,6 +2512,16 @@ export default function ExternalChatApp() {
               >
                 {infoPanelCollapsed ? "Show Info" : "Hide Info"}
               </Button>
+              <div className="relative">
+                <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)}>
+                  <Bell className="h-4 w-4" />
+                </Button>
+                {inAppNotifications.length > 0 ? (
+                  <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground">
+                    {inAppNotifications.length > 9 ? "9+" : inAppNotifications.length}
+                  </span>
+                ) : null}
+              </div>
               <Button size="sm" variant="outline" onClick={() => setCallOverlayOpen(true)}>
                 <Phone className="h-4 w-4" />
               </Button>
@@ -1867,15 +2604,39 @@ export default function ExternalChatApp() {
                       >
                         <HelpCircle className="h-4 w-4" /> Help & Shortcuts
                       </button>
-                      <button
-                        className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
-                        onClick={() => {
-                          setMenuOpenForRoomCode(null);
-                          setProfileSettingsOpen(true);
-                        }}
-                      >
-                        <Settings2 className="h-4 w-4" /> Profile Settings
-                      </button>
+                      {activeRoom?.type !== "group" ? (
+                        <button
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
+                          onClick={() => {
+                            setMenuOpenForRoomCode(null);
+                            setProfileSettingsOpen(true);
+                          }}
+                        >
+                          <Settings2 className="h-4 w-4" /> Profile Settings
+                        </button>
+                      ) : null}
+                      {activeRoom?.type === "group" ? (
+                        <button
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
+                          onClick={() => {
+                            setMenuOpenForRoomCode(null);
+                            void openInviteShareComposer();
+                          }}
+                        >
+                          <UserPlus className="h-4 w-4" /> Share Invite
+                        </button>
+                      ) : null}
+                      {activeRoom?.type === "group" ? (
+                        <button
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
+                          onClick={() => {
+                            setMenuOpenForRoomCode(null);
+                            setGroupSettingsOpen(true);
+                          }}
+                        >
+                          <Settings2 className="h-4 w-4" /> Group Settings
+                        </button>
+                      ) : null}
                       <button
                         className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
                         onClick={() => {
@@ -1894,21 +2655,64 @@ export default function ExternalChatApp() {
                       >
                         <Shield className="h-4 w-4" /> {privacyModeOn ? "Disable Privacy" : "Enable Privacy"}
                       </button>
-                      <button
-                        className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
-                        onClick={() => {
-                          const c = connections.find((x) => x.directRoom.code === activeRoom.code);
-                          if (c) void removeConnection(c.id);
-                        }}
-                      >
-                        <UserX className="h-4 w-4 text-red-600" /> Remove Connection
-                      </button>
+                      {activeRoom?.type === "direct" ? (
+                        <button
+                          className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent"
+                          onClick={() => {
+                            const c = connections.find((x) => x.directRoom.code === activeRoom.code);
+                            if (c) void removeConnection(c.id);
+                          }}
+                        >
+                          <UserX className="h-4 w-4 text-red-600" /> Remove Connection
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
               ) : null}
             </div>
           </div>
+          {notificationsOpen ? (
+            <div className="mt-2 rounded-md border border-border/70 bg-card/95 p-2 shadow-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notifications</p>
+                {inAppNotifications.length > 0 ? (
+                  <button
+                    type="button"
+                    className="text-[11px] text-muted-foreground underline"
+                    onClick={() => setInAppNotifications([])}
+                  >
+                    Clear all
+                  </button>
+                ) : null}
+              </div>
+              <div className="max-h-40 space-y-1 overflow-y-auto">
+                {inAppNotifications.length === 0 ? <p className="text-xs text-muted-foreground">No notifications</p> : null}
+                {inAppNotifications.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`rounded border px-2 py-1.5 text-xs ${
+                      item.level === "error"
+                        ? "border-red-500/30 bg-red-500/10"
+                        : item.level === "success"
+                          ? "border-emerald-500/30 bg-emerald-500/10"
+                          : "border-border/70 bg-muted/25"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{item.title}</p>
+                        {item.message ? <p className="text-muted-foreground">{item.message}</p> : null}
+                      </div>
+                      <button type="button" className="text-muted-foreground" onClick={() => dismissNotification(item.id)}>
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 relative">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input ref={searchInputRef} className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search messages..." />
@@ -1982,10 +2786,24 @@ export default function ExternalChatApp() {
               Drop file to upload
             </div>
           ) : null}
+          {messagesHasMore ? (
+            <div className="mb-3 flex justify-center">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void loadOlderMessages()}
+                disabled={loadingOlderMessages}
+              >
+                {loadingOlderMessages ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                {loadingOlderMessages ? "Loading older..." : "Load older messages"}
+              </Button>
+            </div>
+          ) : null}
           {loadingMessages ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading messages...</div> : null}
           {!loadingMessages && messages.length === 0 ? <p className="text-sm text-muted-foreground">No messages yet.</p> : null}
           <div className="space-y-3">
-            {timelineItems.map((item) => {
+            {visibleTimelineItems.map((item) => {
               if (item.kind === "day") {
                 return (
                   <div key={item.key} className="my-2 flex items-center justify-center">
@@ -2004,6 +2822,8 @@ export default function ExternalChatApp() {
               }
               const m = item.message;
               const poll = pollMeta(m.metadata);
+              const resolvedNoteColor = noteColorFromMetadata(m.metadata);
+              const noteColorClass = NOTE_COLORS.find((entry) => entry.id === resolvedNoteColor)?.className || NOTE_COLORS[0].className;
               const own = isOwnMessage(m);
               const replyText = replyPreview(m.replyToId);
               const reactionsAgg = reactionSummary(m.reactions);
@@ -2014,9 +2834,11 @@ export default function ExternalChatApp() {
                       messageNodeRefs.current[m.id] = node;
                     }}
                     className={`group inline-flex h-auto w-auto max-w-[82%] flex-col items-start rounded-2xl border ${compactMode ? "p-2.5" : "p-3"} transition ${
-                      own
-                        ? "border-primary/35 bg-primary/12"
-                        : "border-border/70 bg-card/35"
+                      m.type === "note"
+                        ? noteColorClass
+                        : own
+                          ? "border-primary/35 bg-primary/12"
+                          : "border-border/70 bg-card/35"
                     } ${messageMatches[messageSearchIndex] === m.id ? "ring-2 ring-amber-400/70" : ""}`}
                     onTouchStart={() => startLongPress(m.id)}
                     onTouchEnd={clearLongPress}
@@ -2052,7 +2874,7 @@ export default function ExternalChatApp() {
                         </div>
                       </div>
                     ) : null}
-                    <p className={`${messageTextClass} whitespace-pre-wrap break-words`}>{highlightContent(m.content, search)}</p>
+                    <p className={`${messageTextClass} whitespace-pre-wrap break-words`}>{renderMessageContent(m.content, search)}</p>
                     {m.attachment ? (
                       isImageAttachment(m.attachment) ? (
                         <button
@@ -2101,13 +2923,30 @@ export default function ExternalChatApp() {
                     ) : null}
                     {poll ? (
                       <div className="mt-2 rounded-md border border-border/70 bg-muted/40 p-2">
-                        <p className="mb-2 text-xs font-semibold">{poll.question}</p>
+                        <p className="mb-1 text-xs font-semibold">{poll.question}</p>
+                        <p className="mb-2 text-[11px] text-muted-foreground">
+                          {(poll.options || []).reduce((sum, option) => sum + (option.voters || []).length, 0)} vote(s)
+                        </p>
                         <div className="space-y-1">
-                          {(poll.options || []).map((o) => (
-                            <button key={o.id} onClick={() => void mutateMessage(m.id, { pollVoteOptionId: o.id })} className="flex w-full items-center justify-between rounded border border-border px-2 py-1 text-xs hover:bg-accent">
-                              <span>{o.text}</span><span>{(o.voters || []).length}</span>
-                            </button>
-                          ))}
+                          {(poll.options || []).map((o, idx) => {
+                            const totalVotes = Math.max(1, (poll.options || []).reduce((sum, option) => sum + (option.voters || []).length, 0));
+                            const optionVotes = (o.voters || []).length;
+                            const percent = Math.min(100, Math.round((optionVotes / totalVotes) * 100));
+                            const fill = percent >= 60 ? "rgba(34,197,94,0.18)" : percent >= 35 ? "rgba(56,189,248,0.16)" : "rgba(148,163,184,0.14)";
+                            return (
+                              <button
+                                key={`${m.id}-poll-${o.id || idx}`}
+                                onClick={() => void mutateMessage(m.id, { pollVoteOptionId: o.id })}
+                                className="mx-auto grid min-h-9 w-[96%] grid-cols-[minmax(0,1fr)_2.25rem] items-start gap-2 rounded border border-border px-2.5 py-1.5 text-xs hover:bg-accent"
+                                style={{
+                                  backgroundImage: `linear-gradient(90deg, ${fill} ${percent}%, transparent ${percent}%)`,
+                                }}
+                              >
+                                <span className="min-w-0 whitespace-normal break-words text-left leading-5">{o.text}</span>
+                                <span className="pt-0.5 text-right tabular-nums">{optionVotes}</span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     ) : null}
@@ -2214,6 +3053,15 @@ export default function ExternalChatApp() {
           ) : null}
         </div>
 
+        {!canSendInActiveRoom && activeRoom ? (
+          <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+            {isFormerMemberInActiveRoom
+              ? "You can view previous messages, but cannot send or receive new messages in this group."
+              : activeRoom.archivedAt
+                ? "This conversation is archived and currently read-only."
+                : "This conversation is read-only for your account."}
+          </div>
+        ) : null}
         <form ref={composerFormRef} onSubmit={sendMessage} className="border-t border-border/60 bg-background/75 p-3 backdrop-blur">
           {undoSend ? (
             <div className="mb-2 flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs">
@@ -2241,7 +3089,7 @@ export default function ExternalChatApp() {
             </select>
             <div className="flex items-center gap-2">
               <input ref={fileInputRef} type="file" className="hidden" onChange={onFile} />
-              <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+               <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()} disabled={uploading || !canSendInActiveRoom}>
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}<span className="ml-1">Attach</span>
               </Button>
             </div>
@@ -2254,7 +3102,25 @@ export default function ExternalChatApp() {
               {pollOptions.map((opt, i) => (
                 <Input key={`opt-${i}`} value={opt} onChange={(e) => setPollOptions((p) => p.map((x, idx) => (idx === i ? e.target.value : x)))} placeholder={`Option ${i + 1}`} />
               ))}
-              <Button type="button" size="sm" variant="outline" onClick={() => setPollOptions((p) => [...p, ""])}>Add option</Button>
+             <Button type="button" size="sm" variant="outline" onClick={() => setPollOptions((p) => [...p, ""])} disabled={!canSendInActiveRoom}>Add option</Button>
+            </div>
+          ) : null}
+          {messageType === "note" ? (
+            <div className="mb-2 rounded-md border border-border bg-muted/30 p-2">
+              <p className="mb-2 text-xs font-semibold">Note Bubble Color</p>
+              <div className="flex flex-wrap gap-2">
+                {NOTE_COLORS.map((entry) => (
+                  <button
+                    key={`note-color-${entry.id}`}
+                    type="button"
+                    onClick={() => setNoteColor(entry.id)}
+                    className={`rounded-full border px-2.5 py-1 text-xs ${entry.className} ${noteColor === entry.id ? "ring-2 ring-primary/60" : ""}`}
+                    disabled={!canSendInActiveRoom}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
           <div className="mb-2 flex items-center justify-between gap-2">
@@ -2264,6 +3130,7 @@ export default function ExternalChatApp() {
                   key={`quick-${emoji}`}
                   type="button"
                   onClick={() => setText((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
+                  disabled={!canSendInActiveRoom}
                   className="rounded-full border border-border/70 px-2 py-0.5 text-xs hover:bg-accent"
                 >
                   {emoji}
@@ -2279,6 +3146,7 @@ export default function ExternalChatApp() {
               size="icon"
               className={`shrink-0 transition ${recording ? "animate-pulse" : ""}`}
               onClick={() => void toggleRecording()}
+              disabled={!canSendInActiveRoom}
             >
               <Mic className="h-4 w-4" />
             </Button>
@@ -2290,6 +3158,7 @@ export default function ExternalChatApp() {
                 onKeyDown={onTextKeyDown}
                 className="min-h-[54px] max-h-40"
                 placeholder="Type message. Use @username for mentions."
+                disabled={!canSendInActiveRoom}
               />
               {mentionOpen ? (
                 <div className="absolute bottom-[calc(100%+6px)] left-0 right-0 z-20 max-h-44 overflow-y-auto rounded-md border border-border bg-popover p-1 shadow-lg">
@@ -2310,7 +3179,7 @@ export default function ExternalChatApp() {
                 </div>
               ) : null}
             </div>
-            <Button type="submit" disabled={sending || uploading || !activeRoomCode} className="transition-transform duration-150 active:scale-95">
+            <Button type="submit" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="transition-transform duration-150 active:scale-95">
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
@@ -2347,6 +3216,8 @@ export default function ExternalChatApp() {
             {activeRoom?.members?.map((member) => {
               const user = member.user;
               const label = user.id === selfUserId ? "You" : userLabel(user);
+              const canManageThisMember = canManageMembers && user.id !== selfUserId;
+              const canTransferToMember = isOwnerInActiveRoom && member.role !== "owner" && user.id !== selfUserId;
               return (
                 <div key={`${activeRoom?.id}-${member.userId}`} className="flex items-center justify-between rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
                   <div className="flex items-center gap-2">
@@ -2359,7 +3230,39 @@ export default function ExternalChatApp() {
                     </div>
                     <span className="text-xs">{label}</span>
                   </div>
-                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600">{member.role}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600">{member.role}</span>
+                    {canManageThisMember ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void removeGroupMember(user.id)}
+                        title="Remove member"
+                      >
+                        <UserX className="h-3.5 w-3.5 text-red-600" />
+                      </Button>
+                    ) : null}
+                    {canManageThisMember && member.role !== "owner" ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void changeGroupMemberRole(user.id, member.role === "admin" ? "member" : "admin")}
+                        title={member.role === "admin" ? "Deassign admin" : "Assign admin"}
+                      >
+                        <Shield className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    {canTransferToMember ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void transferGroupOwnership(user.id)}
+                        title="Transfer ownership"
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               );
             })}
@@ -2427,7 +3330,14 @@ export default function ExternalChatApp() {
           <div className="grid grid-cols-3 gap-2">
             {sharedMedia.length === 0 ? <p className="col-span-3 text-xs text-muted-foreground">No media shared yet</p> : null}
             {sharedMedia.map((m) => (
-              <a key={m.id} href={m.attachment?.downloadUrl || "#"} className="aspect-square rounded-md border border-border/70 bg-muted/30 p-2 hover:bg-accent/50">
+              <a
+                key={m.id}
+                href={m.attachment?.downloadUrl || "#"}
+                download={m.attachment?.fileName || `media-${m.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="aspect-square rounded-md border border-border/70 bg-muted/30 p-2 hover:bg-accent/50"
+              >
                 <FileImage className="h-4 w-4" />
                 <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">{m.attachment?.fileName}</p>
               </a>
@@ -2498,8 +3408,8 @@ export default function ExternalChatApp() {
                           return data.user.imageUrl || null;
                         });
                         await loadConnections();
-                        await loadRooms();
-                        if (activeRoomCode) await loadMessages(activeRoomCode);
+                        await loadRooms({ silent: true });
+                        if (activeRoomCode) await loadMessages(activeRoomCode, { silent: true });
                       } catch (err) {
                         handleApiError(err, "Failed to update profile");
                       } finally {
@@ -2531,6 +3441,163 @@ export default function ExternalChatApp() {
         </aside>
       </div>
 
+      <div className={`fixed inset-0 z-[56] transition ${groupSettingsOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+        <button
+          type="button"
+          aria-label="Close group settings"
+          onClick={() => setGroupSettingsOpen(false)}
+          className={`absolute inset-0 bg-black/35 transition-opacity ${groupSettingsOpen ? "opacity-100" : "opacity-0"}`}
+        />
+        <aside className={`absolute right-0 top-0 h-full w-full max-w-md border-l border-border/70 bg-background/95 p-4 backdrop-blur-xl transition-transform duration-300 ${groupSettingsOpen ? "translate-x-0" : "translate-x-full"}`}>
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold">Group Settings</p>
+              <p className="text-xs text-muted-foreground">Manage this group without changing your personal profile.</p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setGroupSettingsOpen(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          {!activeRoom || activeRoom.type !== "group" ? (
+            <p className="text-sm text-muted-foreground">Open a group chat to edit its settings.</p>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/25 p-1">
+                {[
+                  { id: "general", label: "General" },
+                  { id: "members", label: "Members" },
+                  { id: "activity", label: "Activity" },
+                ].map((tab) => (
+                  <button
+                    key={`group-tab-${tab.id}`}
+                    type="button"
+                    onClick={() => setGroupSettingsTab(tab.id as "general" | "members" | "activity")}
+                    className={`rounded-md px-2 py-1.5 text-xs font-medium ${groupSettingsTab === tab.id ? "bg-primary text-primary-foreground" : "hover:bg-accent/70"}`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {groupSettingsTab === "general" ? (
+                <>
+                  <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                    <p className="text-xs font-semibold">Group Profile</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <div className="h-14 w-14 overflow-hidden rounded-full border border-border/70 bg-primary/15">
+                        {groupAvatarDraft ? (
+                          <img src={groupAvatarDraft} alt={activeRoom.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-primary">
+                            {(activeRoom.name || "GR").slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <input ref={groupAvatarInputRef} type="file" accept="image/*" className="hidden" onChange={onGroupAvatarChange} />
+                        <Button size="sm" variant="outline" onClick={() => groupAvatarInputRef.current?.click()}>
+                          <Upload className="mr-1 h-4 w-4" /> Change
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setGroupAvatarDraft("")}>Remove</Button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      <Input value={groupNameDraft} onChange={(e) => setGroupNameDraft(e.target.value)} placeholder="Group name" />
+                      <Textarea value={groupDescriptionDraft} onChange={(e) => setGroupDescriptionDraft(e.target.value)} className="min-h-20" placeholder="Group description" />
+                      <Button onClick={() => void saveGroupSettings()} disabled={!canManageMembers}>Save Group Profile</Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                    <p className="text-xs font-semibold">Group Actions</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {canManageMembers ? (
+                        <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(!Boolean(activeRoom.archivedAt))}>
+                          {activeRoom.archivedAt ? "Unarchive" : "Archive"}
+                        </Button>
+                      ) : null}
+                      {activeViewerRole === "owner" || activeViewerRole === "admin" ? (
+                        <Button size="sm" variant="outline" onClick={() => void deassignSelfLeadership()}>Deassign My Role</Button>
+                      ) : null}
+                      <Button size="sm" variant="outline" onClick={() => void leaveActiveGroup()}>Leave Group</Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          if (!window.confirm("Delete this group chat from your side only? This will not affect other members.")) return;
+                          void deleteChatForMe(activeRoom.code);
+                        }}
+                      >
+                        Delete For Me
+                      </Button>
+                      {activeViewerRole === "owner" ? (
+                        <Button size="sm" variant="destructive" className="col-span-2" onClick={() => void deleteGroupForEveryone()}>
+                          Delete Group For Everyone
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+
+              {groupSettingsTab === "members" ? (
+                <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                  <p className="text-xs font-semibold">Add Members</p>
+                  <Input
+                    className="mt-2"
+                    value={groupMemberSearch}
+                    onChange={(e) => setGroupMemberSearch(e.target.value)}
+                    placeholder="Search users to add"
+                    disabled={!canManageMembers}
+                  />
+                  <div className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/70 p-2">
+                    {!canManageMembers ? <p className="text-xs text-muted-foreground">Only owner/admin can add members.</p> : null}
+                    {canManageMembers && groupMemberSearchLoading ? <p className="text-xs text-muted-foreground">Searching...</p> : null}
+                    {canManageMembers && !groupMemberSearchLoading && groupMemberSearch.trim() && groupMemberSearchResults.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No eligible users found.</p>
+                    ) : null}
+                    {groupMemberSearchResults.map((u) => (
+                      <button
+                        key={`group-member-search-${u.id}`}
+                        type="button"
+                        onClick={() => toggleGroupMember(u.clerkId)}
+                        disabled={!canManageMembers}
+                        className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-sm ${
+                          selectedGroupMemberIds.includes(u.clerkId) ? "border-primary bg-primary/10" : "border-border/70 hover:bg-accent/60"
+                        }`}
+                      >
+                        <span className="truncate">{userLabel(u)}</span>
+                        <span className="text-[11px] text-muted-foreground">{selectedGroupMemberIds.includes(u.clerkId) ? "Selected" : "Add"}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">{selectedGroupMemberIds.length} selected</p>
+                    <Button size="sm" variant="outline" disabled={!canManageMembers || selectedGroupMemberIds.length === 0} onClick={() => void addSelectedMembersToActiveGroup()}>
+                      Add Selected
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {groupSettingsTab === "activity" ? (
+                <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
+                  <p className="text-xs font-semibold">Group Activity</p>
+                  <div className="mt-2 max-h-72 space-y-1.5 overflow-y-auto rounded-md border border-border/70 p-2">
+                    {loadingGroupActivity ? <p className="text-xs text-muted-foreground">Loading activity...</p> : null}
+                    {!loadingGroupActivity && groupActivityLogs.length === 0 ? <p className="text-xs text-muted-foreground">No activity yet.</p> : null}
+                    {groupActivityLogs.map((log) => (
+                      <div key={`group-activity-${log.id}`} className="rounded border border-border/70 bg-background/70 px-2 py-1.5">
+                        <p className="text-xs font-medium">{log.action.replaceAll("_", " ")}</p>
+                        <p className="text-[11px] text-muted-foreground">{userLabel(log.user)} • {new Date(log.createdAt).toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </aside>
+      </div>
+
       <div className={`fixed inset-0 z-[57] transition ${createGroupOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -2548,9 +3615,16 @@ export default function ExternalChatApp() {
           </div>
           <div className="space-y-3">
             <Input value={createGroupName} onChange={(e) => setCreateGroupName(e.target.value)} placeholder="Group name" />
+            <Input
+              value={createGroupQuery}
+              onChange={(e) => setCreateGroupQuery(e.target.value)}
+              placeholder="Search users to add..."
+            />
             <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-border/70 p-2">
-              {results.length === 0 ? <p className="text-xs text-muted-foreground">Search users in the sidebar first, then select them here.</p> : null}
-              {results.map((u) => (
+              {creatingGroupSearch ? <p className="text-xs text-muted-foreground">Searching users...</p> : null}
+              {!creatingGroupSearch && createGroupQuery.trim() && createGroupResults.length === 0 ? <p className="text-xs text-muted-foreground">No users found.</p> : null}
+              {!createGroupQuery.trim() ? <p className="text-xs text-muted-foreground">Type a name or email to search members.</p> : null}
+              {createGroupResults.map((u) => (
                 <button
                   key={`group-pick-${u.id}`}
                   type="button"
@@ -2615,6 +3689,79 @@ export default function ExternalChatApp() {
         </div>
       </div>
 
+      <div className={`fixed inset-0 z-[58] transition ${inviteShareOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+        <button
+          type="button"
+          aria-label="Close invite share"
+          onClick={() => setInviteShareOpen(false)}
+          className={`absolute inset-0 bg-black/45 transition-opacity ${inviteShareOpen ? "opacity-100" : "opacity-0"}`}
+        />
+        <div className={`absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-xl transition-all duration-300 ${inviteShareOpen ? "-translate-y-1/2 opacity-100" : "-translate-y-[45%] opacity-0"}`}>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-semibold">Share Group Invite</p>
+            <Button size="sm" variant="ghost" onClick={() => setInviteShareOpen(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          <p className="mb-2 text-xs text-muted-foreground">Edit the message before sharing.</p>
+          <Textarea value={inviteShareText} onChange={(e) => setInviteShareText(e.target.value)} className="min-h-24" />
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(inviteShareText);
+                  pushNotification({ level: "success", title: "Copied", message: "Invite message copied to clipboard." });
+                } catch {
+                  setError("Failed to copy invite message");
+                }
+              }}
+            >
+              Copy Message
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`fixed inset-0 z-[59] transition ${inviteJoinOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+        <button
+          type="button"
+          aria-label="Close invite join"
+          onClick={() => {
+            setInviteJoinOpen(false);
+            setInvitePreview(null);
+            setInviteJoinCode("");
+          }}
+          className={`absolute inset-0 bg-black/45 transition-opacity ${inviteJoinOpen ? "opacity-100" : "opacity-0"}`}
+        />
+        <div className={`absolute left-1/2 top-1/2 w-[92vw] max-w-md -translate-x-1/2 rounded-xl border border-border/70 bg-background/95 p-4 shadow-2xl backdrop-blur-xl transition-all duration-300 ${inviteJoinOpen ? "-translate-y-1/2 opacity-100" : "-translate-y-[45%] opacity-0"}`}>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-semibold">Join Group</p>
+            <Button size="sm" variant="ghost" onClick={() => setInviteJoinOpen(false)}><X className="h-4 w-4" /></Button>
+          </div>
+          {inviteLoading ? <p className="text-sm text-muted-foreground">Loading group details...</p> : null}
+          {!inviteLoading && invitePreview ? (
+            <div className="space-y-2">
+              <div className="rounded-md border border-border/70 bg-muted/20 p-2">
+                <p className="text-sm font-semibold">{invitePreview.room.name}</p>
+                <p className="text-xs text-muted-foreground">{invitePreview.room.description || "No description"}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{invitePreview.room.memberCount} member(s)</p>
+              </div>
+              {invitePreview.alreadyMember ? <p className="text-xs text-muted-foreground">You are already a member of this group.</p> : null}
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => void joinInviteGroup()}
+                  disabled={invitePreview.alreadyMember}
+                >
+                  Join Group
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {!inviteLoading && !invitePreview ? <p className="text-sm text-muted-foreground">Invite is invalid or expired.</p> : null}
+        </div>
+      </div>
+
       <div className={`fixed inset-0 z-40 transition xl:hidden ${mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -2645,12 +3792,8 @@ export default function ExternalChatApp() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
-                        {roomAvatarUser(room, selfUserId) ? (
-                          <UserAvatar
-                            user={roomAvatarUser(room, selfUserId)}
-                            className="h-full w-full object-cover"
-                            fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
-                          />
+                        {roomAvatarImage(room, selfUserId) ? (
+                          <img src={roomAvatarImage(room, selfUserId) || ""} alt={room.name} className="h-full w-full object-cover" />
                         ) : (
                           (room.name || "DM").slice(0, 2).toUpperCase()
                         )}
@@ -2662,25 +3805,68 @@ export default function ExternalChatApp() {
                       {room.unreadCount > 0 ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">{room.unreadCount}</span> : null}
                     </div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Swipe left to star, right to close</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {room.archivedAt ? "Archived" : "Swipe left to star, right to close"}
+                  </p>
                 </button>
               );
             })}
+            {archivedRooms.length > 0 ? (
+              <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 p-2">
+                <button
+                  type="button"
+                  className="mb-2 flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  onClick={() => setArchivedOpen((v) => !v)}
+                >
+                  <span>Archived</span>
+                  <ChevronRight className={`h-3.5 w-3.5 transition ${archivedOpen ? "rotate-90" : ""}`} />
+                </button>
+                {archivedOpen ? <div className="space-y-1">
+                  {archivedRooms.map((room) => {
+                    const role = room.viewerMembership?.role;
+                    const canUnarchive = role === "owner" || role === "admin";
+                    return (
+                      <div key={`mobile-archived-${room.id}`} className="rounded-md border border-border/70 px-2 py-1.5">
+                        <button
+                          onClick={() => {
+                            setActiveRoomCode(room.code);
+                            setMobileSidebarOpen(false);
+                          }}
+                          className="w-full text-left"
+                        >
+                          <p className="truncate text-sm font-medium">{room.name}</p>
+                          <p className="text-[11px] text-muted-foreground">Archived (read-only)</p>
+                        </button>
+                        <div className="mt-2 flex items-center gap-1">
+                          {canUnarchive ? (
+                            <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(false, room.code)}>
+                              Unarchive
+                            </Button>
+                          ) : null}
+                          <Button size="sm" variant="ghost" onClick={() => void deleteChatForMe(room.code)}>
+                            <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div> : null}
+              </div>
+            ) : null}
           </div>
         </aside>
       </div>
 
-      <div className={`fixed inset-0 z-[60] transition ${actionSheetOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
-        <button
-          type="button"
-          aria-label="Close actions"
-          onClick={() => setActionSheetOpen(false)}
-          className={`absolute inset-0 bg-black/35 transition-opacity ${actionSheetOpen ? "opacity-100" : "opacity-0"}`}
-        />
-        <div className={`absolute bottom-0 left-0 right-0 rounded-t-2xl border-t border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 md:left-1/2 md:bottom-auto md:top-1/2 md:w-[92vw] md:max-w-md md:-translate-x-1/2 md:rounded-2xl md:border md:shadow-2xl ${actionSheetOpen ? "translate-y-0 md:-translate-y-1/2" : "translate-y-full md:-translate-x-1/2 md:-translate-y-[45%]"}`}>
-          <p className="mb-2 text-xs font-semibold text-muted-foreground">Message actions</p>
-          {!actionSheetMessage ? <p className="text-sm text-muted-foreground">No message selected.</p> : null}
-          {actionSheetMessage ? (
+      {actionSheetOpen && actionSheetMessage ? (
+        <div className="fixed inset-0 z-[60] pointer-events-auto">
+          <button
+            type="button"
+            aria-label="Close actions"
+            onClick={() => setActionSheetOpen(false)}
+            className="absolute inset-0 bg-black/35"
+          />
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl border-t border-border/70 bg-background/95 p-3 backdrop-blur-xl md:left-1/2 md:top-1/2 md:w-[92vw] md:max-w-md md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-2xl md:border md:shadow-2xl">
+            <p className="mb-2 text-xs font-semibold text-muted-foreground">Message actions</p>
             <div className="space-y-3">
               <div className="flex flex-wrap gap-1">
                 {REACTIONS.map((emoji) => (
@@ -2715,9 +3901,9 @@ export default function ExternalChatApp() {
               <Button variant="destructive" className="col-span-2" onClick={() => { void deleteMessage(actionSheetMessage.id); setActionSheetOpen(false); }}>Delete</Button>
               </div>
             </div>
-          ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <div className={`fixed inset-0 z-50 transition ${threadOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button

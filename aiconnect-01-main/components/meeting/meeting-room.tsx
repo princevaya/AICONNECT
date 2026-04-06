@@ -2820,8 +2820,8 @@ export default function MeetingRoom({
                 mainGridVisibleParticipants.length === 1
                   ? "grid-cols-1"
                   : mainGridVisibleParticipants.length === 2
-                  ? "grid-cols-2"
-                  : "grid-cols-2 auto-rows-fr"
+                  ? "grid-cols-1 sm:grid-cols-2"
+                  : "grid-cols-1 auto-rows-fr sm:grid-cols-2"
               }`}
             >
               {mainGridVisibleParticipants.map((participant) => (
@@ -2898,7 +2898,7 @@ export default function MeetingRoom({
         <div
           className={`${
             showParticipants ? "" : "hidden"
-          } fixed inset-y-0 right-0 z-40 w-[92vw] max-w-80 border-l border-border bg-background/95 lg:static lg:w-80 lg:bg-transparent`}
+          } fixed inset-y-0 right-0 z-40 w-full max-w-[100vw] border-l border-border bg-background/95 sm:w-[92vw] sm:max-w-80 lg:static lg:w-80 lg:bg-transparent`}
         >
           <button
             type="button"
@@ -2928,7 +2928,7 @@ export default function MeetingRoom({
         <div
           className={`${
             showChat ? "" : "hidden"
-          } fixed inset-y-0 right-0 z-40 w-[96vw] max-w-[32rem] border-l border-border bg-background/95 lg:static lg:w-[28rem] lg:max-w-none lg:bg-transparent`}
+          } fixed inset-y-0 right-0 z-40 w-full max-w-[100vw] border-l border-border bg-background/95 sm:w-[96vw] sm:max-w-[32rem] lg:static lg:w-[28rem] lg:max-w-none lg:bg-transparent`}
         >
           <button
             type="button"
@@ -2949,7 +2949,7 @@ export default function MeetingRoom({
       </div>
 
       <div className="relative border-t border-border bg-background/90 backdrop-blur-md">
-        <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+        <div className="absolute right-2 top-2 z-50 flex items-center gap-1.5 sm:right-4 sm:top-4 sm:gap-2">
           <div className="rounded-full bg-secondary text-secondary-foreground shadow-sm">
             <ThemeToggle />
           </div>
