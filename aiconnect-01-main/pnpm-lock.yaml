@@ -129,7 +129,7 @@ importers:
         specifier: ^7.2.0
         version: 7.2.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       resend:
-        specifier: ^6.9.2
+        specifier: ^6.9.3
         version: 6.9.3
       socket.io-client:
         specifier: ^4.8.3
