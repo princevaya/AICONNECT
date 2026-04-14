@@ -151,3 +151,36 @@
 .animation-delay-4000 {
   animation-delay: 4s;
 }
+
+@layer components {
+  .chat-shell {
+    background:
+      radial-gradient(1200px 600px at 10% -10%, color-mix(in oklab, var(--primary) 14%, transparent), transparent),
+      radial-gradient(1000px 500px at 100% 0%, color-mix(in oklab, var(--chart-2) 12%, transparent), transparent),
+      linear-gradient(to bottom, color-mix(in oklab, var(--background) 94%, transparent), var(--background));
+  }
+
+  .chat-grid {
+    @apply grid grid-cols-1 gap-3 xl:grid-cols-[320px_minmax(0,1fr)_320px];
+  }
+
+  .chat-panel {
+    @apply rounded-xl border border-border/60 bg-card/70 backdrop-blur-xl;
+  }
+
+  .chat-row-active {
+    @apply border-primary/60 bg-primary/10;
+  }
+
+  .chat-row-hover {
+    @apply hover:border-border hover:bg-accent/50;
+  }
+
+  .chat-bubble-received {
+    @apply rounded-2xl rounded-bl-sm border border-border/70 bg-muted/75 px-3 py-2 text-sm;
+  }
+
+  .chat-bubble-sent {
+    @apply rounded-2xl rounded-br-sm border border-primary/25 bg-primary/90 px-3 py-2 text-sm text-primary-foreground;
+  }
+}

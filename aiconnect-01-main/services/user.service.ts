@@ -6,10 +6,18 @@ export type AppUser = {
   clerkId: string;
   name: string | null;
   email: string | null;
+  imageUrl: string | null;
   role: string;
 };
 
-export async function ensureLocalUser(clerkUserId: string): Promise<AppUser> {
+export type AuthProfile = {
+  clerkId: string;
+  name: string | null;
+  email: string | null;
+  imageUrl: string | null;
+};
+
+export async function getAuthenticatedProfile(clerkUserId: string): Promise<AuthProfile> {
   const clerkProfile = await currentUser();
   if (!clerkProfile || clerkProfile.id !== clerkUserId) {
     throw new Error("Unable to resolve authenticated user profile");
@@ -21,18 +29,29 @@ export async function ensureLocalUser(clerkUserId: string): Promise<AppUser> {
     `${clerkProfile.firstName ?? ""} ${clerkProfile.lastName ?? ""}`.trim() ||
     null;
 
+  return {
+    clerkId: clerkUserId,
+    name,
+    email,
+    imageUrl: clerkProfile.imageUrl ?? null,
+  };
+}
+
+export async function ensureLocalUser(clerkUserId: string): Promise<AppUser> {
+  const profile = await getAuthenticatedProfile(clerkUserId);
+
   return prisma.user.upsert({
     where: { clerkId: clerkUserId },
     update: {
-      name,
-      email,
-      imageUrl: clerkProfile.imageUrl ?? null,
+      name: profile.name,
+      email: profile.email,
+      imageUrl: profile.imageUrl,
     },
     create: {
       clerkId: clerkUserId,
-      name,
-      email,
-      imageUrl: clerkProfile.imageUrl ?? null,
+      name: profile.name,
+      email: profile.email,
+      imageUrl: profile.imageUrl,
     },
   });
 }

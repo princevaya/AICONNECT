@@ -13,6 +13,25 @@ enum ParticipantRole {
   participant
 }
 
+enum ExternalChatRoomType {
+  direct
+  group
+  channel
+}
+
+enum ExternalChatMessageType {
+  text
+  note
+  poll
+  system
+}
+
+enum GeneratedImageStatus {
+  pending
+  succeeded
+  failed
+}
+
 model User {
   id        String   @id @default(cuid())
   clerkId   String   @unique
@@ -28,6 +47,24 @@ model User {
   chatRooms ChatRoom[]    @relation("ChatRoomHost")
   sharedBy  FileShare[] @relation("Sender")
   sharedTo  FileShare[] @relation("Receiver")
+  externalChatWorkspaces ExternalChatWorkspace[] @relation("ExternalChatWorkspaceCreator")
+  externalChatRooms      ExternalChatRoom[] @relation("ExternalChatRoomCreator")
+  externalChatMembers    ExternalChatRoomMember[]
+  externalChatMessages   ExternalChatMessage[] @relation("ExternalChatMessageSender")
+  externalChatReactions  ExternalChatReaction[]
+  externalChatSeen       ExternalChatReadReceipt[]
+  externalChatUploads    ExternalChatAttachment[] @relation("ExternalChatAttachmentUploader")
+  sentConnectionRequests ExternalChatConnectionRequest[] @relation("ExternalChatRequestSender")
+  receivedConnectionRequests ExternalChatConnectionRequest[] @relation("ExternalChatRequestReceiver")
+  initiatedConnections ExternalChatConnection[] @relation("ExternalChatConnectionInitiator")
+  receivedConnections ExternalChatConnection[] @relation("ExternalChatConnectionRecipient")
+  generatedImages      GeneratedImage[]
+  rateLimitEvents      RateLimitEvent[]
+  externalChatRoomActivityLogs ExternalChatRoomActivityLog[]
+  externalChatRoomReportsReported ExternalChatRoomReport[] @relation("ExternalChatReportReporter")
+  externalChatRoomReportsResolved ExternalChatRoomReport[] @relation("ExternalChatReportResolver")
+  externalChatRoomMutes ExternalChatRoomMute[]
+  externalChatHiddenRooms ExternalChatRoomHidden[]
 
   @@map("users")
 }
@@ -183,4 +220,316 @@ model Participant {
   @@index([roomId, leftAt], map: "idx_participants_room_left_at")
   @@index([roomId, role], map: "idx_participants_room_role")
   @@map("participants")
+}
+
+model ExternalChatWorkspace {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  createdBy String   @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  creator User @relation("ExternalChatWorkspaceCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  rooms   ExternalChatRoom[]
+
+  @@map("external_chat_workspaces")
+}
+
+model ExternalChatRoom {
+  id          String               @id @default(cuid())
+  workspaceId String               @map("workspace_id")
+  code        String               @unique
+  name        String
+  description String?
+  avatarUrl   String?              @map("avatar_url")
+  type        ExternalChatRoomType @default(group)
+  isPrivate   Boolean              @default(false) @map("is_private")
+  isDiscoverable Boolean           @default(true) @map("is_discoverable")
+  inviteCode  String?              @unique @map("invite_code")
+  createdBy   String               @map("created_by")
+  archivedAt  DateTime?            @map("archived_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  workspace ExternalChatWorkspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator   User                   @relation("ExternalChatRoomCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  members   ExternalChatRoomMember[]
+  messages  ExternalChatMessage[]
+  uploads   ExternalChatAttachment[]
+  directConnection ExternalChatConnection?
+  activityLogs ExternalChatRoomActivityLog[]
+  reports   ExternalChatRoomReport[]
+  mutes     ExternalChatRoomMute[]
+  hiddenBy  ExternalChatRoomHidden[]
+
+  @@index([workspaceId], map: "idx_external_chat_rooms_workspace")
+  @@index([type], map: "idx_external_chat_rooms_type")
+  @@index([isDiscoverable], map: "idx_external_chat_rooms_discoverable")
+  @@index([inviteCode], map: "idx_external_chat_rooms_invite_code")
+  @@map("external_chat_rooms")
+}
+
+model ExternalChatRoomMember {
+  id        String   @id @default(cuid())
+  roomId    String   @map("room_id")
+  userId    String   @map("user_id")
+  role      String   @default("member")
+  muted     Boolean  @default(false)
+  joinedAt  DateTime @default(now()) @map("joined_at")
+  lastSeenAt DateTime? @map("last_seen_at")
+  leftAt    DateTime? @map("left_at")
+  removedAt DateTime? @map("removed_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  room ExternalChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId], map: "uq_external_chat_member_room_user")
+  @@index([userId], map: "idx_external_chat_members_user")
+  @@index([roomId, leftAt], map: "idx_external_chat_members_room_left")
+  @@map("external_chat_room_members")
+}
+
+model ExternalChatAttachment {
+  id              String   @id @default(cuid())
+  roomId          String   @map("room_id")
+  uploadedBy      String   @map("uploaded_by")
+  fileName        String   @map("file_name")
+  mimeType        String   @map("mime_type")
+  sizeBytes       BigInt   @map("size_bytes")
+  storageProvider String   @default("s3") @map("storage_provider")
+  storageKey      String   @map("storage_key")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  room     ExternalChatRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  uploader User               @relation("ExternalChatAttachmentUploader", fields: [uploadedBy], references: [id], onDelete: Cascade)
+  messages ExternalChatMessage[]
+
+  @@index([roomId], map: "idx_external_chat_attachments_room")
+  @@index([uploadedBy], map: "idx_external_chat_attachments_uploader")
+  @@map("external_chat_attachments")
+}
+
+model ExternalChatMessage {
+  id           String                  @id @default(cuid())
+  roomId       String                  @map("room_id")
+  senderId     String                  @map("sender_id")
+  type         ExternalChatMessageType @default(text)
+  content      String
+  metadata     Json?
+  mentions     Json?
+  privateTo    Json?                   @map("private_to")
+  replyToId    String?                 @map("reply_to_id")
+  attachmentId String?                 @map("attachment_id")
+  editedAt     DateTime?               @map("edited_at")
+  pinnedAt     DateTime?               @map("pinned_at")
+  deletedAt    DateTime?               @map("deleted_at")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+
+  room       ExternalChatRoom      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender     User                  @relation("ExternalChatMessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo    ExternalChatMessage?  @relation("ExternalChatReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies    ExternalChatMessage[] @relation("ExternalChatReplies")
+  attachment ExternalChatAttachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+  reactions  ExternalChatReaction[]
+  seenBy     ExternalChatReadReceipt[]
+
+  @@index([roomId, createdAt], map: "idx_external_chat_messages_room_created")
+  @@index([senderId], map: "idx_external_chat_messages_sender")
+  @@index([replyToId], map: "idx_external_chat_messages_reply_to")
+  @@index([pinnedAt], map: "idx_external_chat_messages_pinned")
+  @@index([deletedAt], map: "idx_external_chat_messages_deleted")
+  @@map("external_chat_messages")
+}
+
+model ExternalChatReaction {
+  id        String   @id @default(cuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  emoji     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  message ExternalChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji], map: "uq_external_chat_reaction")
+  @@index([messageId], map: "idx_external_chat_reaction_message")
+  @@map("external_chat_reactions")
+}
+
+model ExternalChatReadReceipt {
+  id        String   @id @default(cuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  seenAt    DateTime @default(now()) @map("seen_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  message ExternalChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId], map: "uq_external_chat_seen")
+  @@index([userId], map: "idx_external_chat_seen_user")
+  @@map("external_chat_read_receipts")
+}
+
+model ExternalChatConnectionRequest {
+  id         String   @id @default(cuid())
+  senderId   String   @map("sender_id")
+  receiverId String   @map("receiver_id")
+  status     String   @default("pending")
+  message    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  respondedAt DateTime? @map("responded_at")
+
+  sender     User     @relation("ExternalChatRequestSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User     @relation("ExternalChatRequestReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId], map: "uq_external_chat_request_sender_receiver")
+  @@index([receiverId, status], map: "idx_external_chat_request_receiver_status")
+  @@index([senderId, status], map: "idx_external_chat_request_sender_status")
+  @@map("external_chat_connection_requests")
+}
+
+model ExternalChatConnection {
+  id          String   @id @default(cuid())
+  userAId     String   @map("user_a_id")
+  userBId     String   @map("user_b_id")
+  directRoomId String  @unique @map("direct_room_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  removedAt   DateTime? @map("removed_at")
+
+  userA       User     @relation("ExternalChatConnectionInitiator", fields: [userAId], references: [id], onDelete: Cascade)
+  userB       User     @relation("ExternalChatConnectionRecipient", fields: [userBId], references: [id], onDelete: Cascade)
+  directRoom  ExternalChatRoom @relation(fields: [directRoomId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId], map: "uq_external_chat_connection_pair")
+  @@index([userAId, removedAt], map: "idx_external_chat_connection_user_a")
+  @@index([userBId, removedAt], map: "idx_external_chat_connection_user_b")
+  @@map("external_chat_connections")
+}
+
+model GeneratedImage {
+  id              String               @id @default(cuid())
+  userId          String               @map("user_id")
+  status          GeneratedImageStatus @default(pending)
+  prompt          String
+  enhancedPrompt  String?              @map("enhanced_prompt")
+  stylePreset     String?              @map("style_preset")
+  aspectRatio     String               @default("1:1") @map("aspect_ratio")
+  quality         String               @default("standard")
+  background      String? 
+  provider        String
+  model           String
+  seed            String?
+  mimeType        String?              @map("mime_type")
+  width           Int?
+  height          Int?
+  storageProvider String?              @map("storage_provider")
+  storageKey      String?              @map("storage_key")
+  errorCode       String?              @map("error_code")
+  errorMessage    String?              @map("error_message")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "idx_generated_images_user_created")
+  @@index([status, createdAt], map: "idx_generated_images_status_created")
+  @@map("generated_images")
+}
+
+model RateLimitEvent {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  routeKey   String   @map("route_key")
+  subjectKey String   @map("subject_key")
+  windowKey  String   @map("window_key")
+  count      Int      @default(0)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([routeKey, subjectKey, windowKey], map: "uq_rate_limit_route_subject_window")
+  @@index([userId, routeKey], map: "idx_rate_limit_user_route")
+  @@map("rate_limit_events")
+}
+
+model ExternalChatRoomActivityLog {
+  id        String   @id @default(cuid())
+  roomId    String   @map("room_id")
+  userId    String   @map("user_id")
+  action    String
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  room    ExternalChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([roomId], map: "idx_external_chat_activity_room")
+  @@index([userId], map: "idx_external_chat_activity_user")
+  @@index([createdAt], map: "idx_external_chat_activity_created")
+  @@map("external_chat_room_activity_logs")
+}
+
+model ExternalChatRoomReport {
+  id          String   @id @default(cuid())
+  roomId      String   @map("room_id")
+  reporterId  String   @map("reporter_id")
+  reason      String
+  description String?
+  status      String   @default("pending")
+  resolvedAt  DateTime? @map("resolved_at")
+  resolvedBy  String?   @map("resolved_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  room      ExternalChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  reporter  User             @relation("ExternalChatReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  resolver  User?            @relation("ExternalChatReportResolver", fields: [resolvedBy], references: [id])
+
+  @@index([roomId], map: "idx_external_chat_reports_room")
+  @@index([status], map: "idx_external_chat_reports_status")
+  @@index([createdAt], map: "idx_external_chat_reports_created")
+  @@map("external_chat_room_reports")
+}
+
+model ExternalChatRoomMute {
+  id        String   @id @default(cuid())
+  roomId    String   @map("room_id")
+  userId    String   @map("user_id")
+  muted     Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  room ExternalChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId], map: "uq_external_chat_mute_room_user")
+  @@index([userId], map: "idx_external_chat_mutes_user")
+  @@map("external_chat_room_mutes")
+}
+
+model ExternalChatRoomHidden {
+  id        String   @id @default(cuid())
+  roomId    String   @map("room_id")
+  userId    String   @map("user_id")
+  hiddenAt  DateTime @default(now()) @map("hidden_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  room ExternalChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId], map: "uq_external_chat_hidden_room_user")
+  @@index([userId], map: "idx_external_chat_hidden_user")
+  @@map("external_chat_room_hidden")
 }
