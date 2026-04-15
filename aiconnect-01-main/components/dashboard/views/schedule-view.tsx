@@ -65,6 +65,8 @@ export default function ScheduleView() {
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  // ✅ Track copy state per card individually
+  const [cardCopyState, setCardCopyState] = useState<Record<string, "idle" | "copied">>({});
 
   /* ---------- FETCH ---------- */
   const fetchMeetings = useCallback(async () => {
@@ -170,6 +172,18 @@ export default function ScheduleView() {
     }
   };
 
+  // ✅ Copy link for individual meeting cards
+  const handleCardCopyLink = async (code: string) => {
+    try {
+      const link = `${window.location.origin}/meeting/${code}`;
+      await navigator.clipboard.writeText(link);
+      setCardCopyState((prev) => ({ ...prev, [code]: "copied" }));
+      setTimeout(() => setCardCopyState((prev) => ({ ...prev, [code]: "idle" })), 2000);
+    } catch {
+      // silent fail
+    }
+  };
+
   /* ---------- DERIVED ---------- */
   const meetingsForDate = useMemo(
     () => meetings.filter((m) => isSameDay(m.scheduledFor, selectedDate)),
@@ -246,6 +260,26 @@ export default function ScheduleView() {
                     }`}>
                       {m.status}
                     </span>
+
+                    {/* ✅ ALWAYS VISIBLE — persistent Copy Link + Join as Host */}
+                    <div className="flex gap-2 pt-1 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCardCopyLink(m.code)}
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        {cardCopyState[m.code] === "copied" ? "Copied!" : "Copy link"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          window.location.href = `/meeting/join?room=${m.code}&host=true`;
+                        }}
+                      >
+                        Join as Host
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -368,14 +402,24 @@ export default function ScheduleView() {
                 <code className="block text-sm break-all">
                   {resolveLink(lastScheduled.link)}
                 </code>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleCopyLink(lastScheduled.link)}
-                >
-                  <Copy className="h-4 w-4 mr-1" />
-                  {copyState === "copied" ? "Copied!" : "Copy link"}
-                </Button>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleCopyLink(lastScheduled.link)}
+                  >
+                    <Copy className="h-4 w-4 mr-1" />
+                    {copyState === "copied" ? "Copied!" : "Copy link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = `/meeting/join?room=${lastScheduled.code}&host=true`;
+                    }}
+                  >
+                    Join as Host
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

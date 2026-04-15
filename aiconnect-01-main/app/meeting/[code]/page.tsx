@@ -15,11 +15,14 @@ export default function MeetingPage() {
   const { user, isLoaded } = useUser();
 
   const meetingCode = params.code as string;
-  const isHost = searchParams.get("host") === "1";
   const participantName =
     searchParams.get("name")?.trim() || user?.fullName?.trim() || "Guest";
   const videoEnabled = searchParams.get("video") !== "0";
   const audioEnabled = searchParams.get("audio") !== "0";
+
+  // ✅ REPLACED: isHost is now state, auto-detected from DB
+  const [isHost, setIsHost] = useState(false);
+  const [isCheckingHost, setIsCheckingHost] = useState(true);
 
   const [pendingUsers, setPendingUsers] = useState<string[]>([]);
   const [isLoadingPending, setIsLoadingPending] = useState(false);
@@ -39,6 +42,40 @@ export default function MeetingPage() {
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  // ✅ AUTO-DETECT HOST: check if logged-in user created this meeting
+  useEffect(() => {
+    if (!isLoaded || !meetingCode) return;
+
+    const checkIfHost = async () => {
+      try {
+        const res = await fetch(`/api/schedule?all=true`, { cache: "no-store" });
+        const text = await res.text();
+        if (!text.trim().startsWith("{")) return;
+        const payload = JSON.parse(text);
+        if (!payload.success) return;
+
+        const meeting = payload.meetings.find(
+          (m: any) => m.code === meetingCode
+        );
+
+        if (meeting && user?.id && meeting.createdBy === user.id) {
+          // ✅ You created this meeting → auto host
+          setIsHost(true);
+        } else if (searchParams.get("host") === "true") {
+          // ✅ Fallback: manual host param
+          setIsHost(true);
+        }
+      } catch {
+        // fallback to URL param if API fails
+        if (searchParams.get("host") === "true") setIsHost(true);
+      } finally {
+        setIsCheckingHost(false);
+      }
+    };
+
+    void checkIfHost();
+  }, [isLoaded, meetingCode, user?.id, searchParams]);
+
   useEffect(() => {
     if (!meetingCode || !isHost) return;
 
@@ -50,9 +87,7 @@ export default function MeetingPage() {
           cache: "no-store",
         });
         const data = await res.json();
-        if (pollVersion !== mutationVersionRef.current) {
-          return;
-        }
+        if (pollVersion !== mutationVersionRef.current) return;
         setPendingUsers(data.pending || []);
       } catch {
         setApprovalError("Unable to refresh join requests.");
@@ -219,6 +254,15 @@ export default function MeetingPage() {
 
   if (!meetingCode) return null;
 
+  // ✅ Show loading while checking if user is host
+  if (isCheckingHost) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground text-sm">Loading meeting...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background relative">
       <MeetingRoom
@@ -266,12 +310,12 @@ export default function MeetingPage() {
             </TabsList>
 
             <TabsContent value="requests" className="space-y-3">
-              {approvalMessage ? (
+              {approvalMessage && (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
-              ) : null}
-              {approvalError ? (
+              )}
+              {approvalError && (
                 <p className="text-sm text-destructive">{approvalError}</p>
-              ) : null}
+              )}
 
               {pendingUsers.length > 0 ? (
                 <>
@@ -359,9 +403,9 @@ export default function MeetingPage() {
                 </Button>
               </div>
 
-              {linkCopiedMessage ? (
+              {linkCopiedMessage && (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{linkCopiedMessage}</p>
-              ) : null}
+              )}
             </TabsContent>
 
             <TabsContent value="settings" className="space-y-3">
@@ -413,10 +457,12 @@ export default function MeetingPage() {
                 </>
               )}
 
-              {settingsMessage ? (
+              {settingsMessage && (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{settingsMessage}</p>
-              ) : null}
-              {settingsError ? <p className="text-sm text-destructive">{settingsError}</p> : null}
+              )}
+              {settingsError && (
+                <p className="text-sm text-destructive">{settingsError}</p>
+              )}
             </TabsContent>
           </Tabs>
         </div>

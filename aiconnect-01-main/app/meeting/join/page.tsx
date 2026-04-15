@@ -8,8 +8,9 @@ function JoinMeetingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // ✅ get room code from URL
   const meetingCode = searchParams.get("room") || "";
+  // ✅ FIX Bug 1: read host from URL instead of hardcoding false
+  const isHost = searchParams.get("host") === "true";
 
   const handleJoin = (
     name: string,
@@ -32,7 +33,7 @@ function JoinMeetingContent() {
     <PreJoinScreen
       onJoin={handleJoin}
       meetingCode={meetingCode}
-      isHost={false}
+      isHost={isHost}
     />
   );
 }

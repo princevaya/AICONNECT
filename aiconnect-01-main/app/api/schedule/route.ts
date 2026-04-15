@@ -1,6 +1,7 @@
 import { success, failure } from "@/app/api/_utils/response";
 import { MeetingRecord, listMeetings, listAllMeetings, createMeeting } from "@/lib/meetings";
 import { sendMeetingInvite } from "@/lib/email";
+import { auth } from "@clerk/nextjs/server"; // ✅ ADDED
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,7 @@ function toClientPayload(meeting: MeetingRecord) {
     notes: meeting.notes ?? null,
     status: meeting.status,
     isActive: meeting.isActive,
+    createdBy: meeting.createdBy ?? null, // ✅ ADDED
     link: `/meeting/${meeting.code}`,
     createdAt: meeting.createdAt.toISOString(),
     updatedAt: meeting.updatedAt.toISOString(),
@@ -50,7 +52,6 @@ function toClientPayload(meeting: MeetingRecord) {
 }
 
 /* ---------- GET /api/schedule ---------- */
-// Add ?all=true to get past meetings too
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -70,6 +71,8 @@ export async function GET(req: Request) {
 /* ---------- POST /api/schedule ---------- */
 export async function POST(req: Request) {
   try {
+    const { userId } = await auth(); // ✅ ADDED — get logged in user
+
     const body = await req.json();
 
     if (!body?.title || !body?.scheduledFor) {
@@ -99,12 +102,13 @@ export async function POST(req: Request) {
       scheduledFor: scheduledDate,
       attendees,
       notes: body.notes ?? null,
+      createdBy: userId ?? null, // ✅ ADDED — store who created it
     });
 
     // Send email invites to all attendees
     const emailResults = await Promise.allSettled(
       attendees
-        .filter((a) => a.includes("@")) // only valid emails
+        .filter((a) => a.includes("@"))
         .map((email) =>
           sendMeetingInvite({
             to: email,
