@@ -2,15 +2,34 @@
 
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useUser } from "@clerk/nextjs";
 import PreJoinScreen from "@/components/meeting/pre-join-screen";
 
 function JoinMeetingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { isLoaded, isSignedIn } = useUser();
 
   const meetingCode = searchParams.get("room") || "";
-  // ✅ FIX Bug 1: read host from URL instead of hardcoding false
   const isHost = searchParams.get("host") === "true";
+
+  // Wait for Clerk to finish loading
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  // If not signed in, redirect to sign-in page
+  if (!isSignedIn) {
+    const redirectUrl = encodeURIComponent(
+      `/meeting/join?room=${meetingCode}&host=${isHost}`
+    );
+    router.push(`/auth/sign-in?redirect_url=${redirectUrl}`);
+    return null;
+  }
 
   const handleJoin = (
     name: string,
