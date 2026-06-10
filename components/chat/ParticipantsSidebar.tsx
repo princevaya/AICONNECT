@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Loader2, Mic, MicOff, Video, VideoOff, UserMinus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -53,6 +53,9 @@ export default function ParticipantsSidebar({ roomId, refreshKey = 0 }: Props) {
   const [error, setError] = useState("");
   const [removingId, setRemovingId] = useState<string | null>(null);
 
+  const hasJoinedRef = React.useRef(false);
+  const lastJoinKeyRef = React.useRef<string>("");
+
   const onlineCount = useMemo(
     () => participants.filter((participant) => participant.leftAt === null).length,
     [participants]
@@ -62,11 +65,14 @@ export default function ParticipantsSidebar({ roomId, refreshKey = 0 }: Props) {
     if (!roomId) {
       setParticipants([]);
       setError("");
+      hasJoinedRef.current = false;
       return;
     }
 
     let active = true;
+
     const ensureJoined = async () => {
+      if (hasJoinedRef.current) return;
       const response = await fetch(`/api/chat/${encodeURIComponent(roomId)}/participants`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -74,15 +80,15 @@ export default function ParticipantsSidebar({ roomId, refreshKey = 0 }: Props) {
       });
       if (!response.ok) {
         const body = (await parseApiBody(response)) as { error?: string };
-        throw new Error(body.error || "Failed to join participants list");
+        throw new Error(body.error || "Failed to join participants");
       }
+      hasJoinedRef.current = true;
     };
 
     const fetchParticipants = async () => {
       setIsLoading(true);
       setError("");
       try {
-        await ensureJoined();
         const response = await fetch(`/api/chat/${encodeURIComponent(roomId)}/participants`, {
           cache: "no-store",
         });
@@ -102,13 +108,56 @@ export default function ParticipantsSidebar({ roomId, refreshKey = 0 }: Props) {
       }
     };
 
-    void fetchParticipants();
-    const timer = setInterval(fetchParticipants, 5000);
+    // Reset join flag when roomId changes.
+    if (lastJoinKeyRef.current !== roomId) {
+      lastJoinKeyRef.current = roomId;
+      hasJoinedRef.current = false;
+    }
+
+    // Initialize sequentially.
+    const init = async () => {
+      try {
+        await ensureJoined();
+        if (active) {
+          await fetchParticipants();
+        }
+      } catch (loadError) {
+        if (active) {
+          const message = loadError instanceof Error ? loadError.message : "Initialization failed";
+          setError(message);
+        }
+      }
+    };
+    void init();
+
+    let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+
+    // Set up server‑sent events for real‑time updates.
+    const es = new EventSource(`/api/chat/${encodeURIComponent(roomId)}/participants/stream`);
+    es.addEventListener('message', (e) => {
+      try {
+        const data = JSON.parse(e.data) as ParticipantsResponse;
+        if (active) {
+          setParticipants(data.participants || []);
+          setIsHost(!!data.isHost);
+        }
+      } catch {}
+    });
+    es.addEventListener('error', () => {
+      // On error, fallback to periodic polling as a safety net.
+      if (active && !fallbackTimer) {
+        fallbackTimer = setInterval(fetchParticipants, 15000);
+      }
+    });
+
     return () => {
       active = false;
-      clearInterval(timer);
+      es.close();
+      if (fallbackTimer) {
+        clearInterval(fallbackTimer);
+      }
     };
-  }, [roomId, refreshKey]);
+  }, [roomId]);
 
   const removeParticipant = async (participantId: string) => {
     setRemovingId(participantId);

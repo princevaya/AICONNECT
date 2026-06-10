@@ -304,22 +304,71 @@ export default function ChatWindow({
   }, []);
 
   useEffect(() => {
+    // Load initial message history so the chat UI renders immediately.
+    if (!isOpen || !roomId || !meId) return;
+
+    let active = true;
+
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(`/api/chat/${encodeURIComponent(roomId)}/messages`, {
+          cache: "no-store",
+        });
+        const body = await parseApiBody(res);
+        if (!active) return;
+
+        if (!res.ok) {
+          const errorMsg = (body as { error?: string }).error || "Failed to load messages";
+          setError(errorMsg);
+          return;
+        }
+
+        const nextMessages = (body as { messages?: ChatMessage[] }).messages ?? [];
+        setMessages(nextMessages);
+      } catch (e) {
+        if (!active) return;
+        setError(e instanceof Error ? e.message : "Failed to load messages");
+      }
+    };
+
+    void loadHistory();
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen, roomId, meId]);
+
+  const publishDataRef = useRef(publishData);
+  const notifyMentionRef = useRef(notifyMention);
+  const meRef = useRef(me);
+  const meNameRef = useRef(meName);
+
+  useEffect(() => {
+    publishDataRef.current = publishData;
+    notifyMentionRef.current = notifyMention;
+    meRef.current = me;
+    meNameRef.current = meName;
+  });
+
+  useEffect(() => {
+    if (!isOpen || !roomId || !meId) return;
+
     const handleIncoming = (parsed: ChatWireMessage) => {
       try {
         if (parsed.type === "chat") {
           if (parsed.message.recipients && !parsed.message.recipients.includes(meId)) return;
           setMessages((prev) => (prev.some((entry) => entry.id === parsed.message.id) ? prev : [...prev, parsed.message]));
           if (parsed.message.senderId !== meId) {
-            void publishData({ type: "seen", messageId: parsed.message.id, user: me });
+            void publishDataRef.current({ type: "seen", messageId: parsed.message.id, user: meRef.current });
             const mentions = extractMentions(parsed.message.content);
-            const meTokens = [normalizeMentionToken(meId), normalizeMentionToken(meName.split(" ")[0] ?? "")].filter(Boolean);
+            const meTokens = [normalizeMentionToken(meId), normalizeMentionToken(meNameRef.current.split(" ")[0] ?? "")].filter(Boolean);
             if (!isOpen) {
               setUnreadCount((prev) => prev + 1);
             }
             const isMentioned = mentions.includes("all") || mentions.some((mention) => meTokens.includes(mention));
             if (isMentioned) {
               setMentionAlerts((prev) => [`${parsed.message.senderName} mentioned you: ${parsed.message.content || "(file/poll)"}`, ...prev].slice(0, 6));
-              notifyMention(parsed.message.senderName, parsed.message.content);
+              notifyMentionRef.current(parsed.message.senderName, parsed.message.content);
             }
           }
           return;
@@ -329,21 +378,23 @@ export default function ChatWindow({
           return;
         }
         if (parsed.type === "edit") {
-          const existing = messageMap.get(parsed.messageId);
-          if (existing && existing.content !== parsed.content) {
-            setEditHistoryByMessage((prev) => ({
-              ...prev,
-              [parsed.messageId]: [
-                {
-                  content: existing.content,
-                  editedAt: parsed.editedAt,
-                  editedByName: existing.senderName,
-                },
-                ...(prev[parsed.messageId] ?? []),
-              ],
-            }));
-          }
-          setMessages((prev) => prev.map((entry) => (entry.id === parsed.messageId ? { ...entry, content: parsed.content, editedAt: parsed.editedAt } : entry)));
+          setMessages((prev) => {
+            const existing = prev.find((entry) => entry.id === parsed.messageId);
+            if (existing && existing.content !== parsed.content) {
+              setEditHistoryByMessage((prevHistory) => ({
+                ...prevHistory,
+                [parsed.messageId]: [
+                  {
+                    content: existing.content,
+                    editedAt: parsed.editedAt,
+                    editedByName: existing.senderName,
+                  },
+                  ...(prevHistory[parsed.messageId] ?? []),
+                ],
+              }));
+            }
+            return prev.map((entry) => (entry.id === parsed.messageId ? { ...entry, content: parsed.content, editedAt: parsed.editedAt } : entry));
+          });
           return;
         }
         if (parsed.type === "seen") {
@@ -428,7 +479,7 @@ export default function ChatWindow({
       Object.values(typingExpiryRef.current).forEach(clearTimeout);
       typingExpiryRef.current = {};
     };
-  }, [isOpen, me, meId, meName, messageMap, notifyMention, publishData, roomId]);
+  }, [isOpen, roomId, meId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });

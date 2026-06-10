@@ -8,6 +8,7 @@ function JoinMeetingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const roomCode = searchParams.get("room") || "";
+  const direct = searchParams.get("direct") === "1";
 
   const handleJoin = (
     name: string,
@@ -20,9 +21,23 @@ function JoinMeetingContent() {
       name: name || "Guest",
       video: video ? "1" : "0",
       audio: audio ? "1" : "0",
+      direct: direct ? "1" : "0",
     });
     router.push(`/meeting/${roomName}?${params.toString()}`);
   };
+
+  if (direct && roomCode) {
+    // Personal (1:1) calls: skip the pre-join screen and go directly in.
+    // Defaults: Guest + mic/cam enabled (meeting page may still respect query params).
+    const params = new URLSearchParams({
+      name: "Guest",
+      video: "1",
+      audio: "1",
+      direct: "1",
+    });
+    router.replace(`/meeting/${roomCode}?${params.toString()}`);
+    return null;
+  }
 
   return (
     <PreJoinScreen

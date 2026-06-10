@@ -1,21 +1,19 @@
-// app/api/external-chat/statuses/[id]/view/route.ts
+// app/api/external-chat/calls/receiver/route.ts
+// Endpoint for receiver to check for active calls
+
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { ensureExternalChatUser } from "@/services/external-chat/user.service";
-import { markStatusViewed } from "@/services/external-chat/status.service";
+import { getActiveCallForUser } from "@/services/external-chat/call-signaling.service";
 
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(req: NextRequest) {
   const { userId } = await auth();
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const user = await ensureExternalChatUser(userId);
-  const { id } = await params;
-  await markStatusViewed(id, user);
+  const activeCall = await getActiveCallForUser(user.id);
   
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ activeCall });
 }
