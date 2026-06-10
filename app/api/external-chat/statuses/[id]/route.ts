@@ -1,10 +1,10 @@
-// app/api/external-chat/statuses/[id]/view/route.ts
+// app/api/external-chat/statuses/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { ensureExternalChatUser } from "@/services/external-chat/user.service";
-import { markStatusViewed } from "@/services/external-chat/status.service";
+import { deleteStatus } from "@/services/external-chat/status.service";
 
-export async function POST(
+export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -15,7 +15,7 @@ export async function POST(
 
   const user = await ensureExternalChatUser(userId);
   const { id } = await params;
-  await markStatusViewed(id, user);
+  await deleteStatus(id, user);
   
   return NextResponse.json({ success: true });
 }
