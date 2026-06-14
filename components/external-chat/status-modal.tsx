@@ -4,9 +4,21 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
 import StatusCreator from "./status-creator";
 import StatusViewer from "./status-viewer";
-import { api } from "@/services/external-chat/status.service";
+
+async function api<T>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
 
 /**
  * Modal that shows:
@@ -15,6 +27,7 @@ import { api } from "@/services/external-chat/status.service";
  *  • Clicking a profile opens StatusViewer for that status (reactions/comments)
  */
 export function StatusModal({ onClose }: { onClose: () => void }) {
+  const { user } = useUser();
   const [profiles, setProfiles] = useState<Array<{ user: any; status: any }>>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -23,8 +36,8 @@ export function StatusModal({ onClose }: { onClose: () => void }) {
   // Load all statuses (including self) on mount
   useEffect(() => {
     api<{ statuses: any[] }>("/api/external-chat/statuses")
-      .then((data) => {
-        const grouped = data.statuses.reduce((acc: any[], s) => {
+      .then((data: any) => {
+        const grouped = data.statuses.reduce((acc: any[], s: any) => {
           const existing = acc.find((p) => p.user.id === s.author.id);
           if (!existing) acc.push({ user: s.author, status: s });
           return acc;
@@ -55,15 +68,15 @@ export function StatusModal({ onClose }: { onClose: () => void }) {
           {creatorOpen && (
             <StatusCreator
               onClose={() => setCreatorOpen(false)}
-              onPost={async (text, file, visibility) => {
+              onPost={async (text, file: any, visibility) => {
                 await api("/api/external-chat/statuses", {
                   method: "POST",
                   body: JSON.stringify({ text, visibility, fileId: file?.id ?? null }),
                 });
                 setCreatorOpen(false);
                 // Reload statuses
-                api<{ statuses: any[] }>("/api/external-chat/statuses").then((d) => {
-                  const grp = d.statuses.reduce((acc: any[], s) => {
+                api<{ statuses: any[] }>("/api/external-chat/statuses").then((d: any) => {
+                  const grp = d.statuses.reduce((acc: any[], s: any) => {
                     const ex = acc.find((p) => p.user.id === s.author.id);
                     if (!ex) acc.push({ user: s.author, status: s });
                     return acc;
@@ -98,7 +111,7 @@ export function StatusModal({ onClose }: { onClose: () => void }) {
               onStatusViewed={() => {}}
               onReact={() => {}}
               onComment={() => {}}
-              currentUserId=""
+              currentUserId={user?.id || ""}
             />
           )}
         </div>

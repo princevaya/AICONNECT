@@ -31,9 +31,7 @@ export async function GET(req: NextRequest) {
       requestedBy: user,
     });
 
-    if (result.mode === "redirect") {
-      return NextResponse.redirect(result.signedUrl, 302);
-    }
+
 
     const exists = fs.existsSync(result.file.absolutePath);
     if (!exists) {

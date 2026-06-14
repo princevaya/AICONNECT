@@ -56,7 +56,7 @@ async function writeFileToStorage(file: File) {
   const safeName = sanitizeFilename(path.basename(file.name, extension));
   const storedName = `${Date.now()}-${randomUUID()}-${safeName}${extension}`;
   const data = Buffer.from(await file.arrayBuffer());
-  return writeStorageFile(storageRelativePath("meeting", "chats", storedName), data);
+  return writeStorageFile(storageRelativePath("chat", storedName), data);
 }
 
 function buildSafeObjectName(originalName: string) {

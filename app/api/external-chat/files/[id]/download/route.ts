@@ -19,9 +19,7 @@ export async function GET(
     const user = await ensureExternalChatUser(userId);
     const result = await buildAttachmentDownload({ attachmentId: id, requester: user });
 
-    if (result.mode === "redirect") {
-      return NextResponse.redirect(result.signedUrl);
-    }
+
 
     return new NextResponse(Readable.toWeb(result.stream) as BodyInit, {
       status: 200,

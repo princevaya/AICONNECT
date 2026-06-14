@@ -8,29 +8,14 @@ import {
   EgressStatus,
   S3Upload,
 } from "livekit-server-sdk";
-import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { setRecordingOwner } from "@/lib/recording-ownership";
+
 
 import {
   getEgressClient,
   isActiveEgressStatus,
   mapStatusToLegacyCode,
 } from "@/lib/livekit-server";
-
-const PRESIGNED_URL_EXPIRES_IN = 3600; // 1 hour
-
-function getS3Client(): S3Client | null {
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
-  if (!accessKeyId || !secretAccessKey) {
-    return null;
-  }
-  return new S3Client({
-    region,
-    credentials: { accessKeyId, secretAccessKey },
-  });
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,13 +40,6 @@ interface RecordingResponse {
 }
 
 type LiveKitFileInfo = EgressInfo["fileResults"][number];
-
-type AwsConfig = {
-  accessKeyId: string;
-  secretAccessKey: string;
-  region: string;
-  bucket: string;
-};
 
 export async function GET(req: NextRequest) {
   const { userId } = await auth();
@@ -135,6 +113,8 @@ export async function POST(req: NextRequest) {
       audioOnly: false,
       videoOnly: false,
     });
+
+    setRecordingOwner(info.egressId, userId);
 
     return NextResponse.json({
       egressId: info.egressId,
@@ -330,27 +310,6 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
     return null;
   }
 
-  const parsed =
-    parseS3Location(file.location) ?? parseHttpS3Location(file.location);
-
-  if (parsed?.bucket && parsed?.key) {
-    const key = normalizeS3Key(parsed.key) ?? parsed.key;
-    try {
-      const s3 = getS3Client();
-      if (s3) {
-        const command = new GetObjectCommand({
-          Bucket: parsed.bucket,
-          Key: key,
-        });
-        return await getSignedUrl(s3, command, {
-          expiresIn: PRESIGNED_URL_EXPIRES_IN,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to generate presigned URL for recording", error);
-    }
-  }
-
   // Fallback: return the raw HTTP URL if it's already public
   if (file.location?.startsWith("http")) {
     return file.location;
@@ -359,103 +318,12 @@ async function buildDownloadUrl(file?: LiveKitFileInfo) {
   return null;
 }
 
-function parseS3Location(location?: string | null) {
-  if (!location || !location.startsWith("s3://")) {
-    return null;
-  }
-
-  const withoutScheme = location.slice("s3://".length);
-  const slashIndex = withoutScheme.indexOf("/");
-  if (slashIndex === -1) {
-    return null;
-  }
-
-  return {
-    bucket: withoutScheme.slice(0, slashIndex),
-    key: withoutScheme.slice(slashIndex + 1),
-  };
-}
-
-function parseHttpS3Location(location?: string | null) {
-  if (!location || !location.startsWith("http")) {
-    return null;
-  }
-
-  try {
-    const url = new URL(location);
-    const hasSignature = url.searchParams.has("X-Amz-Signature");
-    if (hasSignature) {
-      return null;
-    }
-
-    const host = url.hostname;
-    const path = url.pathname.replace(/^\/+/, "");
-
-    if (!host.includes("amazonaws.com")) {
-      return null;
-    }
-
-    const virtualHostedMatch = host.match(
-      /^(.+?)\.s3[.-][^.]+\.amazonaws\.com/
-    );
-    if (virtualHostedMatch && path) {
-      return { bucket: virtualHostedMatch[1], key: path };
-    }
-
-    const classicVirtualMatch = host.match(/^(.+?)\.s3\.amazonaws\.com$/);
-    if (classicVirtualMatch && path) {
-      return { bucket: classicVirtualMatch[1], key: path };
-    }
-
-    const segments = path.split("/").filter(Boolean);
-    if (segments.length >= 2) {
-      return { bucket: segments[0], key: segments.slice(1).join("/") };
-    }
-  } catch (error) {
-    console.error("Failed to parse S3 http location", error);
-  }
-
-  return null;
-}
-
-function normalizeS3Key(key?: string | null) {
-  if (!key) {
-    return undefined;
-  }
-
-  return key.replace(/^\/+/, "");
-}
-
 function buildFileOutput(roomName: string): EncodedFileOutput {
-  const aws = getAwsConfig();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const filepath = `recordings/${roomName}/${timestamp}.mp4`;
 
   return new EncodedFileOutput({
     fileType: EncodedFileType.MP4,
     filepath,
-    output: {
-      case: "s3",
-      value: new S3Upload({
-        bucket: aws.bucket,
-        region: aws.region,
-        accessKey: aws.accessKeyId,
-        secret: aws.secretAccessKey,
-        forcePathStyle: process.env.AWS_S3_FORCE_PATH_STYLE === "true",
-      }),
-    },
   });
-}
-
-function getAwsConfig(): AwsConfig {
-  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-  const region = process.env.AWS_REGION;
-  const bucket = process.env.AWS_S3_BUCKET;
-
-  if (!accessKeyId || !secretAccessKey || !region || !bucket) {
-    throw new Error("AWS S3 is not configured for recordings");
-  }
-
-  return { accessKeyId, secretAccessKey, region, bucket };
 }

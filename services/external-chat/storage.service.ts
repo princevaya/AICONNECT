@@ -2,48 +2,19 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import {
-  AbortMultipartUploadCommand,
-  CompleteMultipartUploadCommand,
-  CreateMultipartUploadCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  UploadPartCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Readable } from "stream";
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
 import { AppUser } from "@/services/user.service";
 import { queueTranscriptionJob } from "@/services/external-chat/transcription.service";
+import {
+  writeStorageFile,
+  deleteStorageFile,
+  createStorageReadStream,
+  storageRelativePath,
+  getAbsolutePath,
+} from "@/lib/local-storage";
 
 const MAX_SIZE = Number(process.env.EXTERNAL_CHAT_MAX_UPLOAD_BYTES || 25 * 1024 * 1024);
-const LOCAL_ROOT = path.join(process.cwd(), "storage", "chat-system");
-const PREFIX = (process.env.EXTERNAL_CHAT_S3_PREFIX || "chat-system").replace(/^\/+|\/+$/g, "");
-const BUCKET = process.env.EXTERNAL_CHAT_S3_BUCKET || process.env.AWS_S3_BUCKET;
-const REGION = process.env.EXTERNAL_CHAT_AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
-const TTL = Number(process.env.EXTERNAL_CHAT_SIGNED_URL_TTL_SECONDS || 900);
-
-const s3Client =
-  process.env.EXTERNAL_CHAT_AWS_ACCESS_KEY_ID &&
-  process.env.EXTERNAL_CHAT_AWS_SECRET_ACCESS_KEY &&
-  BUCKET
-    ? new S3Client({
-        region: REGION,
-        credentials: {
-          accessKeyId: process.env.EXTERNAL_CHAT_AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.EXTERNAL_CHAT_AWS_SECRET_ACCESS_KEY,
-        },
-      })
-    : process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && BUCKET
-      ? new S3Client({
-          region: REGION,
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-          },
-        })
-      : null;
 
 const ALLOWED = new Set([
   "application/pdf",
@@ -102,35 +73,13 @@ function validateFile(file: File, buffer: Buffer) {
   }
 }
 
-function s3Key(input: { roomCode: string; uploader: string; originalName: string }) {
-  const ext = path.extname(input.originalName).toLowerCase();
-  const base = sanitize(path.basename(input.originalName, ext)) || "file";
-  return `${PREFIX}/${new Date().toISOString().slice(0, 10)}/${sanitize(input.roomCode)}/${sanitize(input.uploader)}/${Date.now()}-${randomUUID()}-${base}${ext}`;
-}
-
 async function uploadLocal(file: File, buffer: Buffer) {
-  await fs.mkdir(LOCAL_ROOT, { recursive: true });
   const ext = path.extname(file.name).toLowerCase();
   const base = sanitize(path.basename(file.name, ext)) || "file";
   const name = `${Date.now()}-${randomUUID()}-${base}${ext}`;
-  const absolute = path.join(LOCAL_ROOT, name);
-  await fs.writeFile(absolute, buffer);
-  return { provider: "local", key: path.posix.join("storage", "chat-system", name) } as const;
-}
-
-async function uploadS3(file: File, buffer: Buffer, roomCode: string, uploader: string) {
-  if (!s3Client || !BUCKET) throw new Error("S3 is not configured");
-  const key = s3Key({ roomCode, uploader, originalName: file.name });
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: buffer,
-      ContentType: file.type || "application/octet-stream",
-      ContentDisposition: `attachment; filename="${sanitize(file.name) || "file"}"`,
-    })
-  );
-  return { provider: "s3", key } as const;
+  const relativePath = storageRelativePath("chat", name);
+  await writeStorageFile(relativePath, buffer);
+  return { provider: "local", key: relativePath } as const;
 }
 
 export async function uploadAttachment(input: {
@@ -153,10 +102,7 @@ export async function uploadAttachment(input: {
   });
   if (!member) throw new Error("Not allowed");
 
-  const stored =
-    s3Client && BUCKET
-      ? await uploadS3(input.file, buffer, input.roomCode, input.uploader.clerkId)
-      : await uploadLocal(input.file, buffer);
+  const stored = await uploadLocal(input.file, buffer);
 
   const created = await prisma.externalChatAttachment.create({
     data: {
@@ -222,19 +168,9 @@ export async function buildAttachmentDownload(input: { attachmentId: string; req
     }
   }
 
-  if (file.storageProvider === "s3") {
-    if (!s3Client || !BUCKET) throw new Error("S3 unavailable");
-    const signedUrl = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({ Bucket: BUCKET, Key: file.storageKey }),
-      { expiresIn: TTL }
-    );
-    return { mode: "redirect" as const, signedUrl };
-  }
-
   return {
     mode: "stream" as const,
-    stream: createReadStream(path.join(process.cwd(), file.storageKey)),
+    stream: createStorageReadStream(file.storageKey),
     fileName: file.fileName,
     mimeType: file.mimeType,
   };
@@ -247,21 +183,13 @@ export async function cleanupAttachmentIfUnused(attachmentId: string) {
   });
   if (!file || file.messages.length > 0) return;
 
-  if (file.storageProvider === "s3") {
-    if (s3Client && BUCKET) {
-      await s3Client
-        .send(new DeleteObjectCommand({ Bucket: BUCKET, Key: file.storageKey }))
-        .catch(() => undefined);
-    }
-  } else {
-    await fs.unlink(path.join(process.cwd(), file.storageKey)).catch(() => undefined);
-  }
+  await deleteStorageFile(file.storageKey);
 
   await prisma.externalChatAttachment.delete({ where: { id: file.id } }).catch(() => undefined);
 }
 
 export function externalChatSupportsMultipartUploads() {
-  return Boolean(s3Client && BUCKET);
+  return false;
 }
 
 export async function createMultipartUploadSession(input: {
@@ -270,37 +198,14 @@ export async function createMultipartUploadSession(input: {
   fileName: string;
   mimeType: string;
   totalSizeBytes: number;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  const key = s3Key({
-    roomCode: input.roomCode,
-    uploader: input.uploader.clerkId,
-    originalName: input.fileName,
-  });
-
-  const response = await s3Client.send(
-    new CreateMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ContentType: input.mimeType || "application/octet-stream",
-      ContentDisposition: `attachment; filename="${sanitize(input.fileName) || "file"}"`,
-    })
-  );
-
-  if (!response.UploadId) {
-    throw new Error("Unable to create upload session");
-  }
-
-  return {
-    storageProvider: "s3",
-    storageKey: key,
-    multipartUploadId: response.UploadId,
-    bucket: BUCKET,
-    region: REGION,
-  };
+}): Promise<{
+  storageProvider: string;
+  storageKey: string;
+  multipartUploadId: string;
+  bucket: string;
+  region: string;
+}> {
+  throw new Error("Multipart uploads are not supported.");
 }
 
 export async function createMultipartUploadPartUrl(input: {
@@ -308,61 +213,24 @@ export async function createMultipartUploadPartUrl(input: {
   partNumber: number;
   uploadId: string;
   mimeType: string;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  const url = await getSignedUrl(
-    s3Client,
-    new UploadPartCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-      PartNumber: input.partNumber,
-    }),
-    { expiresIn: TTL }
-  );
-
-  return { uploadUrl: url };
+}): Promise<{
+  uploadUrl: string;
+}> {
+  throw new Error("Multipart uploads are not supported.");
 }
 
 export async function completeMultipartUploadSession(input: {
   storageKey: string;
   uploadId: string;
   parts: Array<{ partNumber: number; etag: string }>;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  await s3Client.send(
-    new CompleteMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-      MultipartUpload: {
-        Parts: input.parts
-          .sort((left, right) => left.partNumber - right.partNumber)
-          .map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })),
-      },
-    })
-  );
+}): Promise<void> {
+  throw new Error("Multipart uploads are not supported.");
 }
 
-export async function abortMultipartUploadSession(input: { storageKey: string; uploadId: string }) {
-  if (!s3Client || !BUCKET) return;
-
-  await s3Client.send(
-    new AbortMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-    })
-  ).catch(() => undefined);
+export async function abortMultipartUploadSession(input: { storageKey: string; uploadId: string }): Promise<void> {
+  // no-op
 }
 
-// NEW: Get upload progress for a session
 export async function getUploadProgress(sessionId: string, actor: AppUser) {
   const session = await prisma.externalChatUploadSession.findUnique({
     where: { id: sessionId },

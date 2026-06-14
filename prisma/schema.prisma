@@ -138,7 +138,7 @@ model Recording {
   id        String   @id @default(cuid())
   meetingId String   @map("meeting_id")
   title     String
-  s3Url     String   @map("s3_url")
+  filePath  String   @map("file_path")
   duration  Int?
   createdAt DateTime @default(now()) @map("created_at")
   meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)

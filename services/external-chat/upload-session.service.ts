@@ -7,7 +7,6 @@ import {
   createMultipartUploadPartUrl,
   createMultipartUploadSession,  // Fixed typo: was 'createMultultipartUploadSession'
   externalChatSupportsMultipartUploads,
-  getUploadProgress as getStorageUploadProgress,  // Import from storage.service
 } from "@/services/external-chat/storage.service";
 import { assertExternalChatRoomAccess } from "@/services/external-chat/chat.service";
 import { queueTranscriptionJob } from "@/services/external-chat/transcription.service";
