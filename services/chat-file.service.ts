@@ -1,9 +1,8 @@
 import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import fs from "fs/promises";
 import path from "path";
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
+import { createStorageReadStream, deleteStorageFile, storageRelativePath, writeStorageFile } from "@/lib/local-storage";
 import { AppUser } from "@/services/user.service";
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024 * 1024; // 5 TB
@@ -11,8 +10,6 @@ const STORAGE_ROOT = path.join(process.cwd(), "storage", "meeting", "chats");
 const DOWNLOAD_TTL_SECONDS = 15 * 60;
 const FILE_URL_SECRET =
   process.env.FILE_URL_SECRET || process.env.CLERK_SECRET_KEY || "dev-file-secret";
-const AWS_REGION = process.env.AWS_DEFAULT_REGION || "us-east-1";
-const AWS_S3_BUCKET = process.env.AWS_S3_BUCKET;
 
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
@@ -34,29 +31,12 @@ const ALLOWED_MIME_TYPES = new Set([
   "audio/wav",
 ]);
 
-const s3Client =
-  process.env.AWS_ACCESS_KEY_ID &&
-  process.env.AWS_SECRET_ACCESS_KEY &&
-  AWS_S3_BUCKET
-    ? new S3Client({
-        region: AWS_REGION,
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        },
-      })
-    : null;
-
 function isAdmin(user: AppUser) {
   return user.role.toLowerCase() === "admin";
 }
 
 function sanitizeFilename(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-}
-
-function canUseS3Storage() {
-  return Boolean(s3Client && AWS_S3_BUCKET);
 }
 
 function encodeBase64Url(value: string) {
@@ -72,15 +52,11 @@ function buildSignature(payload: string) {
 }
 
 async function writeFileToStorage(file: File) {
-  await fs.mkdir(STORAGE_ROOT, { recursive: true });
   const extension = path.extname(file.name);
   const safeName = sanitizeFilename(path.basename(file.name, extension));
   const storedName = `${Date.now()}-${randomUUID()}-${safeName}${extension}`;
-  const absolutePath = path.join(STORAGE_ROOT, storedName);
-  const relativePath = path.posix.join("storage", "meeting", "chats", storedName);
   const data = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absolutePath, data);
-  return { relativePath, absolutePath };
+  return writeStorageFile(storageRelativePath("meeting", "chats", storedName), data);
 }
 
 function buildSafeObjectName(originalName: string) {
@@ -88,30 +64,6 @@ function buildSafeObjectName(originalName: string) {
   const base = path.basename(originalName, path.extname(originalName));
   const safeBase = sanitizeFilename(base) || "file";
   return `${safeBase}${extension}`;
-}
-
-async function writeFileToS3(file: File, context?: { roomCode?: string; uploaderId?: string }) {
-  if (!s3Client || !AWS_S3_BUCKET) {
-    throw new Error("S3 is not configured.");
-  }
-
-  const safeObjectName = buildSafeObjectName(file.name);
-  const roomSegment = context?.roomCode ? sanitizeFilename(context.roomCode) : "general";
-  const uploaderSegment = context?.uploaderId ? sanitizeFilename(context.uploaderId) : "anonymous";
-  const key = `meeting/chats/${new Date().toISOString().slice(0, 10)}/${roomSegment}/${uploaderSegment}/${Date.now()}-${randomUUID()}-${safeObjectName}`;
-  const body = Buffer.from(await file.arrayBuffer());
-
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: AWS_S3_BUCKET,
-      Key: key,
-      Body: body,
-      ContentType: file.type || "application/octet-stream",
-      ContentDisposition: `attachment; filename="${safeObjectName}"`,
-    })
-  );
-
-  return key;
 }
 
 export function createSignedDownloadUrl(fileId: string, userId: string) {
@@ -162,10 +114,7 @@ export async function uploadChatFile(input: {
   const { file, uploadedBy, roomId } = input;
   validateFile(file);
 
-  const useS3 = canUseS3Storage();
-  const originalUrl = useS3
-    ? await writeFileToS3(file, { roomCode: roomId, uploaderId: uploadedBy.clerkId })
-    : (await writeFileToStorage(file)).relativePath;
+  const originalUrl = (await writeFileToStorage(file)).relativePath;
   const created = await prisma.file.create({
     data: {
       name: file.name,
@@ -174,7 +123,7 @@ export async function uploadChatFile(input: {
       fileType: file.type,
       uploadedBy: uploadedBy.id,
       roomId,
-      storageProvider: useS3 ? "s3" : "local",
+      storageProvider: "local",
     },
     include: {
       uploader: {
@@ -195,42 +144,13 @@ export async function uploadChatFile(input: {
   };
 }
 
-async function getS3SignedGetUrl(key: string, expiresIn = DOWNLOAD_TTL_SECONDS) {
-  if (!s3Client || !AWS_S3_BUCKET) {
-    throw new Error("S3 is not configured.");
-  }
-
-  return getSignedUrl(
-    s3Client,
-    new GetObjectCommand({
-      Bucket: AWS_S3_BUCKET,
-      Key: key,
-    }),
-    { expiresIn }
-  );
-}
-
 export async function uploadChatFileS3Fallback(input: {
   file: File;
   roomCode: string;
   uploaderClerkId: string;
 }) {
-  const { file, roomCode, uploaderClerkId } = input;
-  validateFile(file);
-  if (!canUseS3Storage()) {
-    throw new Error("S3 fallback upload is unavailable. Configure AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_S3_BUCKET.");
-  }
-
-  const key = await writeFileToS3(file, { roomCode, uploaderId: uploaderClerkId });
-  const downloadUrl = await getS3SignedGetUrl(key, 60 * 60 * 24); // 24 hours for fallback mode
-
-  return {
-    id: `s3_${randomUUID()}`,
-    name: file.name,
-    fileType: file.type || "application/octet-stream",
-    fileSize: file.size,
-    downloadUrl,
-  };
+  void input;
+  throw new Error("Direct S3 upload has been removed. Use uploadChatFile instead.");
 }
 
 export async function buildDownloadResponse(input: { fileId: string; requestedBy: AppUser }) {
@@ -257,13 +177,6 @@ export async function buildDownloadResponse(input: { fileId: string; requestedBy
 
   if (!canAccess) throw new Error("You are not allowed to download this file");
 
-  if (file.storageProvider === "s3") {
-    return {
-      mode: "redirect" as const,
-      signedUrl: await getS3SignedGetUrl(file.originalUrl),
-    };
-  }
-
   return {
     mode: "stream" as const,
     file: {
@@ -277,18 +190,6 @@ export async function buildDownloadResponse(input: { fileId: string; requestedBy
 }
 
 export async function removeStoredFile(input: { storageProvider: string; originalUrl: string }) {
-  if (input.storageProvider === "s3") {
-    if (!s3Client || !AWS_S3_BUCKET) return;
-    await s3Client
-      .send(
-        new DeleteObjectCommand({
-          Bucket: AWS_S3_BUCKET,
-          Key: input.originalUrl,
-        })
-      )
-      .catch(() => undefined);
-    return;
-  }
-
-  await fs.unlink(path.join(process.cwd(), input.originalUrl)).catch(() => undefined);
+  void input.storageProvider;
+  await deleteStorageFile(input.originalUrl);
 }

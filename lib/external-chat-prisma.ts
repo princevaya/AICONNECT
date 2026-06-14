@@ -4,14 +4,10 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
-const rawConnectionString =
-  process.env.CHAT_DIRECT_URL ||
-  process.env.CHAT_DATABASE_URL ||
-  process.env.DIRECT_URL ||
-  process.env.DATABASE_URL;
+const rawConnectionString = process.env.DATABASE_URL || "";
 
 if (!rawConnectionString) {
-  console.error("[External Chat] No database URL found. Please set CHAT_DATABASE_URL, CHAT_DIRECT_URL, DIRECT_URL, or DATABASE_URL");
+  console.error("[External Chat] No database URL found. Please set DATABASE_URL.");
 }
 
 export function normalizeExternalChatConnectionString(input: string | undefined) {
@@ -19,15 +15,6 @@ export function normalizeExternalChatConnectionString(input: string | undefined)
   
   let value = input.trim();
 
-  if (value.startsWith("CHAT_DATABASE_URL=")) {
-    value = value.slice("CHAT_DATABASE_URL=".length);
-  }
-  if (value.startsWith("CHAT_DIRECT_URL=")) {
-    value = value.slice("CHAT_DIRECT_URL=".length);
-  }
-  if (value.startsWith("DIRECT_URL=")) {
-    value = value.slice("DIRECT_URL=".length);
-  }
   if (value.startsWith("DATABASE_URL=")) {
     value = value.slice("DATABASE_URL=".length);
   }
@@ -41,23 +28,6 @@ export function normalizeExternalChatConnectionString(input: string | undefined)
 
   try {
     const url = new URL(value);
-    const isSupabasePooler = /pooler\.supabase\.com$/i.test(url.hostname);
-    
-    if (isSupabasePooler && !url.username.includes(".")) {
-      let projectRef = "";
-      const primaryDbUrl = process.env.DATABASE_URL || "";
-      const primaryMatch = primaryDbUrl.match(/postgresql:\/\/([^.]+)\.([^:]+):/);
-      if (primaryMatch && primaryMatch[1] && primaryMatch[2]) {
-        projectRef = primaryMatch[2];
-      }
-      if (!projectRef && url.username.includes("postgres.")) {
-        projectRef = url.username.split(".")[1];
-      }
-      if (projectRef) {
-        url.username = `postgres.${projectRef}`;
-      }
-    }
-
     url.searchParams.delete("sslmode");
     url.searchParams.delete("sslcert");
     url.searchParams.delete("sslkey");
@@ -110,9 +80,7 @@ export function resolveExternalChatSslConfig(forceSslEnabled: boolean) {
 
 export const normalizedExternalChatConnectionString = rawConnectionString ? normalizeExternalChatConnectionString(rawConnectionString) : "";
 
-const isSupabaseConnection = rawConnectionString ? /supabase\.(co|com)/i.test(rawConnectionString) : false;
 const forceSsl =
-  isSupabaseConnection ||
   process.env.NODE_ENV === "production" ||
   (rawConnectionString && /sslmode=/i.test(rawConnectionString)) ||
   process.env.PGSSLMODE === "require";

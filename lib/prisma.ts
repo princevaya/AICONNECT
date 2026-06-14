@@ -26,18 +26,14 @@ function normalizeConnectionString(input: string) {
   }
 }
 
-const primaryConnectionString = process.env.DATABASE_URL || "";
-const fallbackConnectionString = process.env.CHAT_DATABASE_URL || "";
-const rawConnectionString = primaryConnectionString || fallbackConnectionString;
+const rawConnectionString = process.env.DATABASE_URL || "";
 
 if (!rawConnectionString) {
-  throw new Error("DATABASE_URL or CHAT_DATABASE_URL must be set.");
+  throw new Error("DATABASE_URL must be set.");
 }
 
 const connectionString = normalizeConnectionString(rawConnectionString);
-const isSupabaseConnection = /supabase\.(co|com)/i.test(rawConnectionString);
 const forceSsl =
-  isSupabaseConnection ||
   process.env.NODE_ENV === "production" ||
   /sslmode=require/i.test(rawConnectionString) ||
   process.env.PGSSLMODE === "require";

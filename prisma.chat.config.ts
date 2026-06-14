@@ -5,8 +5,6 @@ loadEnv();
 loadEnv({ path: ".env.local", override: true });
 
 const chatDatabaseUrl =
-  process.env.CHAT_DIRECT_URL ??
-  process.env.CHAT_DATABASE_URL ??
   process.env.DATABASE_URL ??
   "postgresql://postgres:postgres@localhost:5432/postgres";
 

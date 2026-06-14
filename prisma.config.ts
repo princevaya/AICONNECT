@@ -5,7 +5,6 @@ loadEnv();
 loadEnv({ path: ".env.local", override: true });
 
 const databaseUrl =
-  process.env.DIRECT_URL ??
   process.env.DATABASE_URL ??
   "postgresql://postgres:postgres@localhost:5432/postgres";
 
