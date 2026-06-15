@@ -89,7 +89,7 @@ pipeline {
 
     post {
         always {
-            node {
+            node('') {
                 echo 'Cleaning up build-time images...'
                 sh "docker rmi ${IMAGE_NAME}-builder:${BUILD_NUMBER} || true"
             }
@@ -98,13 +98,13 @@ pipeline {
             echo 'Deployment completed successfully!'
         }
         failure {
-            node {
+            node('') {
                 echo 'Deployment failed. Fetching container logs for debugging...'
                 sh "docker logs ${CONTAINER_NAME} || true"
             }
         }
         cleanup {
-            node {
+            node('') {
                 echo 'Cleaning up unused Docker images/layers to reclaim disk space...'
                 sh "docker image prune -f || true"
             }
