@@ -11,14 +11,10 @@ pipeline {
         // Host port to expose the application (maps to container port 3000)
         HOST_PORT = '3000'
         
-        // Jenkins Credentials Bindings.
-        // It is highly recommended to configure these in the Jenkins UI
-        // under Credentials -> System -> Global Credentials.
-        DATABASE_URL = credentials('aiconnect-database-url')
-        CLERK_SECRET_KEY = credentials('aiconnect-clerk-secret-key')
-        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = credentials('aiconnect-clerk-publishable-key')
-        
-        // Add other runtime env variables here if required (e.g. AWS credentials)
+        // Path to the production .env file on your server.
+        // You can use an absolute path like '/etc/aiconnect/.env' or a relative path '.env'
+        // if you place the .env file directly in the Jenkins project workspace directory.
+        ENV_FILE_PATH = '.env'
     }
 
     stages {
@@ -33,16 +29,15 @@ pipeline {
             steps {
                 echo 'Building temporary builder stage to execute database migrations...'
                 // Build only up to the "builder" stage to get access to prisma/migrations and node_modules
-                sh "docker build --target builder -t ${IMAGE_NAME}-builder:${BUILD_NUMBER} ."
+                sh "docker build --target builder -t ${env.IMAGE_NAME}-builder:${env.BUILD_NUMBER} ."
             }
         }
 
         stage('Run Database Migrations') {
             steps {
                 echo 'Running database migrations via Prisma...'
-                // Run migrations against the database using the temporary builder image.
-                // This keeps build utilities and dependencies outside the production runtime image.
-                sh "docker run --rm --env DATABASE_URL='${DATABASE_URL}' --env DIRECT_URL='${DATABASE_URL}' ${IMAGE_NAME}-builder:${BUILD_NUMBER} npx prisma migrate deploy"
+                // Run migrations against the database using the temporary builder image and loading .env variables
+                sh "docker run --rm --env-file ${env.ENV_FILE_PATH} ${env.IMAGE_NAME}-builder:${env.BUILD_NUMBER} npx prisma migrate deploy"
             }
         }
 
@@ -50,28 +45,25 @@ pipeline {
             steps {
                 echo 'Building production image...'
                 // Build the full multi-stage Dockerfile (defaults to the runner stage)
-                sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} -t ${IMAGE_NAME}:latest ."
+                sh "docker build -t ${env.IMAGE_NAME}:${env.BUILD_NUMBER} -t ${env.IMAGE_NAME}:latest ."
             }
         }
 
         stage('Deploy Container') {
             steps {
                 echo "Stopping and removing existing container if running..."
-                sh "docker stop ${CONTAINER_NAME} || true"
-                sh "docker rm ${CONTAINER_NAME} || true"
+                sh "docker stop ${env.CONTAINER_NAME} || true"
+                sh "docker rm ${env.CONTAINER_NAME} || true"
 
-                echo "Starting new container on port ${HOST_PORT}..."
-                // Start the new container with production environment variables
+                echo "Starting new container on port ${env.HOST_PORT}..."
+                // Start the new container loading the .env file directly
                 sh """
                     docker run -d \
-                      --name ${CONTAINER_NAME} \
-                      -p ${HOST_PORT}:3000 \
+                      --name ${env.CONTAINER_NAME} \
+                      -p ${env.HOST_PORT}:3000 \
                       --restart always \
-                      -e DATABASE_URL='${DATABASE_URL}' \
-                      -e CLERK_SECRET_KEY='${CLERK_SECRET_KEY}' \
-                      -e NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY='${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}' \
-                      -e NODE_ENV=production \
-                      ${IMAGE_NAME}:latest
+                      --env-file ${env.ENV_FILE_PATH} \
+                      ${env.IMAGE_NAME}:latest
                 """
             }
         }
@@ -91,7 +83,7 @@ pipeline {
         always {
             node('') {
                 echo 'Cleaning up build-time images...'
-                sh "docker rmi ${IMAGE_NAME}-builder:${BUILD_NUMBER} || true"
+                sh "docker rmi ${env.IMAGE_NAME ?: 'aiconnect'}-builder:${env.BUILD_NUMBER} || true"
             }
         }
         success {
@@ -100,7 +92,7 @@ pipeline {
         failure {
             node('') {
                 echo 'Deployment failed. Fetching container logs for debugging...'
-                sh "docker logs ${CONTAINER_NAME} || true"
+                sh "docker logs ${env.CONTAINER_NAME ?: 'aiconnect-app'} || true"
             }
         }
         cleanup {
