@@ -27,6 +27,8 @@ export async function POST(req: NextRequest) {
         result.stdout ||
         result.stderr ||
         result.compile_output ||
+        result.message ||
+        result.status?.description ||
         "No output",
     });
 

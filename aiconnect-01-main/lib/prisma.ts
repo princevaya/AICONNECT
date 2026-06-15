@@ -64,6 +64,7 @@ const pool =
   new Pool({
     connectionString,
     max: 10,
+    connectionTimeoutMillis: 5000,
     ssl: forceSsl ? { rejectUnauthorized: false } : undefined,
   });
 

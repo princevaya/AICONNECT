@@ -18,35 +18,42 @@ interface DashboardSidebarProps {
   onViewChange: (view: DashboardView) => void;
 }
 
-const menuItems = [
+/* ✅ TYPE SAFE MENU */
+const menuItems: {
+  id: DashboardView;
+  label: string;
+  icon: any;
+  href?: string;
+}[] = [
   {
-    id: "overview" as DashboardView,
+    id: "overview",
     label: "Overview",
     icon: LayoutDashboard,
   },
   {
-    id: "recording" as DashboardView,
+    id: "recording",
     label: "Recordings",
     icon: Video,
   },
   {
-    id: "schedule" as DashboardView,
+    id: "schedule",
     label: "Schedule",
     icon: CalendarDays,
   },
   {
-    id: "interview" as DashboardView,
+    id: "interview", // ✅ FIXED (works only if type updated)
     label: "AI Interview",
     icon: Sparkles,
+    href: "/dashboard/interview",
   },
   {
-    id: "ai-image" as DashboardView,
+    id: "ai-image",
     label: "3D Image Generator",
     icon: ImageIcon,
     href: "/dashboard/3d-image-generator",
   },
   {
-    id: "external-chat" as DashboardView,
+    id: "external-chat",
     label: "External Chat",
     icon: MessageSquareText,
     href: "/dashboard/external-chat",
@@ -66,7 +73,11 @@ export default function DashboardSidebar({
         <ul className="space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = item.href ? pathname === item.href : activeView === item.id;
+
+            /* ✅ BETTER ACTIVE LOGIC */
+            const isActive = item.href
+              ? pathname.startsWith(item.href)
+              : activeView === item.id;
 
             return (
               <li key={item.id}>

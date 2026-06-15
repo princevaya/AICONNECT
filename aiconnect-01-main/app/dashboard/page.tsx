@@ -6,13 +6,6 @@ import OverviewView from "@/components/dashboard/views/overview-view";
 import RecordingView from "@/components/dashboard/views/recording-view";
 import ScheduleView from "@/components/dashboard/views/schedule-view";
 
-/* 🔹 NEW IMPORTS (ADDED ONLY) */
-
-import InterviewPreviewView from "@/components/dashboard/views/interview-preview-view";
-
-
-
-/* 🔹 EXTENDED TYPE (NO BREAKING CHANGE) */
 export type DashboardView =
   | "overview"
   | "recording"
@@ -34,12 +27,6 @@ export default function DashboardPage() {
 
       case "schedule":
         return <ScheduleView />;
-
-      /* 🔹 NEW CASES (ADDED) */
-      case "interview": // ✅ ADD THIS
-      return <InterviewPreviewView />;
-
-     
 
       default:
         return <OverviewView setActiveView={setActiveView} />;
