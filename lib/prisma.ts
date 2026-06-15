@@ -33,8 +33,9 @@ if (!rawConnectionString) {
 }
 
 const connectionString = normalizeConnectionString(rawConnectionString);
+const isLocalhost = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
 const forceSsl =
-  process.env.NODE_ENV === "production" ||
+  (process.env.NODE_ENV === "production" && !isLocalhost) ||
   /sslmode=require/i.test(rawConnectionString) ||
   process.env.PGSSLMODE === "require";
 

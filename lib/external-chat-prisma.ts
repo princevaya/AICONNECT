@@ -80,8 +80,10 @@ export function resolveExternalChatSslConfig(forceSslEnabled: boolean) {
 
 export const normalizedExternalChatConnectionString = rawConnectionString ? normalizeExternalChatConnectionString(rawConnectionString) : "";
 
+const isLocalhost = normalizedExternalChatConnectionString.includes("localhost") || normalizedExternalChatConnectionString.includes("127.0.0.1");
+
 const forceSsl =
-  process.env.NODE_ENV === "production" ||
+  (process.env.NODE_ENV === "production" && !isLocalhost) ||
   (rawConnectionString && /sslmode=/i.test(rawConnectionString)) ||
   process.env.PGSSLMODE === "require";
 

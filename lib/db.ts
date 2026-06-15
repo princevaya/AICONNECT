@@ -8,12 +8,14 @@ if (!connectionString) {
   );
 }
 
+const isLocalhost = connectionString?.includes("localhost") || connectionString?.includes("127.0.0.1");
+
 const createPool = () =>
   new Pool({
     connectionString,
     max: 10,
     ssl:
-      process.env.NODE_ENV === "production"
+      process.env.NODE_ENV === "production" && !isLocalhost
         ? { rejectUnauthorized: false }
         : undefined,
   });
