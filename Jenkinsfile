@@ -89,19 +89,25 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning up build-time images...'
-            sh "docker rmi ${IMAGE_NAME}-builder:${BUILD_NUMBER} || true"
+            node {
+                echo 'Cleaning up build-time images...'
+                sh "docker rmi ${IMAGE_NAME}-builder:${BUILD_NUMBER} || true"
+            }
         }
         success {
             echo 'Deployment completed successfully!'
         }
         failure {
-            echo 'Deployment failed. Fetching container logs for debugging...'
-            sh "docker logs ${CONTAINER_NAME} || true"
+            node {
+                echo 'Deployment failed. Fetching container logs for debugging...'
+                sh "docker logs ${CONTAINER_NAME} || true"
+            }
         }
         cleanup {
-            echo 'Cleaning up unused Docker images/layers to reclaim disk space...'
-            sh "docker image prune -f || true"
+            node {
+                echo 'Cleaning up unused Docker images/layers to reclaim disk space...'
+                sh "docker image prune -f || true"
+            }
         }
     }
 }
