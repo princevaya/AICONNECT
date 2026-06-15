@@ -35,6 +35,7 @@ yarn-error.log*
 Dockerfile
 .dockerignore
 Jenkinsfile
+pnpm-workspace.yaml
 
 # Documentation/Artifacts
 README.md

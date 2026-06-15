@@ -27,7 +27,7 @@ COPY --from=deps /app/prisma ./prisma
 COPY . .
 
 # Disable Next.js telemetry during build
-ENV NEXT_TELEMETRY_DISABLED 1
+ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build the Next.js standalone package
 RUN pnpm run build
