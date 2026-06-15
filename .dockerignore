@@ -1,0 +1,42 @@
+# Dependencies
+node_modules
+.pnp
+.pnp.*
+
+# Testing/coverage
+coverage
+
+# Next.js build output
+.next
+out
+build
+
+# Debug/logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Git and Editor folders
+.git
+.gitignore
+.vscode
+.idea
+
+# Environment and Secrets
+.env
+.env.local
+.env.production
+.env*.local
+*.pem
+.clerk
+
+# Docker & CI files
+Dockerfile
+.dockerignore
+Jenkinsfile
+
+# Documentation/Artifacts
+README.md
+SUPABASE_README.md
+temp

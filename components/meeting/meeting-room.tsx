@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import VSCodeEditor from "./vscode-editor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -2309,24 +2309,11 @@ export default function MeetingRoom({
     setRecordingMessage("");
     try {
       await startUiRootCapture();
-      const response = await fetch("/api/livekit/recordings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomName }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        egressId?: string;
-        message?: string;
-        error?: string;
-      };
-      if (!response.ok || !payload.egressId) {
-        throw new Error(payload.error || "Failed to start recording.");
-      }
-      setRecordingEgressId(payload.egressId);
+      // Bypass LiveKit cloud Egress recording to save files in-house
+      setRecordingEgressId("inhouse-session");
       setRecordingState("recording");
       void setLocalRecordingAttribute(true);
       setRecordingMessage(
-        payload.message ||
         "Recording started. Ensure you shared the current meeting tab for full layout capture."
       );
       showToast("Recording started successfully", "success");
@@ -2350,19 +2337,16 @@ export default function MeetingRoom({
     setRecordingState("stopping");
     setRecordingMessage("");
     try {
-      const response = await fetch("/api/livekit/recordings/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ egressId: recordingEgressId }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        egressId?: string;
-        status?: string;
-        statusCode?: number;
-        error?: string;
-      };
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to stop recording.");
+      if (recordingEgressId !== "inhouse-session") {
+        const response = await fetch("/api/livekit/recordings/stop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ egressId: recordingEgressId }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(payload.error || "Failed to stop recording.");
+        }
       }
 
       let uiUrl = "";
@@ -2381,24 +2365,27 @@ export default function MeetingRoom({
         }
       }
 
-      const listRes = await fetch(
-        `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
-        { cache: "no-store" }
-      );
-      const recordings = (await listRes.json().catch(() => [])) as Array<{
-        egressId: string;
-        roomName: string;
-        status: string;
-        startedAt?: number;
-        endedAt?: number;
-        durationSeconds?: number;
-        filename?: string;
-        sizeBytes?: number;
-        downloadUrl?: string | null;
-        streamUrl?: string | null;
-        storageLocation?: string;
-      }>;
-      const latest = recordings.find((entry) => entry.egressId === recordingEgressId);
+      let latest: any = null;
+      if (recordingEgressId !== "inhouse-session") {
+        const listRes = await fetch(
+          `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
+          { cache: "no-store" }
+        );
+        const recordings = (await listRes.json().catch(() => [])) as Array<{
+          egressId: string;
+          roomName: string;
+          status: string;
+          startedAt?: number;
+          endedAt?: number;
+          durationSeconds?: number;
+          filename?: string;
+          sizeBytes?: number;
+          downloadUrl?: string | null;
+          streamUrl?: string | null;
+          storageLocation?: string;
+        }>;
+        latest = recordings.find((entry) => entry.egressId === recordingEgressId);
+      }
 
       if (uiUrl) {
         window.open(uiUrl, "_blank", "noopener,noreferrer");
@@ -2410,7 +2397,7 @@ export default function MeetingRoom({
         {
           room: roomName,
           exportedAt: new Date().toISOString(),
-          recording: latest || payload,
+          recording: latest || { egressId: recordingEgressId, status: "EGRESS_COMPLETE" },
           uiRecordingUrl: uiUrl || uiUploadUrlRef.current || null,
         },
         null,
@@ -2428,14 +2415,14 @@ export default function MeetingRoom({
       setRecordingEgressId("");
       void setLocalRecordingAttribute(false);
       if (uiCaptureAttempted && uiUrl) {
-        setRecordingMessage("UI recording saved (local + S3 upload complete).");
+        setRecordingMessage("UI recording saved (local + in-house upload complete).");
         showToast("Recording saved successfully", "success");
       } else if (uiCaptureAttempted) {
         setRecordingMessage(uiLocalSavedRef.current
-          ? "UI recording saved locally, but S3 upload failed. Check exact error above."
+          ? "UI recording saved locally, but in-house upload failed. Check exact error above."
           : "UI recording stop completed, but local file save failed.");
       } else {
-        setRecordingMessage("Recording stopped and metadata saved to S3.");
+        setRecordingMessage("Recording stopped and metadata saved.");
         showToast("Recording stopped", "success");
       }
     } catch (error) {

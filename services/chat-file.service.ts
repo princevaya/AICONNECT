@@ -159,7 +159,7 @@ export async function buildDownloadResponse(input: { fileId: string; requestedBy
     include: {
       room: {
         select: {
-          participants: {
+          members: {
             where: { userId: input.requestedBy.id, leftAt: null, removedAt: null },
             select: { id: true },
           },
@@ -172,7 +172,7 @@ export async function buildDownloadResponse(input: { fileId: string; requestedBy
 
   const canAccess =
     file.uploadedBy === input.requestedBy.id ||
-    (file.room?.participants.length ?? 0) > 0 ||
+    (file.room?.members.length ?? 0) > 0 ||
     isAdmin(input.requestedBy);
 
   if (!canAccess) throw new Error("You are not allowed to download this file");

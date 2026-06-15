@@ -66,12 +66,159 @@ const pool =
 
 const adapter = new PrismaPg(pool);
 
-export const prisma =
+function makeCompatibilityModel(client: any, unifiedModelName: string, legacyModelName: string) {
+  const unifiedModel = client[unifiedModelName];
+  if (!unifiedModel) return undefined;
+
+  function translateWhere(where: any) {
+    if (!where) return where;
+    const newWhere = { ...where };
+    if (newWhere.roomId_userId && legacyModelName === 'participant') {
+      const compound = newWhere.roomId_userId;
+      newWhere.roomId = compound.roomId;
+      newWhere.userId = compound.userId;
+      delete newWhere.roomId_userId;
+    }
+    return newWhere;
+  }
+
+  function translateInclude(include: any) {
+    if (!include) return include;
+    const newInclude = { ...include };
+    if (newInclude.participants && legacyModelName === 'chatRoom') {
+      newInclude.members = newInclude.participants;
+      delete newInclude.participants;
+    }
+    return newInclude;
+  }
+
+  function translateResult(result: any): any {
+    if (!result) return result;
+    if (Array.isArray(result)) return result.map(translateResult);
+    
+    const newResult = { ...result };
+    if (legacyModelName === 'chatRoom') {
+      if (newResult.name !== undefined) {
+        newResult.title = newResult.name;
+      }
+      if (newResult.members !== undefined) {
+        newResult.participants = newResult.members.map((m: any) => ({
+          ...m,
+          role: m.role
+        }));
+        delete newResult.members;
+      }
+    }
+    return newResult;
+  }
+
+  return {
+    findUnique(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      newArgs.include = translateInclude(args.include);
+      return unifiedModel.findUnique(newArgs).then(translateResult);
+    },
+    findFirst(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      newArgs.include = translateInclude(args.include);
+      return unifiedModel.findFirst(newArgs).then(translateResult);
+    },
+    findMany(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      newArgs.include = translateInclude(args.include);
+      return unifiedModel.findMany(newArgs).then(translateResult);
+    },
+    create(args: any) {
+      const newArgs = { ...args };
+      if (args.data) {
+        newArgs.data = { ...args.data };
+        if (legacyModelName === 'chatRoom') {
+          newArgs.data.name = args.data.title;
+          newArgs.data.type = 'internal';
+          delete newArgs.data.title;
+        }
+      }
+      return unifiedModel.create(newArgs).then(translateResult);
+    },
+    update(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      return unifiedModel.update(newArgs).then(translateResult);
+    },
+    updateMany(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      return unifiedModel.updateMany(newArgs).then(translateResult);
+    },
+    delete(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      return unifiedModel.delete(newArgs).then(translateResult);
+    },
+    deleteMany(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      return unifiedModel.deleteMany(newArgs).then(translateResult);
+    },
+    count(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      return unifiedModel.count(newArgs);
+    },
+    upsert(args: any) {
+      const newArgs = { ...args };
+      newArgs.where = translateWhere(args.where);
+      if (args.create) {
+        newArgs.create = { ...args.create };
+        if (legacyModelName === 'chatRoom') {
+          newArgs.create.name = args.create.title;
+          newArgs.create.type = 'internal';
+          delete newArgs.create.title;
+        }
+      }
+      if (args.update) {
+        newArgs.update = { ...args.update };
+        if (legacyModelName === 'chatRoom') {
+          newArgs.update.name = args.update.title;
+          delete newArgs.update.title;
+        }
+      }
+      if (legacyModelName === 'participant') {
+        return unifiedModel.findFirst({ where: newArgs.where }).then((existing: any) => {
+          if (existing) {
+            return unifiedModel.update({
+              where: { id: existing.id },
+              data: newArgs.update
+            });
+          } else {
+            return unifiedModel.create({
+              data: newArgs.create
+            });
+          }
+        }).then(translateResult);
+      }
+      return unifiedModel.upsert(newArgs).then(translateResult);
+    }
+  };
+}
+
+const rawPrisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
+
+// Apply compatibility layer properties
+const prismaInstance = rawPrisma as any;
+prismaInstance.chatRoom = makeCompatibilityModel(prismaInstance, 'conversation', 'chatRoom');
+prismaInstance.participant = makeCompatibilityModel(prismaInstance, 'conversationMember', 'participant');
+prismaInstance.chatMessage = makeCompatibilityModel(prismaInstance, 'conversationMessage', 'chatMessage');
+
+export const prisma = rawPrisma;
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prismaPool = pool;

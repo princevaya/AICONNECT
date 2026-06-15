@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   // Explicitly set the workspace root so Next.js doesn't pick up a
   // lockfile from a parent directory and emit the detection warning.
   outputFileTracingRoot: path.join(__dirname),
+  output: "standalone",
   images: {
     qualities: [100, 75],
   },

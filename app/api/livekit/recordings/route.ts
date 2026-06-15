@@ -9,6 +9,7 @@ import {
   S3Upload,
 } from "livekit-server-sdk";
 import { setRecordingOwner } from "@/lib/recording-ownership";
+import { prisma } from "@/lib/prisma";
 
 
 import {
@@ -48,19 +49,52 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const client = getEgressClient();
     const roomFilter = req.nextUrl.searchParams.get("room") || undefined;
-    const recordings = await client.listEgress(
-      roomFilter ? { roomName: roomFilter } : undefined
-    );
+    let recordings: EgressInfo[] = [];
+    try {
+      const client = getEgressClient();
+      recordings = await client.listEgress(
+        roomFilter ? { roomName: roomFilter } : undefined
+      );
+    } catch (err) {
+      console.warn("LiveKit Client listEgress failed or unconfigured:", err);
+    }
 
     const normalized = await Promise.all(
       recordings.map((info) => normalizeEgressInfo(info))
     );
 
-    normalized.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+    // Query in-house database recordings
+    const dbFilter = roomFilter ? { meeting: { code: roomFilter } } : {};
+    const dbRecordings = await prisma.recording.findMany({
+      where: dbFilter,
+      include: {
+        meeting: {
+          select: { code: true },
+        },
+      },
+    });
 
-    return NextResponse.json(normalized);
+    const formattedDb: RecordingResponse[] = dbRecordings.map((rec) => ({
+      id: rec.id,
+      egressId: rec.id,
+      roomName: rec.meeting.code,
+      status: "EGRESS_COMPLETE",
+      statusCode: 3,
+      startedAt: rec.createdAt.getTime(),
+      endedAt: rec.createdAt.getTime() + (rec.duration ?? 0) * 1000,
+      updatedAt: rec.createdAt.getTime(),
+      durationSeconds: rec.duration ?? 0,
+      filename: rec.title,
+      downloadUrl: `/api/meeting/recordings/download?id=${rec.id}`,
+      streamUrl: `/api/meeting/recordings/download?id=${rec.id}`,
+      storageLocation: rec.filePath,
+    }));
+
+    const combined = [...normalized, ...formattedDb];
+    combined.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+
+    return NextResponse.json(combined);
   } catch (error) {
     console.error("Failed to list LiveKit recordings", error);
     return NextResponse.json([]);
