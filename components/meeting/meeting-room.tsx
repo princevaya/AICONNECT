@@ -791,6 +791,7 @@ export default function MeetingRoom({
               id,
               emoji: parsed.emoji,
               participantId: parsed.participantId || participant.identity,
+              participantName: parsed.participantName || participant.name || participant.identity || "Participant",
             },
           ]);
           return;
