@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import React from "react";
+import React from 'react';
 
 interface Props {
     className?: string;
@@ -7,16 +7,14 @@ interface Props {
 }
 
 const MaxWidthWrapper = ({ className, children }: Props) => {
-  return (
-    <section
-      className={cn(
-        "mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8",
-        className
-      )}
-    >
-      {children}
-    </section>
-  );
+    return (
+        <section className={cn(
+            "h-full mx-auto w-full max-w-full md:max-w-7xl px-4 md:px-12 lg:px-20",
+            className,
+        )}>
+            {children}
+        </section>
+    )
 };
 
 export default MaxWidthWrapper

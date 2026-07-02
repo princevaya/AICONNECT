@@ -54,5 +54,16 @@ export function ensureRoom(roomId: string) {
     };
   }
 
+  // Backfill arrays for rooms created before all moderation fields existed.
+  if (!Array.isArray(rooms[normalizedRoomId].pending)) {
+    rooms[normalizedRoomId].pending = [];
+  }
+  if (!Array.isArray(rooms[normalizedRoomId].approved)) {
+    rooms[normalizedRoomId].approved = [];
+  }
+  if (!Array.isArray(rooms[normalizedRoomId].rejected)) {
+    rooms[normalizedRoomId].rejected = [];
+  }
+
   return rooms[normalizedRoomId];
 }

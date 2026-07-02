@@ -56,9 +56,9 @@ export default function ParticipantsPanel({
   const speaking = participants.filter((participant) => participant.isSpeaking);
 
   return (
-    <aside className="flex h-full w-full flex-col bg-card/95 text-card-foreground sm:w-80 sm:border-l sm:border-border">
-      <div className="border-b border-border px-4 py-4 sm:px-4">
-        <p className="text-sm font-semibold tracking-tight">Participants</p>
+    <aside className="flex w-80 flex-col border-l border-border bg-card/95 text-card-foreground">
+      <div className="border-b border-border p-4">
+        <p className="text-sm font-semibold">Participants</p>
         <p className="text-xs text-muted-foreground">{participants.length} in meeting</p>
       </div>
 
@@ -83,7 +83,7 @@ export default function ParticipantsPanel({
         )}
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-3">
+      <div className="flex-1 space-y-2 overflow-y-auto p-3">
         {participants.map((participant) => {
           const initials = initialsFromName(participant.name);
           const avatarColor = avatarColorClass(participant.id);
@@ -91,34 +91,29 @@ export default function ParticipantsPanel({
           return (
             <div
               key={participant.id}
-              className="rounded-2xl border border-border/80 bg-background/70 p-3 shadow-sm backdrop-blur-sm"
+              className="rounded-lg border border-border bg-background/60 p-3"
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="relative">
                     <div
-                      className={`flex h-9 w-9 items-center justify-center rounded-full ${avatarColor} text-xs font-semibold text-white shadow-sm`}
+                      className={`h-9 w-9 rounded-full ${avatarColor} flex items-center justify-center text-xs font-semibold text-white`}
                     >
                       {initials}
                     </div>
                     {raisedHands[participant.id] ? (
                       <span
-                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-yellow-100/40 bg-yellow-200/45 text-xs text-yellow-900 shadow backdrop-blur-md"
+                        className="absolute -top-1 -right-1 h-5 w-5 rounded-full border border-yellow-100/40 bg-yellow-200/45 text-yellow-900 text-xs flex items-center justify-center shadow backdrop-blur-md"
                         title="Hand raised"
                       >
                         {"\u270B"}
                       </span>
                     ) : null}
                   </div>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">
-                      {participant.name}
-                      {participant.isLocal ? " (You)" : ""}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {participant.isLocal ? "Your device" : "Remote participant"}
-                    </p>
-                  </div>
+                  <p className="text-sm font-medium truncate">
+                    {participant.name}
+                    {participant.isLocal ? " (You)" : ""}
+                  </p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {participant.isRecording ? (
@@ -136,7 +131,7 @@ export default function ParticipantsPanel({
                 </div>
               </div>
 
-              <div className="mt-3 flex items-center gap-2 text-muted-foreground">
+              <div className="mt-2 flex items-center gap-2 text-muted-foreground">
                 {participant.micEnabled ? (
                   <Mic className="h-4 w-4" />
                 ) : (

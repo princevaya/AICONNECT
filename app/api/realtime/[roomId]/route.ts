@@ -11,7 +11,7 @@ type RealtimeEnvelope = {
 type RoomClients = Map<string, ReadableStreamDefaultController<string>>;
 
 declare global {
-   
+  // eslint-disable-next-line no-var
   var __aiconnectRealtimeRooms: Map<string, RoomClients> | undefined;
 }
 
@@ -54,23 +54,43 @@ export async function GET(
 
   const stream = new ReadableStream<string>({
     start(controller) {
-      room.set(clientId, controller);
-      controller.enqueue(`event: ready\ndata: ${JSON.stringify({ clientId })}\n\n`);
-      const keepAlive = setInterval(() => {
-        try {
-          controller.enqueue(": keep-alive\n\n");
-        } catch {
-          clearInterval(keepAlive);
-        }
-      }, 20000);
+      let closed = false;
 
-      req.signal.addEventListener("abort", () => {
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
         clearInterval(keepAlive);
         room.delete(clientId);
         if (room.size === 0) {
           getRoomsStore().delete(roomId);
         }
-      });
+
+        try {
+          controller.close();
+        } catch {
+          // Stream may already be closed when client disconnects abruptly.
+        }
+      };
+
+      room.set(clientId, controller);
+      controller.enqueue(`event: ready\ndata: ${JSON.stringify({ clientId })}\n\n`);
+
+      const keepAlive = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(": keep-alive\n\n");
+        } catch {
+          cleanup();
+        }
+      }, 20000);
+
+      req.signal.addEventListener("abort", cleanup, { once: true });
+    },
+    cancel() {
+      room.delete(clientId);
+      if (room.size === 0) {
+        getRoomsStore().delete(roomId);
+      }
     },
   });
 

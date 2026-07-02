@@ -9,10 +9,7 @@ const ThemeToggle = () => {
   const { resolvedTheme, setTheme } = useTheme();
   const [isMounted, setIsMounted] = useState(false);
 
-  useEffect(() => {
-    const id = window.setTimeout(() => setIsMounted(true), 0);
-    return () => window.clearTimeout(id);
-  }, []);
+  useEffect(() => setIsMounted(true), []);
 
   const handleToggle = () => {
     if (!isMounted) return;

@@ -79,7 +79,7 @@ export default function ImageGeneratorPage() {
 
   useEffect(() => {
     void loadHistory();
-  }, [loadHistory]);
+  }, []);
 
   const generateImage = async () => {
     if (!prompt.trim()) {

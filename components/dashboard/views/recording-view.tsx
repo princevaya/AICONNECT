@@ -235,15 +235,15 @@ export default function RecordingView() {
 
   return (
     <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold sm:text-3xl">Recordings</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Recordings</h1>
+          <p className="text-sm text-muted-foreground">
             Monitor meeting recordings, download files, and replay past
             sessions.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
           <div>
             <span className="font-medium text-foreground">{stats.active}</span>{" "}
             active
@@ -261,7 +261,7 @@ export default function RecordingView() {
         </div>
       </header>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {FILTER_OPTIONS.map((filter) => (
             <Button
@@ -274,7 +274,7 @@ export default function RecordingView() {
             </Button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           {lastUpdated && (
             <span className="text-xs text-muted-foreground">
               Updated{" "}
@@ -382,7 +382,7 @@ export default function RecordingView() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2 shrink-0 sm:flex-nowrap">
+                    <div className="flex gap-2 shrink-0">
                       {recording.streamUrl || recording.downloadUrl ? (
                         <>
                           <Button

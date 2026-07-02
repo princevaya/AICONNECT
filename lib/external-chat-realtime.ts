@@ -14,7 +14,6 @@ type GlobalState = {
   connectPromise?: Promise<Client>;
   listeners: Map<string, Map<string, Listener>>;
   subscribedChannels: Set<string>;
-  reconnectTimer?: ReturnType<typeof setTimeout>;
 };
 
 const globalState = globalThis as typeof globalThis & {
@@ -35,58 +34,43 @@ function roomChannel(roomCode: string) {
   return `ec_room_${createHash("sha256").update(roomCode).digest("hex").slice(0, 32)}`;
 }
 
-// Helper to check if client is still usable
-function isClientConnected(client: Client | null | undefined): client is Client {
-  return client !== null && client !== undefined && !(client as any)._ending && !(client as any)._closed;
-}
+async function getClient() {
+  const current = state();
+  if (current.client) return current.client;
+  if (current.connectPromise) return current.connectPromise;
 
-// Singleton client - shared across all connections
-let sharedClient: Client | null = null;
-let clientInitPromise: Promise<Client> | null = null;
-
-async function getSharedClient(): Promise<Client> {
-  if (isClientConnected(sharedClient)) {
-    return sharedClient;
-  }
-
-  if (clientInitPromise) {
-    return clientInitPromise;
-  }
-
-  clientInitPromise = (async () => {
+  current.connectPromise = (async () => {
     const client = new Client({
       connectionString: normalizedExternalChatConnectionString,
       ssl: resolveExternalChatSslConfig(externalChatForceSsl),
     });
-    
     await client.connect();
-    
-    client.on("error", (err) => {
-      console.error("[Realtime] PostgreSQL client error:", err);
-      sharedClient = null;
-      clientInitPromise = null;
+    client.on("notification", (msg) => {
+      const channel = msg.channel;
+      const raw = msg.payload || "";
+      const bucket = state().listeners.get(channel);
+      if (!bucket || bucket.size === 0) return;
+      try {
+        const payload = JSON.parse(raw) as Envelope;
+        for (const listener of bucket.values()) {
+          listener(payload);
+        }
+      } catch {
+        // Ignore malformed realtime payloads.
+      }
     });
-    
-    client.on("end", () => {
-      sharedClient = null;
-      clientInitPromise = null;
+    client.on("error", () => {
+      const currentState = state();
+      currentState.client = undefined;
+      currentState.connectPromise = undefined;
+      currentState.subscribedChannels.clear();
     });
-    
-    sharedClient = client;
+    current.client = client;
+    current.connectPromise = undefined;
     return client;
   })();
 
-  return clientInitPromise;
-}
-
-async function getClient() {
-  const current = state();
-  if (isClientConnected(current.client)) return current.client;
-  
-  // Use shared client instead of creating new ones
-  const shared = await getSharedClient();
-  current.client = shared;
-  return shared;
+  return current.connectPromise;
 }
 
 export async function subscribeToRoom(roomCode: string, listener: Listener) {
@@ -100,14 +84,10 @@ export async function subscribeToRoom(roomCode: string, listener: Listener) {
   }
   bucket.set(id, listener);
 
-  try {
-    const client = await getClient();
-    if (!current.subscribedChannels.has(channel)) {
-      await client.query(`LISTEN ${channel}`);
-      current.subscribedChannels.add(channel);
-    }
-  } catch (err) {
-    console.error(`[Realtime] Failed to subscribe to ${channel}:`, err);
+  const client = await getClient();
+  if (!current.subscribedChannels.has(channel)) {
+    await client.query(`LISTEN ${channel}`);
+    current.subscribedChannels.add(channel);
   }
 
   return async () => {
@@ -115,80 +95,15 @@ export async function subscribeToRoom(roomCode: string, listener: Listener) {
     const group = latest.listeners.get(channel);
     group?.delete(id);
     if (!group || group.size > 0) return;
-    
     latest.listeners.delete(channel);
     if (!latest.client || !latest.subscribedChannels.has(channel)) return;
-    
-    try {
-      await latest.client.query(`UNLISTEN ${channel}`).catch(() => undefined);
-      latest.subscribedChannels.delete(channel);
-    } catch {
-      // Ignore unlisten errors
-    }
+    await latest.client.query(`UNLISTEN ${channel}`).catch(() => undefined);
+    latest.subscribedChannels.delete(channel);
   };
 }
 
 export async function publishRoomEvent(roomCode: string, data: Envelope) {
-  try {
-    const client = await getClient();
-    const channel = roomChannel(roomCode);
-    await client.query("SELECT pg_notify($1, $2)", [channel, JSON.stringify(data)]);
-  } catch (err) {
-    console.error("[Realtime] Failed to publish event:", err);
-  }
-}
-
-// Track connection attempts to prevent infinite loops
-let cleanupInProgress = false;
-
-export async function cleanupRealtimeConnections() {
-  if (cleanupInProgress) return;
-  cleanupInProgress = true;
-  
-  try {
-    if (sharedClient) {
-      try {
-        await sharedClient.end();
-      } catch {
-        // ignore
-      }
-      sharedClient = null;
-    }
-    clientInitPromise = null;
-    
-    const current = state();
-    if (current.client) {
-      try {
-        await current.client.end();
-      } catch {
-        // ignore
-      }
-      current.client = undefined;
-    }
-    current.connectPromise = undefined;
-    
-    // Clear all listeners
-    current.listeners.clear();
-    current.subscribedChannels.clear();
-    
-    if (current.reconnectTimer) {
-      clearTimeout(current.reconnectTimer);
-      current.reconnectTimer = undefined;
-    }
-  } finally {
-    cleanupInProgress = false;
-  }
-}
-
-// Handle process exit
-if (typeof process !== "undefined") {
-  process.on("beforeExit", () => {
-    cleanupRealtimeConnections();
-  });
-  process.on("SIGTERM", () => {
-    cleanupRealtimeConnections();
-  });
-  process.on("SIGINT", () => {
-    cleanupRealtimeConnections();
-  });
+  const client = await getClient();
+  const channel = roomChannel(roomCode);
+  await client.query("SELECT pg_notify($1, $2)", [channel, JSON.stringify(data)]);
 }

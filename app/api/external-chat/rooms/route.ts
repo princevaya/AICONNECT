@@ -48,13 +48,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ room }, { status: 201 });
   } catch (error) {
     const m = error instanceof Error ? error.message.toLowerCase() : "";
-    const status =
-      m.includes("requires") ||
-      m.includes("required") ||
-      m.includes("limit exceeded") ||
-      m.includes("maximum is")
-        ? 400
-        : 500;
+    const status = m.includes("requires") || m.includes("required") ? 400 : 500;
     return toError(error, "Failed to create room", status);
   }
 }

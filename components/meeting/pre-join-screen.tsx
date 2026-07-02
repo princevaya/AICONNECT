@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -175,55 +175,55 @@ export default function PreJoinScreen({
   useEffect(() => {
     if (!waitingForApproval) return;
 
+    let cancelled = false;
+
+    const checkApproval = async () => {
+      try {
+        const res = await fetch(
+          `/api/check-approval?roomId=${encodeURIComponent(roomName)}&name=${encodeURIComponent(
+            participantName
+          )}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+
+        if (cancelled) return;
+
+        if (data.approved) {
+          setWaitingForApproval(false);
+          setJoinMessage("Approved. Joining now...");
+          onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
+          return;
+        }
+
+        if (data.rejected) {
+          setWaitingForApproval(false);
+          setJoinError("Host rejected your join request.");
+        }
+      } catch {
+        if (!cancelled) {
+          setJoinError("Unable to check approval status. Please retry.");
+          setWaitingForApproval(false);
+        }
+      }
+    };
+
+    // Check immediately, then keep polling quickly for near-instant joins.
+    void checkApproval();
+
     const interval = setInterval(async () => {
-      const res = await fetch(
-        `/api/check-approval?roomId=${roomName}&name=${participantName}`
-      );
-      const data = await res.json();
+      void checkApproval();
+    }, 700);
 
-      if (data.approved) {
-        clearInterval(interval);
-        setWaitingForApproval(false);
-        setJoinMessage("Approved. Joining now...");
-        onJoin(participantName, roomName, isVideoEnabled, isAudioEnabled);
-        return;
-      }
-
-      if (data.rejected) {
-        clearInterval(interval);
-        setWaitingForApproval(false);
-        setJoinError("Host rejected your join request.");
-      }
-    }, 2000);
-
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [waitingForApproval, participantName, roomName, isVideoEnabled, isAudioEnabled, onJoin]);
 
   const copyToClipboard = async (text: string, successLabel: string) => {
     try {
-      const clipboardAvailable =
-        typeof navigator !== "undefined" &&
-        !!navigator.clipboard &&
-        typeof navigator.clipboard.writeText === "function";
-
-      if (clipboardAvailable) {
-        await navigator.clipboard.writeText(text);
-      } else if (typeof document !== "undefined") {
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        const copied = document.execCommand("copy");
-        document.body.removeChild(textarea);
-        if (!copied) {
-          throw new Error("Clipboard fallback failed");
-        }
-      } else {
-        throw new Error("Clipboard unavailable");
-      }
+      await navigator.clipboard.writeText(text);
       setCopyMessage(successLabel);
       setTimeout(() => setCopyMessage(null), 1800);
     } catch {
@@ -233,21 +233,21 @@ export default function PreJoinScreen({
   };
 
   return (
-    <div className="h-screen bg-background overflow-hidden">
-      <div className="h-full container mx-auto px-4 py-6 max-w-7xl flex flex-col">
-        <header className="mb-4 flex-shrink-0 text-center">
+    <div className="min-h-screen bg-background px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-6xl space-y-5 sm:space-y-6">
+        <header>
           <h1 className="text-2xl font-bold sm:text-3xl">Ready to join?</h1>
           <p className="text-sm text-muted-foreground sm:text-base">
             Set up your camera and microphone before joining
           </p>
         </header>
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
-          {/* Video Preview - takes 2/3 width */}
-          <div className="lg:col-span-2 min-h-0">
-            <Card className="h-full">
-              <CardContent className="p-4 sm:p-6 h-full flex flex-col">
-                <div className="relative bg-muted rounded-lg overflow-hidden flex items-center justify-center flex-1 min-h-0">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:gap-6">
+          {/* Video Preview */}
+          <div className="lg:col-span-2">
+            <Card>
+              <CardContent className="p-3 sm:p-6">
+                <div className="relative aspect-video bg-muted rounded-lg overflow-hidden flex items-center justify-center">
                   {isVideoEnabled ? (
                     <video
                       ref={videoRef}
@@ -258,72 +258,59 @@ export default function PreJoinScreen({
                     />
                   ) : (
                     <div className="text-center">
-                      <VideoOff className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                      <p className="text-muted-foreground text-sm">
+                      <VideoOff className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                      <p className="text-muted-foreground">
                         Camera is off
                       </p>
                     </div>
                   )}
                 </div>
 
-                <div className="mt-4 flex-shrink-0 flex justify-center gap-4">
+                <div className="mt-4 flex justify-center gap-3 sm:mt-6 sm:gap-4">
                   <Button
                     variant={isVideoEnabled ? "default" : "outline"}
                     onClick={toggleVideo}
                     disabled={mediaBusy}
-                    size="default"
                   >
-                    {isVideoEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-                    <span className="ml-2 hidden sm:inline">
-                      {isVideoEnabled ? "Camera On" : "Camera Off"}
-                    </span>
+                    {isVideoEnabled ? <Video /> : <VideoOff />}
                   </Button>
 
                   <Button
                     variant={isAudioEnabled ? "default" : "outline"}
                     onClick={toggleAudio}
                     disabled={mediaBusy}
-                    size="default"
                   >
-                    {isAudioEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-                    <span className="ml-2 hidden sm:inline">
-                      {isAudioEnabled ? "Mic On" : "Mic Off"}
-                    </span>
+                    {isAudioEnabled ? <Mic /> : <MicOff />}
                   </Button>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Right Panel - takes 1/3 width */}
-          <div className="lg:col-span-1 min-h-0">
-            <Card className="h-full flex flex-col">
-              <CardHeader className="flex-shrink-0">
+          {/* Right Panel */}
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
                 <CardTitle>
                   {isHost ? "Start Meeting" : "Join Meeting"}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4 flex-1 overflow-y-auto">
+              <CardContent className="space-y-4">
                 <div>
-                  <Label htmlFor="display-name">Display Name</Label>
+                  <Label>Display Name</Label>
                   <Input
-                    id="display-name"
                     value={participantName}
                     onChange={(e) => setParticipantName(e.target.value)}
-                    placeholder="Your name"
-                    className="mt-1.5"
                   />
                 </div>
 
                 <div>
-                  <Label htmlFor="room-code">Room Code</Label>
-                  <div className="mt-1.5 flex gap-2">
+                  <Label>Room Code</Label>
+                  <div className="mt-1 flex gap-2">
                     <Input
-                      id="room-code"
                       value={roomName}
                       disabled={!!meetingCode}
                       onChange={(e) => setRoomName(e.target.value)}
-                      placeholder="Enter room code"
                     />
                     <Button
                       size="sm"
@@ -339,54 +326,37 @@ export default function PreJoinScreen({
 
                   {isHost && meetingCode && (
                     <>
-                      <p className="text-xs mt-2 text-muted-foreground">
+                      <p className="text-xs mt-2">
                         Room ID: {meetingCode}
                       </p>
 
-                      <div className="mt-3">
-                        <Label>Invite Link</Label>
-                        <div className="mt-1.5 flex gap-2">
-                          <Input value={inviteLink} readOnly className="text-sm" />
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              void copyToClipboard(inviteLink, "Invite link copied.");
-                            }}
-                          >
-                            Copy
-                          </Button>
-                        </div>
+                      <div className="mt-3 flex gap-2">
+                        <Input value={inviteLink} readOnly />
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void copyToClipboard(inviteLink, "Invite link copied.");
+                          }}
+                        >
+                          Copy
+                        </Button>
                       </div>
                     </>
                   )}
                 </div>
 
-                {joinError && (
-                  <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/20 p-3 rounded-lg">
-                    {joinError}
-                  </div>
-                )}
-                {joinMessage && (
-                  <div className="text-sm text-emerald-600 bg-emerald-50 dark:bg-emerald-950/20 p-3 rounded-lg">
-                    {joinMessage}
-                  </div>
-                )}
-                {copyMessage && (
-                  <p className="text-xs text-muted-foreground text-center">
-                    {copyMessage}
-                  </p>
-                )}
-
-                <Button
-                  className="w-full mt-2"
-                  onClick={handleJoinMeeting}
-                  disabled={waitingForApproval || mediaBusy}
-                >
-                  {waitingForApproval && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isHost ? "Start Meeting" : "Join Meeting"}
-                </Button>
+                {joinError ? (
+                  <p className="text-sm text-red-600">{joinError}</p>
+                ) : null}
+                {joinMessage ? <p className="text-sm text-emerald-600">{joinMessage}</p> : null}
+                {copyMessage ? <p className="text-xs text-muted-foreground">{copyMessage}</p> : null}
               </CardContent>
             </Card>
+
+            <Button className="w-full" onClick={handleJoinMeeting} disabled={waitingForApproval || mediaBusy}>
+              {waitingForApproval ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {isHost ? "Start Meeting" : "Join Meeting"}
+            </Button>
           </div>
         </div>
       </div>

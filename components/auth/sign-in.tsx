@@ -46,9 +46,8 @@ export default function CustomSignIn() {
       } else {
         setError("Sign in failed. Please try again.");
       }
-    } catch (err: unknown) {
-      const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-      setError(anyErr.errors?.[0]?.longMessage || "Invalid email or password");
+    } catch (err: any) {
+      setError(err.errors?.[0]?.longMessage || "Invalid email or password");
     } finally {
       setIsLoading(false);
     }
@@ -66,9 +65,8 @@ export default function CustomSignIn() {
         redirectUrl: "/auth/sso-callback",
         redirectUrlComplete: "/dashboard",
       });
-    } catch (err: unknown) {
-      const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-      setError(anyErr.errors?.[0]?.longMessage || "OAuth sign-in failed");
+    } catch (err: any) {
+      setError(err.errors?.[0]?.longMessage || "OAuth sign-in failed");
       setIsLoading(false);
     }
   };

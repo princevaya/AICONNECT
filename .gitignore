@@ -1,8 +1,8 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# See https://help.github.com/articles/ignoring-files/
 
 # dependencies
 /node_modules
-/.pnp
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -22,17 +22,21 @@
 
 # misc
 .DS_Store
+Thumbs.db
 *.pem
 
-# debug
+# logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
-# env files (can opt-in for committing if needed)
-.env.local
+# env files
 .env
+.env.local
+.env.development
+.env.production
 
 # vercel
 .vercel
@@ -41,5 +45,18 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# clerk configuration (can include secrets)
-/.clerk/
+# IDE
+.vscode/
+.idea/
+
+# AWS credentials
+.aws/
+
+# system history
+.bash_history
+
+# chatgpt / local histories
+chat-history*
+
+# clerk configuration (may contain secrets)
+.clerk/

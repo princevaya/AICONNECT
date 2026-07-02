@@ -48,7 +48,7 @@ export async function POST(
     const { roomCode } = await context.params;
     const body = await parseJson<{
       content?: string;
-      type?: "text" | "note" | "poll" | "voice";
+      type?: "text" | "note" | "poll";
       replyToId?: string;
       attachmentId?: string;
       privateToUserIds?: string[];

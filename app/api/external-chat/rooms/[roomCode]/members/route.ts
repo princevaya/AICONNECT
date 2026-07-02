@@ -17,10 +17,8 @@ export async function GET(
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { roomCode } = await context.params;
     const user = await ensureExternalChatUser(userId);
-    const limit = parseInt(_req.nextUrl.searchParams.get("limit") || "50", 10);
-    const cursor = _req.nextUrl.searchParams.get("cursor") || undefined;
-    const result = await listMembers(roomCode, user, { limit, cursor });
-    return NextResponse.json(result);
+    const members = await listMembers(roomCode, user);
+    return NextResponse.json({ members });
   } catch (error) {
     const m = error instanceof Error ? error.message.toLowerCase() : "";
     const status = m.includes("not found") ? 404 : m.includes("not allowed") ? 403 : 500;
@@ -54,7 +52,7 @@ export async function POST(
     return NextResponse.json({ success: true });
   } catch (error) {
     const m = error instanceof Error ? error.message.toLowerCase() : "";
-    const status = m.includes("not found") ? 404 : m.includes("not allowed") ? 403 : m.includes("limit exceeded") || m.includes("maximum is") ? 400 : 500;
+    const status = m.includes("not found") ? 404 : m.includes("not allowed") ? 403 : 500;
     return toError(error, "Failed to add members", status);
   }
 }

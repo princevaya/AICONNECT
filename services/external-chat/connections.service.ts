@@ -1,5 +1,5 @@
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
-const db = prisma as typeof prisma;
+const db = prisma as any;
 import { AppUser } from "@/services/user.service";
 
 function orderedPair(a: string, b: string) {

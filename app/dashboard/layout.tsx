@@ -16,7 +16,7 @@ export default async function DashboardLayout({ children }: Props) {
 
   return (
     <>
-      <div className="py-6 sm:py-8 lg:py-10">
+      <div className="my-20">
         <MaxWidthWrapper>
           <div className="mx-auto w-full">{children}</div>
         </MaxWidthWrapper>

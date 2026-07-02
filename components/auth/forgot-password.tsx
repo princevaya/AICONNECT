@@ -39,9 +39,8 @@ export default function ForgotPassword() {
             });
 
             setSuccessfulCreation(true);
-        } catch (err: unknown) {
-            const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-            setError(anyErr.errors?.[0]?.longMessage || "Failed to send reset code");
+        } catch (err: any) {
+            setError(err.errors?.[0]?.longMessage || "Failed to send reset code");
         } finally {
             setIsLoading(false);
         }
@@ -78,9 +77,8 @@ export default function ForgotPassword() {
             } else {
                 setError("Password reset failed. Please try again.");
             }
-        } catch (err: unknown) {
-            const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-            setError(anyErr.errors?.[0]?.longMessage || "Invalid code or password");
+        } catch (err: any) {
+            setError(err.errors?.[0]?.longMessage || "Invalid code or password");
         } finally {
             setIsLoading(false);
         }

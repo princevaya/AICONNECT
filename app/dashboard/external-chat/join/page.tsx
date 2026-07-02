@@ -101,7 +101,7 @@ export default function JoinGroupPage() {
         </form>
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          Don&apos;t have an invite code? Ask a group member to generate one for you.
+          Don't have an invite code? Ask a group member to generate one for you.
         </p>
       </div>
     </div>

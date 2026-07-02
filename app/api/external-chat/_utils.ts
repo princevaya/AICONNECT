@@ -57,7 +57,7 @@ export function toError(error: unknown, fallback: string, status = 500) {
     return NextResponse.json(
       {
         error:
-          "External chat database is unreachable. Set CHAT_DIRECT_URL or CHAT_DATABASE_URL to a reachable Postgres endpoint and restart dev server.",
+          "External chat database is unreachable. Set CHAT_DATABASE_URL to a reachable Postgres endpoint (prefer Supabase pooler host) and restart dev server.",
         setupRequired: true,
       },
       { status: 503 }
@@ -79,7 +79,7 @@ export function toError(error: unknown, fallback: string, status = 500) {
     return NextResponse.json(
       {
         error:
-          "External chat database authentication failed. Use the exact Supabase Connect string for CHAT_DIRECT_URL or CHAT_DATABASE_URL. The username is usually postgres.<project-ref> and the host/region must match your project pooler exactly.",
+          "External chat database authentication failed. For Supabase pooler, use the exact connection string from Supabase Connect. The username is usually postgres.<project-ref> and the host/region must match your project pooler exactly.",
         setupRequired: true,
       },
       { status: 503 }

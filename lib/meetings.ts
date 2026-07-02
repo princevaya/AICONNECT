@@ -1,8 +1,5 @@
 import { randomUUID } from "crypto";
 import pool from "./db";
-import { add } from "date-fns";
-
-
 
 export type MeetingStatus = "scheduled" | "live" | "closed";
 
@@ -10,13 +7,14 @@ export interface MeetingRecord {
   id: string;
   code: string;
   title: string;
-  scheduledFor: Date;          // ✅ FIXED
+  scheduledFor: Date;
   attendees: string[];
   notes?: string | null;
   status: MeetingStatus;
   isActive: boolean;
-  createdAt: Date;             // ✅ FIXED
-  updatedAt: Date;             // ✅ FIXED
+  createdBy?: string | null;  // ✅ ADDED
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 let tableReady: Promise<void> | null = null;
@@ -30,6 +28,7 @@ type MeetingRow = {
   notes?: string | null;
   status?: string | null;
   is_active: boolean;
+  created_by?: string | null;  // ✅ ADDED
   created_at: string | Date;
   updated_at: string | Date;
 };
@@ -48,9 +47,11 @@ async function ensureTable() {
           notes TEXT,
           status TEXT NOT NULL DEFAULT 'scheduled',
           is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          created_by TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE meeting_rooms ADD COLUMN IF NOT EXISTS created_by TEXT;
         CREATE INDEX IF NOT EXISTS idx_meeting_rooms_schedule
         ON meeting_rooms (scheduled_for);
       `)
@@ -81,7 +82,7 @@ function normalizeStatus(status: unknown): MeetingStatus {
   if (status === "scheduled" || status === "live" || status === "closed") {
     return status;
   }
-  return "scheduled"; // safe default
+  return "scheduled";
 }
 
 function mapRow(row: MeetingRow): MeetingRecord {
@@ -89,13 +90,14 @@ function mapRow(row: MeetingRow): MeetingRecord {
     id: row.id,
     code: row.meeting_code,
     title: row.title,
-    scheduledFor: new Date(row.scheduled_for),   // ✅ Date
+    scheduledFor: new Date(row.scheduled_for),
     attendees: parseAttendees(row.attendees),
     notes: row.notes ?? null,
     status: normalizeStatus(row.status),
     isActive: row.is_active,
-    createdAt: new Date(row.created_at),         // ✅ Date
-    updatedAt: new Date(row.updated_at),         // ✅ Date
+    createdBy: row.created_by ?? null,  // ✅ ADDED
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
   };
 }
 
@@ -114,11 +116,9 @@ export async function findByCode(
   await ensureTable();
 
   const res = await pool.query(
-    `
-    SELECT * FROM meeting_rooms
+    `SELECT * FROM meeting_rooms
     WHERE meeting_code = $1
-    LIMIT 1
-    `,
+    LIMIT 1`,
     [code]
   );
 
@@ -131,24 +131,22 @@ export async function findActiveByCode(
   await ensureTable();
 
   const res = await pool.query(
-    `
-    SELECT * FROM meeting_rooms
+    `SELECT * FROM meeting_rooms
     WHERE meeting_code = $1
       AND is_active = true
-    LIMIT 1
-    `,
+    LIMIT 1`,
     [code]
   );
 
   return res.rows[0] ? mapRow(res.rows[0]) : null;
 }
 
-
 export interface CreateMeetingPayload {
   title: string;
   scheduledFor: Date;
   attendees: string[];
-  notes?: string;
+  notes?: string | null;
+  createdBy?: string | null;  // ✅ ADDED
 }
 
 function generateMeetingCode(): string {
@@ -157,7 +155,6 @@ function generateMeetingCode(): string {
     .replace(/[^a-z0-9]/g, "")
     .slice(0, 8);
 }
-
 
 export async function createMeeting(
   payload: CreateMeetingPayload
@@ -182,8 +179,8 @@ export async function createMeeting(
     `INSERT INTO meeting_rooms (
       id, meeting_code, title, scheduled_for,
       attendees, notes, status, is_active,
-      created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,'scheduled',true,NOW(),NOW())
+      created_by, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5::jsonb,$6,'scheduled',true,$7,NOW(),NOW())
     RETURNING *`,
     [
       randomUUID(),
@@ -192,13 +189,12 @@ export async function createMeeting(
       payload.scheduledFor,
       JSON.stringify(payload.attendees),
       payload.notes ?? null,
+      payload.createdBy ?? null,  // ✅ ADDED
     ]
   );
 
   return mapRow(result.rows[0]);
 }
-
-/*-----this I add------*/
 
 export async function markMeetingClosed(code: string): Promise<void> {
   await ensureTable();
@@ -207,13 +203,11 @@ export async function markMeetingClosed(code: string): Promise<void> {
   const isActive = deriveIsActiveFromStatus(status);
 
   await pool.query(
-    `
-    UPDATE meeting_rooms
+    `UPDATE meeting_rooms
     SET status = $2,
         is_active = $3,
         updated_at = NOW()
-    WHERE meeting_code = $1
-    `,
+    WHERE meeting_code = $1`,
     [code, status, isActive]
   );
 }
@@ -221,8 +215,6 @@ export async function markMeetingClosed(code: string): Promise<void> {
 function deriveIsActiveFromStatus(status: MeetingStatus): boolean {
   return status !== "closed";
 }
-
-
 
 export async function listAllMeetings(): Promise<MeetingRecord[]> {
   await ensureTable();

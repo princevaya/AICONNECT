@@ -40,13 +40,7 @@ function mapMessage(
     deletedAt: Date | null;
     createdAt: Date;
     sender: { id: string; clerkId: string; name: string | null; email: string | null; imageUrl: string | null };
-    attachment: {
-      id: string;
-      fileName: string;
-      mimeType: string;
-      sizeBytes: bigint;
-      transcriptionJobs?: Array<{ transcript: string | null; language: string | null }>;
-    } | null;
+    attachment: { id: string; fileName: string; mimeType: string; sizeBytes: bigint } | null;
     reactions: Array<{
       emoji: string;
       user: { id: string; clerkId: string; name: string | null; email: string | null; imageUrl: string | null };
@@ -80,14 +74,12 @@ function mapMessage(
     createdAt: message.createdAt,
     attachment: message.attachment
       ? {
-        id: message.attachment.id,
-        fileName: message.attachment.fileName,
-        mimeType: message.attachment.mimeType,
-        sizeBytes: Number(message.attachment.sizeBytes),
-        transcript: message.attachment.transcriptionJobs?.[0]?.transcript || null,
-        language: message.attachment.transcriptionJobs?.[0]?.language || null,
-        downloadUrl: `/api/external-chat/files/${message.attachment.id}/download`,
-      }
+          id: message.attachment.id,
+          fileName: message.attachment.fileName,
+          mimeType: message.attachment.mimeType,
+          sizeBytes: Number(message.attachment.sizeBytes),
+          downloadUrl: `/api/external-chat/files/${message.attachment.id}/download`,
+        }
       : null,
     reactions: message.reactions,
     seenBy: message.seenBy,
@@ -171,57 +163,15 @@ function canArchiveRoom(user: AppUser, actorRole: RoomRole) {
   return isGlobalAdmin(user) || actorRole === "owner" || actorRole === "admin";
 }
 
-const MAX_EXTERNAL_CHAT_GROUP_MEMBERS = Number(process.env.EXTERNAL_CHAT_MAX_GROUP_MEMBERS || 500_000);
-
-function assertGroupMemberLimit(currentCount: number, additionalCount: number) {
-  if (currentCount + additionalCount > MAX_EXTERNAL_CHAT_GROUP_MEMBERS) {
-    throw new Error(`Group member limit exceeded. Maximum is ${MAX_EXTERNAL_CHAT_GROUP_MEMBERS}.`);
-  }
-}
-
 function getRoomHiddenDelegate() {
-  // Check if the model exists on the prisma client
-  try {
-    const delegate = (prisma as typeof prisma & {
-      externalChatRoomHidden?: {
-        findMany: (args: unknown) => Promise<unknown[]>;
+  const delegate = (prisma as unknown as { externalChatRoomHidden?: unknown }).externalChatRoomHidden;
+  return delegate as
+    | {
+        findMany: (args: unknown) => Promise<Array<{ roomId: string; hiddenAt: Date }>>;
         upsert: (args: unknown) => Promise<unknown>;
-        deleteMany: (args: unknown) => Promise<{ count: number }>;
-      };
-    }).externalChatRoomHidden;
-    // Return a safe wrapper that handles missing table gracefully
-    return {
-      findMany: async (args: unknown) => {
-        try {
-          const result = delegate ? await delegate.findMany(args) : [];
-          return result || [];
-        } catch {
-          return [];
-        }
-      },
-      upsert: async (args: unknown) => {
-        try {
-          return delegate ? await delegate.upsert(args) : null;
-        } catch {
-          return null;
-        }
-      },
-      deleteMany: async (args: unknown) => {
-        try {
-          return delegate ? await delegate.deleteMany(args) : { count: 0 };
-        } catch {
-          return { count: 0 };
-        }
-      },
-    };
-  } catch {
-    // Return mock delegate that does nothing
-    return {
-      findMany: async () => [],
-      upsert: async () => null,
-      deleteMany: async () => ({ count: 0 }),
-    };
-  }
+        deleteMany: (args: unknown) => Promise<unknown>;
+      }
+    | undefined;
 }
 
 async function requireRoom(roomCode: string, user: AppUser, allowArchived = false) {
@@ -312,14 +262,14 @@ export async function listRooms(user: AppUser, workspaceSlug?: string) {
   const roomHiddenDelegate = getRoomHiddenDelegate();
   const hidden = roomHiddenDelegate
     ? await roomHiddenDelegate.findMany({
-      where: {
-        userId: user.id,
-        roomId: { in: allRooms.map((room) => room.id) },
-      },
-      select: { roomId: true, hiddenAt: true },
-    }) as Array<{ roomId: string; hiddenAt: Date | null }>
+        where: {
+          userId: user.id,
+          roomId: { in: allRooms.map((room) => room.id) },
+        },
+        select: { roomId: true, hiddenAt: true },
+      })
     : [];
-  const hiddenMap = new Map(hidden.map((entry: { roomId: string; hiddenAt: Date | null }) => [entry.roomId, entry.hiddenAt]));
+  const hiddenMap = new Map(hidden.map((entry) => [entry.roomId, entry.hiddenAt]));
   const memberships = await prisma.externalChatRoomMember.findMany({
     where: {
       userId: user.id,
@@ -443,9 +393,6 @@ export async function createRoom(input: {
   if (input.type === "direct" && memberUsers.length !== 1) {
     throw new Error("Direct chat requires exactly one member");
   }
-  if (input.type !== "direct") {
-    assertGroupMemberLimit(1, memberUsers.length);
-  }
 
   const code =
     input.type === "direct" && memberUsers[0]
@@ -497,36 +444,16 @@ export async function createRoom(input: {
   return room;
 }
 
-export async function listMembers(roomCode: string, user: AppUser, input?: { limit?: number; cursor?: string }) {
+export async function listMembers(roomCode: string, user: AppUser) {
   const room = await requireRoom(roomCode, user);
-  const limit = Math.max(1, Math.min(input?.limit || 50, 200));
-  const [cursorJoinedAt, cursorId] = input?.cursor?.split("::") || [];
-  const cursorDate = cursorJoinedAt ? new Date(cursorJoinedAt) : null;
   const members = await prisma.externalChatRoomMember.findMany({
-    where: {
-      roomId: room.id,
-      removedAt: null,
-      leftAt: null,
-      ...(cursorDate && cursorId
-        ? {
-          OR: [
-            { joinedAt: { gt: cursorDate } },
-            { AND: [{ joinedAt: cursorDate }, { id: { gt: cursorId } }] },
-          ],
-        }
-        : {}),
-    },
+    where: { roomId: room.id, removedAt: null, leftAt: null },
     include: {
       user: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
     },
-    orderBy: [{ joinedAt: "asc" }, { id: "asc" }],
-    take: limit + 1,
+    orderBy: [{ role: "asc" }, { joinedAt: "asc" }],
   });
-  const hasMore = members.length > limit;
-  const sliced = members.slice(0, limit);
-  const last = sliced[sliced.length - 1];
-  const nextCursor = hasMore && last?.joinedAt ? `${last.joinedAt.toISOString()}::${last.id}` : null;
-  return { members: sliced, nextCursor, hasMore };
+  return members;
 }
 
 export async function addMembers(roomCode: string, actor: AppUser, memberClerkIds: string[]) {
@@ -537,33 +464,11 @@ export async function addMembers(roomCode: string, actor: AppUser, memberClerkId
   });
   const allowed = canManageRoom(actor, (actorMember?.role as RoomRole) || null);
   if (!allowed) throw new Error("Not allowed");
-  const uniqueMemberClerkIds = Array.from(
-    new Set(memberClerkIds.map((id) => id.trim()).filter(Boolean))
-  );
 
   const users = await prisma.user.findMany({
-    where: { clerkId: { in: uniqueMemberClerkIds } },
+    where: { clerkId: { in: Array.from(new Set(memberClerkIds)) } },
     select: { id: true, name: true, email: true },
   });
-  const currentCount = await prisma.externalChatRoomMember.count({
-    where: {
-      roomId: room.id,
-      removedAt: null,
-      leftAt: null,
-    },
-  });
-  const activeMemberships = await prisma.externalChatRoomMember.findMany({
-    where: {
-      roomId: room.id,
-      userId: { in: users.map((item) => item.id) },
-      removedAt: null,
-      leftAt: null,
-    },
-    select: { userId: true },
-  });
-  const activeMemberIds = new Set(activeMemberships.map((membership) => membership.userId));
-  const additionalMembers = users.filter((item) => !activeMemberIds.has(item.id));
-  assertGroupMemberLimit(currentCount, additionalMembers.length);
   for (const item of users) {
     await prisma.externalChatRoomMember.upsert({
       where: { roomId_userId: { roomId: room.id, userId: item.id } },
@@ -665,11 +570,11 @@ export async function listMessages(input: {
   const cursorId = input.before?.trim() || "";
   let beforeFilter:
     | {
-      OR: Array<
-        | { createdAt: { lt: Date } }
-        | { AND: [{ createdAt: Date }, { id: { lt: string } }] }
-      >;
-    }
+        OR: Array<
+          | { createdAt: { lt: Date } }
+          | { AND: [{ createdAt: Date }, { id: { lt: string } }] }
+        >;
+      }
     | undefined;
   if (cursorId) {
     const cursorMessage = await prisma.externalChatMessage.findUnique({
@@ -694,29 +599,16 @@ export async function listMessages(input: {
       ...(input.pinnedOnly ? { pinnedAt: { not: null } } : {}),
       ...(q
         ? {
-          OR: [
-            { content: { contains: q, mode: "insensitive" } },
-            { attachment: { fileName: { contains: q, mode: "insensitive" } } },
-          ],
-        }
+            OR: [
+              { content: { contains: q, mode: "insensitive" } },
+              { attachment: { fileName: { contains: q, mode: "insensitive" } } },
+            ],
+          }
         : {}),
     },
     include: {
       sender: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
-      attachment: {
-        select: {
-          id: true,
-          fileName: true,
-          mimeType: true,
-          sizeBytes: true,
-          transcriptionJobs: {
-            where: { status: "completed" },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: { transcript: true, language: true },
-          },
-        },
-      },
+      attachment: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true } },
       reactions: {
         include: { user: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } } },
       },
@@ -788,19 +680,19 @@ export async function createMessage(input: {
   const allowedNoteColors = new Set(["amber", "emerald", "sky", "rose", "violet"]);
   const metadata: Prisma.InputJsonValue | undefined = input.poll
     ? {
-      poll: {
-        question: input.poll.question.trim(),
-        options: input.poll.options.map((option) => option.trim()).filter(Boolean).map((option) => ({
-          id: Math.random().toString(36).slice(2, 9),
-          text: option,
-          voters: [] as string[],
-        })),
-      },
-    }
+        poll: {
+          question: input.poll.question.trim(),
+          options: input.poll.options.map((option) => option.trim()).filter(Boolean).map((option) => ({
+            id: Math.random().toString(36).slice(2, 9),
+            text: option,
+            voters: [] as string[],
+          })),
+        },
+      }
     : input.type === "note"
       ? {
-        noteColor: allowedNoteColors.has(String(input.noteColor || "")) ? input.noteColor : "amber",
-      }
+          noteColor: allowedNoteColors.has(String(input.noteColor || "")) ? input.noteColor : "amber",
+        }
       : undefined;
 
   if (!content && !input.attachmentId && !metadata) throw new Error("Message cannot be empty");
@@ -1026,7 +918,7 @@ export async function updateRoom(roomCode: string, user: AppUser, data: {
   const allowed = canManageRoom(user, (actorMember?.role as RoomRole) || null);
   if (!allowed) throw new Error("Not allowed");
 
-  const updateData: Prisma.ExternalChatRoomUpdateInput = {};
+  const updateData: any = {};
   if (data.name !== undefined) updateData.name = data.name.trim();
   if (data.description !== undefined) updateData.description = data.description.trim() || null;
   if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl || null;
@@ -1279,22 +1171,9 @@ export async function joinByInviteCode(inviteCode: string, user: AppUser) {
   });
   if (!room) throw new Error("Invalid invite code");
 
-  const currentCount = await prisma.externalChatRoomMember.count({
-    where: {
-      roomId: room.id,
-      removedAt: null,
-      leftAt: null,
-    },
-  });
   const existing = await prisma.externalChatRoomMember.findUnique({
     where: { roomId_userId: { roomId: room.id, userId: user.id } },
-    select: { leftAt: true, removedAt: true },
   });
-  const additionalCount = existing && !existing.leftAt && !existing.removedAt ? 0 : 1;
-  if (additionalCount > 0) {
-    assertGroupMemberLimit(currentCount, additionalCount);
-  }
-
   if (existing) {
     await prisma.externalChatRoomMember.update({
       where: { roomId_userId: { roomId: room.id, userId: user.id } },
@@ -1342,7 +1221,7 @@ export async function previewInviteCode(inviteCode: string, user: AppUser) {
   };
 }
 
-async function logActivity(roomId: string, userId: string, action: string, details?: Prisma.InputJsonValue) {
+async function logActivity(roomId: string, userId: string, action: string, details?: any) {
   await prisma.externalChatRoomActivityLog.create({
     data: { roomId, userId, action, details: details || {} },
   });
@@ -1370,28 +1249,23 @@ export async function getActivityLogs(roomCode: string, user: AppUser, limit: nu
 }
 
 export async function searchGroups(user: AppUser, query: string, limit: number = 20) {
-  const normalizedLimit = Math.max(1, Math.min(limit, 50));
-  const q = query.trim();
-  const where: Prisma.ExternalChatRoomWhereInput = {
-    type: "group",
-    archivedAt: null,
-    isDiscoverable: true,
-    members: {
-      some: {
-        userId: user.id,
-        removedAt: null,
-        leftAt: null,
+  const groups = await prisma.externalChatRoom.findMany({
+    where: {
+      type: "group",
+      archivedAt: null,
+      isDiscoverable: true,
+      OR: [
+        { name: { contains: query, mode: "insensitive" } },
+        { description: { contains: query, mode: "insensitive" } },
+      ],
+      members: {
+        some: {
+          userId: user.id,
+          removedAt: null,
+          leftAt: null,
+        },
       },
     },
-  };
-  if (q.length > 0) {
-    where.OR = [
-      { name: { contains: q, mode: "insensitive" } },
-      { description: { contains: q, mode: "insensitive" } },
-    ];
-  }
-  const groups = await prisma.externalChatRoom.findMany({
-    where,
     include: {
       members: {
         where: { removedAt: null, leftAt: null },
@@ -1402,7 +1276,7 @@ export async function searchGroups(user: AppUser, query: string, limit: number =
       },
     },
     orderBy: { updatedAt: "desc" },
-    take: normalizedLimit,
+    take: limit,
   });
 
   return groups;

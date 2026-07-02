@@ -12,24 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
-import {
-  CalendarCheck,
-  Copy,
-  RefreshCw,
-  Users,
-} from "lucide-react";
-
-/* ---------------- constants ---------------- */
-const TIME_OPTIONS = [
-  "08:00",
-  "09:00",
-  "10:00",
-  "11:00",
-  "13:00",
-  "14:00",
-  "15:00",
-  "16:00",
-];
+import { CalendarCheck, Copy, RefreshCw, Users } from "lucide-react";
 
 /* ---------------- types ---------------- */
 interface ScheduleApiMeeting {
@@ -45,8 +28,7 @@ interface ScheduleApiMeeting {
   updatedAt: string;
 }
 
-interface ScheduledMeeting
-  extends Omit<ScheduleApiMeeting, "scheduledFor"> {
+interface ScheduledMeeting extends Omit<ScheduleApiMeeting, "scheduledFor"> {
   scheduledFor: Date;
 }
 
@@ -56,10 +38,7 @@ const normalizeMeeting = (m: ScheduleApiMeeting): ScheduledMeeting => ({
   scheduledFor: new Date(m.scheduledFor),
 });
 
-const upsertMeeting = (
-  meetings: ScheduledMeeting[],
-  incoming: ScheduledMeeting
-) => {
+const upsertMeeting = (meetings: ScheduledMeeting[], incoming: ScheduledMeeting) => {
   const idx = meetings.findIndex((m) => m.id === incoming.id);
   if (idx !== -1) {
     const clone = [...meetings];
@@ -73,57 +52,76 @@ const upsertMeeting = (
 export default function ScheduleView() {
   const [meetings, setMeetings] = useState<ScheduledMeeting[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedTime, setSelectedTime] = useState("10:00");
-  const [title, setTitle] = useState("Team Strategy Sync");
-  const [attendees, setAttendees] = useState("team@company.com");
-  const [lastScheduled, setLastScheduled] =
-    useState<ScheduledMeeting | null>(null);
+  const [selectedHour, setSelectedHour] = useState("10");
+  const [selectedMinute, setSelectedMinute] = useState("00");
+  const [title, setTitle] = useState("");
+  const [attendeeInput, setAttendeeInput] = useState("");
+  const [attendeeList, setAttendeeList] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
+  const [lastScheduled, setLastScheduled] = useState<ScheduledMeeting | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [copyState, setCopyState] =
-    useState<"idle" | "copied" | "error">("idle");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  // ✅ Track copy state per card individually
+  const [cardCopyState, setCardCopyState] = useState<Record<string, "idle" | "copied">>({});
 
-  /* ---------- SAFE GET ---------- */
+  /* ---------- FETCH ---------- */
   const fetchMeetings = useCallback(async () => {
     setIsLoading(true);
     setGlobalError(null);
-
     try {
-      const res = await fetch("/api/schedule", { cache: "no-store" });
+      const res = await fetch("/api/schedule?all=true", { cache: "no-store" });
       const text = await res.text();
-
-      if (!text.trim().startsWith("{")) {
-        throw new Error("Schedule API returned invalid response");
-      }
-
+      if (!text.trim().startsWith("{")) throw new Error("Invalid response");
       const payload = JSON.parse(text);
-
-      if (!payload.success) {
-        throw new Error(payload.error || "Failed to load meetings");
-      }
-
+      if (!payload.success) throw new Error(payload.error || "Failed to load");
       setMeetings(payload.meetings.map(normalizeMeeting));
-    } catch (err: unknown) {
-      setGlobalError(err instanceof Error ? err.message : "Failed to load meetings");
+    } catch (err: any) {
+      setGlobalError(err.message);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchMeetings();
-  }, [fetchMeetings]);
+  useEffect(() => { fetchMeetings(); }, [fetchMeetings]);
 
-  /* ---------- SAFE POST ---------- */
+  /* ---------- ADD ATTENDEE ---------- */
+  const handleAddAttendee = () => {
+    const email = attendeeInput.trim();
+    if (!email.includes("@")) {
+      setFormError("Please enter a valid email address");
+      return;
+    }
+    if (attendeeList.includes(email)) {
+      setFormError("Email already added");
+      return;
+    }
+    setAttendeeList((prev) => [...prev, email]);
+    setAttendeeInput("");
+    setFormError(null);
+  };
+
+  const handleRemoveAttendee = (email: string) => {
+    setAttendeeList((prev) => prev.filter((a) => a !== email));
+  };
+
+  /* ---------- SUBMIT ---------- */
   const handleScheduleMeeting = async () => {
     setFormError(null);
-    setIsSubmitting(true);
 
+    if (!title.trim()) return setFormError("Please enter a meeting title");
+    if (attendeeList.length === 0) return setFormError("Please add at least one attendee");
+
+    const h = parseInt(selectedHour);
+    const m = parseInt(selectedMinute);
+    if (isNaN(h) || h < 0 || h > 23) return setFormError("Enter a valid hour (0–23)");
+    if (isNaN(m) || m < 0 || m > 59) return setFormError("Enter a valid minute (0–59)");
+
+    setIsSubmitting(true);
     try {
-      const [h, m] = selectedTime.split(":").map(Number);
       const scheduled = new Date(selectedDate);
       scheduled.setHours(h, m, 0, 0);
 
@@ -131,39 +129,38 @@ export default function ScheduleView() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title,
+          title: title.trim(),
           scheduledFor: scheduled.toISOString(),
-          attendees: attendees.split(",").map((a) => a.trim()),
+          attendees: attendeeList,
+          notes: notes.trim() || null,
         }),
       });
 
       const text = await res.text();
-
-      if (!text.trim().startsWith("{")) {
-        throw new Error("Schedule API returned invalid response");
-      }
-
+      if (!text.trim().startsWith("{")) throw new Error("Invalid response");
       const payload = JSON.parse(text);
-
-      if (!payload.success) {
-        throw new Error(payload.error || "Failed to schedule meeting");
-      }
+      if (!payload.success) throw new Error(payload.error || "Failed to schedule");
 
       const meeting = normalizeMeeting(payload.meeting);
       setMeetings((prev) => upsertMeeting(prev, meeting));
       setLastScheduled(meeting);
-    } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : "Failed to schedule meeting");
+
+      // Reset form
+      setTitle("");
+      setAttendeeList([]);
+      setNotes("");
+      setSelectedHour("10");
+      setSelectedMinute("00");
+    } catch (err: any) {
+      setFormError(err.message);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  /* ---------- helpers ---------- */
+  /* ---------- COPY LINK ---------- */
   const resolveLink = (link: string) =>
-    link.startsWith("http")
-      ? link
-      : `${window.location.origin}${link}`;
+    link.startsWith("http") ? link : `${window.location.origin}${link}`;
 
   const handleCopyLink = async (link: string) => {
     try {
@@ -175,6 +172,19 @@ export default function ScheduleView() {
     }
   };
 
+  // ✅ Copy link for individual meeting cards
+  const handleCardCopyLink = async (code: string) => {
+    try {
+      const link = `${window.location.origin}/meeting/${code}`;
+      await navigator.clipboard.writeText(link);
+      setCardCopyState((prev) => ({ ...prev, [code]: "copied" }));
+      setTimeout(() => setCardCopyState((prev) => ({ ...prev, [code]: "idle" })), 2000);
+    } catch {
+      // silent fail
+    }
+  };
+
+  /* ---------- DERIVED ---------- */
   const meetingsForDate = useMemo(
     () => meetings.filter((m) => isSameDay(m.scheduledFor, selectedDate)),
     [meetings, selectedDate]
@@ -188,14 +198,15 @@ export default function ScheduleView() {
   /* ================= UI ================= */
   return (
     <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold sm:text-3xl">Schedule</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">
+      {/* Header */}
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Schedule</h1>
+          <p className="text-sm text-muted-foreground">
             Plan upcoming meetings, share links, and keep everyone in sync
           </p>
         </div>
-        <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+        <div className="flex gap-3 text-sm text-muted-foreground">
           <span className="flex items-center gap-1">
             <CalendarCheck className="h-4 w-4" />
             {meetings.length} scheduled
@@ -211,17 +222,15 @@ export default function ScheduleView() {
         </div>
       </header>
 
-      {globalError && (
-        <div className="text-sm text-destructive">{globalError}</div>
-      )}
+      {globalError && <div className="text-sm text-destructive">{globalError}</div>}
 
       <section className="grid gap-6 lg:grid-cols-[360px_1fr]">
+
+        {/* Calendar */}
         <Card>
           <CardHeader>
             <CardTitle>Select a date</CardTitle>
-            <CardDescription>
-              Choose a day to view or add meetings
-            </CardDescription>
+            <CardDescription>Choose a day to view or add meetings</CardDescription>
           </CardHeader>
           <CardContent>
             <Calendar
@@ -229,55 +238,188 @@ export default function ScheduleView() {
               selected={selectedDate}
               onSelect={(d) => d && setSelectedDate(d)}
             />
+
+            {meetingsForDate.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-sm font-medium">
+                  {meetingsForDate.length} meeting(s) on {format(selectedDate, "MMM d")}:
+                </p>
+                {meetingsForDate.map((m) => (
+                  <div key={m.id} className="border rounded p-2 text-sm space-y-1">
+                    <p className="font-medium">{m.title}</p>
+                    <p className="text-muted-foreground">
+                      🕐 {format(m.scheduledFor, "hh:mm a")}
+                    </p>
+                    <p className="text-muted-foreground">
+                      👥 {m.attendees.join(", ")}
+                    </p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      m.status === "scheduled" ? "bg-blue-100 text-blue-700" :
+                      m.status === "live" ? "bg-green-100 text-green-700" :
+                      "bg-gray-100 text-gray-500"
+                    }`}>
+                      {m.status}
+                    </span>
+
+                    {/* ✅ ALWAYS VISIBLE — persistent Copy Link + Join as Host */}
+                    <div className="flex gap-2 pt-1 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCardCopyLink(m.code)}
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        {cardCopyState[m.code] === "copied" ? "Copied!" : "Copy link"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          window.location.href = `/meeting/join?room=${m.code}&host=true`;
+                        }}
+                      >
+                        Join as Host
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* Schedule Form */}
         <Card>
           <CardHeader>
             <CardTitle>Schedule a meeting</CardTitle>
             <CardDescription>
-              Generate a meeting link and notify participants
+              Fill in details and invite participants via email
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
 
-            <select
-              value={selectedTime}
-              onChange={(e) => setSelectedTime(e.target.value)}
-              className="w-full border rounded p-2"
-            >
-              {TIME_OPTIONS.map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </select>
+            {/* Title */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Meeting Title</label>
+              <Input
+                placeholder="e.g. Team Standup, Project Review"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
 
-            <Input
-              value={attendees}
-              onChange={(e) => setAttendees(e.target.value)}
-            />
+            {/* Time */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Meeting Time</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  placeholder="HH"
+                  value={selectedHour}
+                  onChange={(e) => setSelectedHour(e.target.value)}
+                  className="w-20 px-3 py-2 rounded-md border border-input bg-background text-foreground text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <span className="text-xl font-bold text-foreground">:</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  placeholder="MM"
+                  value={selectedMinute}
+                  onChange={(e) => setSelectedMinute(e.target.value)}
+                  className="w-20 px-3 py-2 rounded-md border border-input bg-background text-foreground text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <span className="text-sm text-muted-foreground">24hr format (0–23 : 0–59)</span>
+              </div>
+            </div>
+
+            {/* Attendees */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Add Attendees</label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter email e.g. john@gmail.com"
+                  value={attendeeInput}
+                  onChange={(e) => setAttendeeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddAttendee()}
+                />
+                <Button variant="outline" onClick={handleAddAttendee}>
+                  Add
+                </Button>
+              </div>
+              {attendeeList.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {attendeeList.map((email) => (
+                    <span
+                      key={email}
+                      className="flex items-center gap-1 bg-muted px-2 py-1 rounded-full text-xs"
+                    >
+                      {email}
+                      <button
+                        onClick={() => handleRemoveAttendee(email)}
+                        className="text-muted-foreground hover:text-destructive ml-1"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Press Enter or click Add. Each attendee receives an email invite.
+              </p>
+            </div>
+
+            {/* Notes */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Notes (optional)</label>
+              <Input
+                placeholder="e.g. Bring your updates, agenda link..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
 
             {formError && (
               <div className="text-sm text-destructive">{formError}</div>
             )}
 
-            <Button onClick={handleScheduleMeeting} disabled={isSubmitting}>
-              Generate link & schedule
+            <Button
+              onClick={handleScheduleMeeting}
+              disabled={isSubmitting}
+              className="w-full"
+            >
+              {isSubmitting ? "Scheduling..." : "Generate link & schedule"}
             </Button>
 
+            {/* Result */}
             {lastScheduled && (
-              <div className="border p-3 rounded space-y-2">
-                <code className="block text-sm">
+              <div className="border p-3 rounded space-y-2 bg-muted/30">
+                <p className="text-sm font-medium text-green-600">
+                  ✅ Meeting scheduled! Invites sent to {lastScheduled.attendees.length} attendee(s)
+                </p>
+                <code className="block text-sm break-all">
                   {resolveLink(lastScheduled.link)}
                 </code>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => handleCopyLink(lastScheduled.link)}
-                >
-                  <Copy className="h-4 w-4 mr-1" />
-                  {copyState === "copied" ? "Copied" : "Copy link"}
-                </Button>
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleCopyLink(lastScheduled.link)}
+                  >
+                    <Copy className="h-4 w-4 mr-1" />
+                    {copyState === "copied" ? "Copied!" : "Copy link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = `/meeting/join?room=${lastScheduled.code}&host=true`;
+                    }}
+                  >
+                    Join as Host
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

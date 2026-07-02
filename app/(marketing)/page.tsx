@@ -25,13 +25,9 @@ const HomePage = async () => {
   return (
     <div className="overflow-x-hidden scrollbar-hide size-full">
       <MaxWidthWrapper>
-        <div className="flex w-full flex-col items-center justify-center bg-background text-center">
+        <div className="flex flex-col items-center justify-center w-full text-center bg-linear-to-t from-background">
           <AnimationContainer className="flex flex-col items-center justify-center w-full text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/80 px-4 py-1 text-sm text-card-foreground shadow-sm backdrop-blur-sm">
-              <span>Advanced AI</span>
-              <ArrowRightIcon className="size-3" />
-            </div>
-            <div className="hidden">
+            <button className="group relative grid overflow-hidden rounded-full px-4 py-1 shadow-[0_1000px_0_0_hsl(0_0%_20%)_inset] transition-colors duration-200">
               <span>
                 <span className="spark mask-gradient absolute inset-0 h-full w-full animate-flip overflow-hidden rounded-full [mask:linear-gradient(white,transparent_50%)] before:absolute before:aspect-square before:w-[200%] before:-rotate-90 before:animate-rotate before:bg-[conic-gradient(from_0deg,transparent_0_340deg,white_360deg)] before:content-[''] before:inset-[0_auto_auto_50%] before:[translate:-50%_-15%]" />
               </span>
@@ -41,10 +37,10 @@ const HomePage = async () => {
                 ✨ Advanced AI
                 <ArrowRightIcon className="ml-1 size-3 transition-transform duration-300 ease-in-out group-hover:translate-x-0.5" />
               </span>
-            </div>
+            </button>
             <h1 className="text-foreground text-center py-6 text-5xl font-medium tracking-normal text-balance sm:text-6xl md:text-7xl lg:text-8xl leading-[1.15]! w-full font-heading">
               AI{" "}
-              <span className="text-transparent bg-linear-to-r from-violet-500 to-fuchsia-500 bg-clip-text inline-block">
+              <span className="text-transparent bg-linear-to-r from-violet-500 to-fuchsia-500 bg-clip-text inline-bloc">
                 Interview{" "}
               </span>
               <span className="text-transparent bg-linear-to-r from-violet-500 to-fuchsia-500 bg-clip-text inline-block">
@@ -220,7 +216,7 @@ const HomePage = async () => {
               What our users are saying
             </h2>
             <p className="mt-4 text-center lg:text-center text-lg text-muted-foreground max-w-lg">
-                Here&apos;s what some of our users have to say about AIConnect.
+              Here&apos;s what some of our users have to say about Linkify.
             </p>
           </div>
         </AnimationContainer>

@@ -27,10 +27,12 @@ export async function POST(req: NextRequest) {
         result.stdout ||
         result.stderr ||
         result.compile_output ||
+        result.message ||
+        result.status?.description ||
         "No output",
     });
 
-  } catch (_error) {
+  } catch (error) {
 
     return NextResponse.json({
       output: "Execution failed",

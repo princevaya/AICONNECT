@@ -2,20 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type SpeechRecognitionEventLike = {
-  results: ArrayLike<ArrayLike<{ transcript: string }>>;
-};
-
-type SpeechRecognitionLike = {
-  lang: string;
-  onstart: (() => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-};
-
-type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
-
 /* 🔹 Interview Questions */
 const QUESTIONS = [
   "Tell me about yourself.",
@@ -27,7 +13,7 @@ const QUESTIONS = [
 export default function LiveInterviewPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
 
   const [aiText, setAiText] = useState("");
@@ -42,6 +28,7 @@ export default function LiveInterviewPage() {
       .getUserMedia({ video: true, audio: true })
       .then((mediaStream) => {
         localStream = mediaStream;
+        setStream(mediaStream);
 
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
@@ -69,33 +56,18 @@ export default function LiveInterviewPage() {
 
   /* ================= ASK QUESTION ================= */
   useEffect(() => {
-    // Avoid calling setState during the same synchronous render pass.
-    // Speech + any state updates inside `speakAI` are deferred.
-    const id = window.setTimeout(() => {
-      if (questionIndex < QUESTIONS.length) {
-        speakAI(QUESTIONS[questionIndex]);
-      } else {
-        speakAI("Thank you. Your interview is completed.");
-      }
-    }, 0);
-
-    return () => window.clearTimeout(id);
+    if (questionIndex < QUESTIONS.length) {
+      speakAI(QUESTIONS[questionIndex]);
+    } else {
+      speakAI("Thank you. Your interview is completed.");
+    }
   }, [questionIndex]);
-
 
   /* ================= USER SPEAK ================= */
   const startListening = () => {
-    const SpeechRecognitionCtor =
-      (window as unknown as { SpeechRecognition?: SpeechRecognitionCtor })
-        .SpeechRecognition ||
-      (window as unknown as {
-        webkitSpeechRecognition?: SpeechRecognitionCtor;
-      })
-        .webkitSpeechRecognition;
-
-    const SpeechRecognition = SpeechRecognitionCtor as
-      | SpeechRecognitionCtor
-      | undefined;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       alert("Speech Recognition not supported in this browser");
@@ -107,10 +79,8 @@ export default function LiveInterviewPage() {
 
     recognition.onstart = () => setListening(true);
 
-    recognition.onresult = (
-      event: SpeechRecognitionEventLike
-    ) => {
-      setUserText(event.results[0]?.[0]?.transcript ?? "");
+    recognition.onresult = (event: any) => {
+      setUserText(event.results[0][0].transcript);
 
       setTimeout(() => {
         setQuestionIndex((prev) => prev + 1);
@@ -124,9 +94,9 @@ export default function LiveInterviewPage() {
 
   /* ================= UI ================= */
   return (
-    <div className="flex min-h-dvh flex-col gap-4 bg-gray-100 p-4 sm:p-6 lg:flex-row">
+    <div className="h-screen flex gap-6 p-6 bg-gray-100">
       {/* 👤 USER VIDEO */}
-      <div className="flex-1 rounded-xl bg-black p-4 text-white">
+      <div className="flex-1 bg-black rounded-xl p-4 text-white">
         <h2 className="mb-2 text-lg font-semibold">You</h2>
 
         <video
@@ -134,18 +104,18 @@ export default function LiveInterviewPage() {
           autoPlay
           muted
           playsInline
-          className="aspect-video w-full rounded-lg object-cover"
+          className="w-full h-[80%] object-cover rounded-lg"
         />
       </div>
 
       {/* 🤖 AI INTERVIEWER */}
-      <div className="flex-1 rounded-xl bg-white p-6 text-center">
+      <div className="flex-1 bg-white rounded-xl p-6 text-center">
         <h2 className="text-lg font-semibold mb-4">AI Interviewer</h2>
 
         <img
           src="/ai/ai-avatar.jpg"
           alt="AI Avatar"
-          className="mx-auto h-40 w-40 rounded-full object-cover sm:h-56 sm:w-56"
+          className="w-56 h-56 mx-auto rounded-full object-cover"
         />
 
         <p className="mt-6 text-gray-800">

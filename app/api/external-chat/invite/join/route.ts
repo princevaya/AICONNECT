@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     const m = error instanceof Error ? error.message.toLowerCase() : "";
-    const status = m.includes("not found") ? 404 : m.includes("not allowed") ? 403 : m.includes("limit exceeded") || m.includes("maximum is") ? 400 : 500;
+    const status = m.includes("not found") ? 404 : m.includes("not allowed") ? 403 : 500;
     return toError(error, "Failed to join with invite code", status);
   }
 }

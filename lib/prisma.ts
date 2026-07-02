@@ -26,58 +26,70 @@ function normalizeConnectionString(input: string) {
   }
 }
 
-const primaryConnectionString = process.env.DATABASE_URL || "";
-const fallbackConnectionString = process.env.CHAT_DATABASE_URL || "";
-const rawConnectionString = primaryConnectionString || fallbackConnectionString;
-
-if (!rawConnectionString) {
-  throw new Error("DATABASE_URL or CHAT_DATABASE_URL must be set.");
-}
-
-const connectionString = normalizeConnectionString(rawConnectionString);
-const isSupabaseConnection = /supabase\.(co|com)/i.test(rawConnectionString);
-const forceSsl =
-  isSupabaseConnection ||
-  process.env.NODE_ENV === "production" ||
-  /sslmode=require/i.test(rawConnectionString) ||
-  process.env.PGSSLMODE === "require";
-
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
   prismaPool?: Pool;
   prismaPoolKey?: string;
 };
 
-const poolKey = JSON.stringify({
-  connectionString,
-  forceSsl,
-});
+function createPrismaClient() {
+  const primaryConnectionString = process.env.DATABASE_URL || "";
+  const fallbackConnectionString = process.env.CHAT_DATABASE_URL || "";
+  const rawConnectionString = primaryConnectionString || fallbackConnectionString;
 
-if (globalForPrisma.prismaPool && globalForPrisma.prismaPoolKey !== poolKey) {
-  void globalForPrisma.prismaPool.end().catch(() => undefined);
-  globalForPrisma.prismaPool = undefined;
-  globalForPrisma.prisma = undefined;
-}
+  if (!rawConnectionString) {
+    throw new Error("DATABASE_URL or CHAT_DATABASE_URL must be set.");
+  }
 
-const pool =
-  globalForPrisma.prismaPool ??
-  new Pool({
+  const connectionString = normalizeConnectionString(rawConnectionString);
+  const isSupabaseConnection = /supabase\.(co|com)/i.test(rawConnectionString);
+  const forceSsl =
+    isSupabaseConnection ||
+    process.env.NODE_ENV === "production" ||
+    /sslmode=require/i.test(rawConnectionString) ||
+    process.env.PGSSLMODE === "require";
+
+  const poolKey = JSON.stringify({
     connectionString,
-    max: 10,
-    ssl: forceSsl ? { rejectUnauthorized: false } : undefined,
+    forceSsl,
   });
 
-const adapter = new PrismaPg(pool);
+  if (globalForPrisma.prismaPool && globalForPrisma.prismaPoolKey !== poolKey) {
+    void globalForPrisma.prismaPool.end().catch(() => undefined);
+    globalForPrisma.prismaPool = undefined;
+    globalForPrisma.prisma = undefined;
+  }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+  const pool =
+    globalForPrisma.prismaPool ??
+    new Pool({
+      connectionString,
+      max: 10,
+      connectionTimeoutMillis: 5000,
+      ssl: forceSsl ? { rejectUnauthorized: false } : undefined,
+    });
+
+  const adapter = new PrismaPg(pool);
+  const client = new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prismaPool = pool;
-  globalForPrisma.prismaPoolKey = poolKey;
-  globalForPrisma.prisma = prisma;
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.prismaPool = pool;
+    globalForPrisma.prismaPoolKey = poolKey;
+    globalForPrisma.prisma = client;
+  }
+
+  return client;
 }
+
+function getPrismaClient() {
+  return globalForPrisma.prisma ?? createPrismaClient();
+}
+
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getPrismaClient(), prop, receiver);
+  },
+});

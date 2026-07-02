@@ -1,5 +1,10 @@
 # 🧩 Local Development Guide — Next.js Project (using pnpm)
 
+## Deployment
+
+- Frontend on Vercel + backend on Render: see `DEPLOY_VERCEL_RENDER.md`.
+- For managed Postgres setup (Supabase/Neon) before deploy, see `DEPLOY_VERCEL_RENDER.md` section "Database Setup (Supabase or Neon)".
+
 ---
 
 ## **1. Prerequisites**
@@ -53,7 +58,7 @@ This creates a local `.pnpm-store` and links dependencies efficiently.
 Create a `.env.local` file in the project root:
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
 Then update it with your local configuration:

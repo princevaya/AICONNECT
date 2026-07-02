@@ -1,11 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Video,
   VideoOff,
@@ -15,6 +12,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  Monitor,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,8 +24,6 @@ interface MediaDevices {
 }
 
 export default function MeetingPage() {
-  const router = useRouter();
-  const [meetingCode, setMeetingCode] = useState("");
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const [mediaDevices, setMediaDevices] = useState<MediaDevices>({
@@ -36,7 +32,6 @@ export default function MeetingPage() {
   });
   const [isReady, setIsReady] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>(
     []
@@ -76,12 +71,12 @@ export default function MeetingPage() {
         setSelectedMicrophone(microphones[0].deviceId);
 
       setIsReady(true);
-    } catch (error: unknown) {
+    } catch (error: any) {
       console.error("Error accessing media devices:", error);
-      const mediaError = error as DOMException | { name?: string };
+
       if (
-        mediaError.name === "NotAllowedError" ||
-        mediaError.name === "PermissionDeniedError"
+        error.name === "NotAllowedError" ||
+        error.name === "PermissionDeniedError"
       ) {
         setMediaDevices({
           camera: "denied",
@@ -96,16 +91,14 @@ export default function MeetingPage() {
     }
   };
   useEffect(() => {
-    streamRef.current = stream;
-  }, [stream]);
-
-  useEffect(() => {
     (async () => {
       await checkPermissionsAndDevices();
     })();
 
     return () => {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
     };
   }, []);
 
@@ -178,9 +171,9 @@ export default function MeetingPage() {
   };
 
   const joinMeeting = () => {
-    const trimmedCode = meetingCode.trim();
-    if (!trimmedCode) return;
-    router.push(`/meeting/join?room=${encodeURIComponent(trimmedCode)}`);
+    // This will be replaced with actual LiveKit room join logic
+    console.log("Joining meeting...");
+    alert("Meeting join functionality will be implemented with LiveKit");
   };
 
   const getStatusIcon = (status: DeviceStatus) => {
@@ -342,27 +335,6 @@ export default function MeetingPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Meeting Code</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="meeting-code">Room code</Label>
-                  <Input
-                    id="meeting-code"
-                    value={meetingCode}
-                    onChange={(e) => setMeetingCode(e.target.value)}
-                    placeholder="Enter your room code"
-                    autoComplete="off"
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Enter the code shared by the host to continue to the join screen.
-                </p>
-              </CardContent>
-            </Card>
-
             {/* Device Selection */}
             {isReady && (
               <Card>
@@ -412,8 +384,7 @@ export default function MeetingPage() {
               disabled={
                 !isReady ||
                 mediaDevices.camera === "denied" ||
-                mediaDevices.microphone === "denied" ||
-                !meetingCode.trim()
+                mediaDevices.microphone === "denied"
               }
               onClick={joinMeeting}
             >

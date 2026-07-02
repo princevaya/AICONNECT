@@ -2,20 +2,10 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import {
-  AbortMultipartUploadCommand,
-  CompleteMultipartUploadCommand,
-  CreateMultipartUploadCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  UploadPartCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
 import { AppUser } from "@/services/user.service";
-import { queueTranscriptionJob } from "@/services/external-chat/transcription.service";
 
 const MAX_SIZE = Number(process.env.EXTERNAL_CHAT_MAX_UPLOAD_BYTES || 25 * 1024 * 1024);
 const LOCAL_ROOT = path.join(process.cwd(), "storage", "chat-system");
@@ -170,15 +160,6 @@ export async function uploadAttachment(input: {
     },
   });
 
-  if (created.mimeType.startsWith("audio/")) {
-    await queueTranscriptionJob({
-      actor: input.uploader,
-      attachmentId: created.id,
-      provider: "whisper",
-      language: "auto",
-    }).catch(() => undefined);
-  }
-
   return {
     id: created.id,
     fileName: created.fileName,
@@ -258,130 +239,4 @@ export async function cleanupAttachmentIfUnused(attachmentId: string) {
   }
 
   await prisma.externalChatAttachment.delete({ where: { id: file.id } }).catch(() => undefined);
-}
-
-export function externalChatSupportsMultipartUploads() {
-  return Boolean(s3Client && BUCKET);
-}
-
-export async function createMultipartUploadSession(input: {
-  roomCode: string;
-  uploader: AppUser;
-  fileName: string;
-  mimeType: string;
-  totalSizeBytes: number;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  const key = s3Key({
-    roomCode: input.roomCode,
-    uploader: input.uploader.clerkId,
-    originalName: input.fileName,
-  });
-
-  const response = await s3Client.send(
-    new CreateMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ContentType: input.mimeType || "application/octet-stream",
-      ContentDisposition: `attachment; filename="${sanitize(input.fileName) || "file"}"`,
-    })
-  );
-
-  if (!response.UploadId) {
-    throw new Error("Unable to create upload session");
-  }
-
-  return {
-    storageProvider: "s3",
-    storageKey: key,
-    multipartUploadId: response.UploadId,
-    bucket: BUCKET,
-    region: REGION,
-  };
-}
-
-export async function createMultipartUploadPartUrl(input: {
-  storageKey: string;
-  partNumber: number;
-  uploadId: string;
-  mimeType: string;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  const url = await getSignedUrl(
-    s3Client,
-    new UploadPartCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-      PartNumber: input.partNumber,
-    }),
-    { expiresIn: TTL }
-  );
-
-  return { uploadUrl: url };
-}
-
-export async function completeMultipartUploadSession(input: {
-  storageKey: string;
-  uploadId: string;
-  parts: Array<{ partNumber: number; etag: string }>;
-}) {
-  if (!s3Client || !BUCKET) {
-    throw new Error("S3 is not configured");
-  }
-
-  await s3Client.send(
-    new CompleteMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-      MultipartUpload: {
-        Parts: input.parts
-          .sort((left, right) => left.partNumber - right.partNumber)
-          .map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })),
-      },
-    })
-  );
-}
-
-export async function abortMultipartUploadSession(input: { storageKey: string; uploadId: string }) {
-  if (!s3Client || !BUCKET) return;
-
-  await s3Client.send(
-    new AbortMultipartUploadCommand({
-      Bucket: BUCKET,
-      Key: input.storageKey,
-      UploadId: input.uploadId,
-    })
-  ).catch(() => undefined);
-}
-
-// NEW: Get upload progress for a session
-export async function getUploadProgress(sessionId: string, actor: AppUser) {
-  const session = await prisma.externalChatUploadSession.findUnique({
-    where: { id: sessionId },
-    include: {
-      chunks: true,
-    },
-  });
-  if (!session) throw new Error("Upload session not found");
-  
-  const completedChunks = session.chunks.filter(chunk => chunk.uploadedAt !== null).length;
-  const progress = session.totalChunks > 0 ? (completedChunks / session.totalChunks) * 100 : 0;
-  
-  return {
-    sessionId: session.id,
-    totalChunks: session.totalChunks,
-    completedChunks,
-    progress: Math.round(progress),
-    status: session.status,
-    fileName: session.fileName,
-    totalSizeBytes: Number(session.totalSizeBytes),
-  };
 }

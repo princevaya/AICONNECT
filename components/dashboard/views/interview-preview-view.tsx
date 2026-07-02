@@ -66,9 +66,9 @@ export default function InterviewPreviewView() {
 
   /* ================= UI ================= */
   return (
-    <div className="flex min-h-dvh flex-col gap-4 bg-gray-100 p-4 sm:p-6 lg:flex-row">
+    <div className="h-screen flex gap-6 p-6 bg-gray-100">
       {/* 👤 USER PREVIEW */}
-      <div className="flex-1 rounded-xl bg-black p-4 text-white">
+      <div className="flex-1 bg-black rounded-xl p-4 text-white">
         <h2 className="mb-2 text-lg font-semibold">You</h2>
 
         <video
@@ -76,20 +76,20 @@ export default function InterviewPreviewView() {
           autoPlay
           muted
           playsInline
-          className="aspect-video w-full rounded-lg object-cover"
+          className="w-full h-[80%] object-cover rounded-lg"
         />
 
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+        <div className="flex gap-4 mt-4">
           <button
             onClick={toggleCamera}
-            className="rounded bg-gray-700 px-4 py-2 hover:bg-gray-600"
+            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600"
           >
             {cameraOn ? "Camera OFF" : "Camera ON"}
           </button>
 
           <button
             onClick={toggleMic}
-            className="rounded bg-gray-700 px-4 py-2 hover:bg-gray-600"
+            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600"
           >
             {micOn ? "Mic OFF" : "Mic ON"}
           </button>
@@ -97,13 +97,13 @@ export default function InterviewPreviewView() {
       </div>
 
       {/* 🤖 AI PREVIEW */}
-      <div className="flex-1 rounded-xl bg-white p-6 text-center">
+      <div className="flex-1 bg-white rounded-xl p-6 text-center">
         <h2 className="text-lg font-semibold mb-4">AI Interviewer</h2>
 
         <img
           src="/ai/ai-avatar.jpg"
           alt="AI Interviewer Avatar"
-          className="mx-auto h-40 w-40 rounded-full object-cover sm:h-60 sm:w-60"
+          className="w-60 h-60 mx-auto rounded-full object-cover"
         />
 
         <p className="mt-6 text-gray-600">
@@ -116,7 +116,7 @@ export default function InterviewPreviewView() {
         <button
           onClick={() => router.push("/dashboard/ai-interview/live")}
           disabled={!permissionGranted || !cameraOn || !micOn}
-          className={`mt-8 rounded-lg px-6 py-3 text-white transition ${
+          className={`mt-8 px-6 py-3 rounded-lg text-white transition ${
             permissionGranted && cameraOn && micOn
               ? "bg-blue-600 hover:bg-blue-700"
               : "bg-gray-400 cursor-not-allowed"

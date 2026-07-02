@@ -58,7 +58,9 @@ const describeMeetingTime = (date: Date) => {
     return "Date pending";
   }
 
-  return isToday(date) ? `Today, ${format(date, "p")}` : format(date, "PP p");
+  return isToday(date)
+    ? `Today, ${format(date, "p")}`
+    : format(date, "PP p");
 };
 
 const summarizeAttendees = (attendees: string[]) => {
@@ -78,14 +80,16 @@ export default function OverviewView({
 }: {
   setActiveView: (view: "overview" | "recording" | "schedule") => void;
 }) {
+
   const router = useRouter();
   const { user } = useUser();
+
   const [meetingCode, setMeetingCode] = useState("");
-  const [upcomingMeetings, setUpcomingMeetings] = useState<UpcomingMeeting[]>(
-    []
-  );
+
+  const [upcomingMeetings, setUpcomingMeetings] = useState<UpcomingMeeting[]>([]);
   const [isLoadingUpcoming, setIsLoadingUpcoming] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
+
 
   const handleCreateMeeting = () => {
     if (!user) return;
@@ -117,174 +121,169 @@ export default function OverviewView({
     router.push(`/meeting/join?room=${encodeURIComponent(room)}`);
   };
 
-const fetchUpcomingMeetings = useCallback(async () => {
-  setIsLoadingUpcoming(true);
-  setUpcomingError(null);
+  const fetchUpcomingMeetings = useCallback(async () => {
 
-  try {
-    const response = await fetch("/api/schedule", { cache: "no-store" });
-    const payload = await response.json();
+    setIsLoadingUpcoming(true);
+    setUpcomingError(null);
 
-    if (!response.ok) {
-      throw new Error(payload?.error || "Failed to load upcoming meetings");
+    try {
+
+      const response = await fetch("/api/schedule", { cache: "no-store" });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load upcoming meetings");
+      }
+
+      if (!Array.isArray(payload?.data)) {
+        throw new Error("Invalid upcoming meetings response");
+      }
+
+      setUpcomingMeetings(payload.data.map(normalizeMeeting));
+
+    } catch (error) {
+
+      console.error(error);
+
+      setUpcomingError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load upcoming meetings"
+      );
+
+    } finally {
+
+      setIsLoadingUpcoming(false);
+
     }
 
-    if (!Array.isArray(payload?.data)) {
-      throw new Error("Invalid upcoming meetings response");
-    }
+  }, []);
 
-    setUpcomingMeetings(payload.data.map(normalizeMeeting));
-  } catch (error) {
-    console.error("Failed to load upcoming meetings", error);
-    setUpcomingError(
-      error instanceof Error
-        ? error.message
-        : "Unable to load upcoming meetings"
-    );
-  } finally {
-    setIsLoadingUpcoming(false);
-  }
-}, []);
 
   const upcomingPreview = useMemo(
     () => upcomingMeetings.slice(0, 3),
     [upcomingMeetings]
   );
 
+
   return (
+
     <div className="space-y-8">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold sm:text-3xl">Welcome back!</h1>
-          <p className="text-sm text-muted-foreground sm:text-base">
+
+      <header className="flex items-center justify-between">
+
+        <div>
+
+          <h1 className="text-2xl font-semibold">
+            Welcome back!
+          </h1>
+
+          <p className="text-sm text-muted-foreground">
             Start or join a meeting in seconds
           </p>
+
         </div>
+
       </header>
 
+
+
       <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Create New Meeting Card */}
+
+
+        {/* CREATE MEETING */}
         <Card className="border-2 hover:border-primary/50 transition-colors">
+
           <CardHeader>
+
             <div className="flex items-center gap-3">
+
               <div className="p-3 rounded-lg bg-primary/10">
-                <Video className="h-6 w-6 text-primary" />
+                <Video className="h-6 w-6 text-primary"/>
               </div>
+
               <div>
                 <CardTitle>New Meeting</CardTitle>
-                <CardDescription>Start an instant meeting</CardDescription>
+                <CardDescription>
+                  Start an instant meeting
+                </CardDescription>
               </div>
+
             </div>
+
           </CardHeader>
+
+
           <CardContent className="space-y-4">
+
             <p className="text-sm text-muted-foreground">
-              Create a new meeting room and share the link with your team or
-              clients
+              Create a new meeting room and share the link
             </p>
-            <Button className="w-full" size="lg" onClick={handleCreateMeeting}>
-              <Plus className="mr-2 h-5 w-5" />
+
+            <Button
+              className="w-full"
+              size="lg"
+              onClick={handleCreateMeeting}
+            >
+              <Plus className="mr-2 h-5 w-5"/>
               Create Meeting
             </Button>
+
           </CardContent>
+
         </Card>
 
-        {/* Join Meeting Card */}
+
+
+        {/* JOIN MEETING */}
         <Card className="border-2 hover:border-primary/50 transition-colors">
+
           <CardHeader>
+
             <div className="flex items-center gap-3">
+
               <div className="p-3 rounded-lg bg-blue-500/10">
-                <Users className="h-6 w-6 text-blue-600" />
+                <Users className="h-6 w-6 text-blue-600"/>
               </div>
+
               <div>
                 <CardTitle>Join Meeting</CardTitle>
-                <CardDescription>Enter a meeting code</CardDescription>
+                <CardDescription>
+                  Enter a meeting code
+                </CardDescription>
               </div>
+
             </div>
+
           </CardHeader>
+
+
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Input
-                placeholder="Enter meeting code or link"
-                className="h-11"
-                value={meetingCode}
-                onChange={(e) => setMeetingCode(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleJoinMeeting()}
-              />
-            </div>
+
+            <Input
+              className="h-11"
+              value={meetingCode}
+              onChange={(e) => setMeetingCode(e.target.value)}
+            />
+
             <Button
               variant="outline"
               className="w-full"
               size="lg"
               onClick={handleJoinMeeting}
-              disabled={!meetingCode.trim()}
             >
               Join
             </Button>
+
           </CardContent>
+
         </Card>
 
-        {/* Schedule Interview Card */}
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-lg bg-green-500/10">
-                <Calendar className="h-6 w-6 text-green-600" />
-              </div>
-              <div>
-                <CardTitle>Schedule Meeting</CardTitle>
-                <CardDescription>Plan for later</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Plan a future session with calendar integration and smart
-              reminders
-            </p>
-            <Button
-              variant="outline"
-              className="w-full"
-              size="lg"
-              onClick={() => setActiveView("schedule")}
-            >
-              <Calendar className="mr-2 h-5 w-5" />
-              Schedule
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Recent Recordings Card */}
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-lg bg-purple-500/10">
-                <PlayCircle className="h-6 w-6 text-purple-600" />
-              </div>
-              <div>
-                <CardTitle>Recordings</CardTitle>
-                <CardDescription>View past sessions</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Access and review all your recorded meeting sessions
-            </p>
-            <Button
-              variant="outline"
-              className="w-full"
-              size="lg"
-              onClick={() => setActiveView("recording")}
-            >
-              <PlayCircle className="mr-2 h-5 w-5" />
-              View Recordings
-            </Button>
-          </CardContent>
-        </Card>
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <Card className="border-2 transition-colors hover:border-primary/50">
+        <Card className="border-2 hover:border-primary/50 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="p-3 rounded-lg bg-amber-500/10">
@@ -436,5 +435,7 @@ const fetchUpcomingMeetings = useCallback(async () => {
         </Card>
       </section>
     </div>
+
   );
+
 }

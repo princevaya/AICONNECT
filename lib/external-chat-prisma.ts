@@ -4,32 +4,16 @@ import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
 
-const rawConnectionString =
-  process.env.CHAT_DIRECT_URL ||
-  process.env.CHAT_DATABASE_URL ||
-  process.env.DIRECT_URL ||
-  process.env.DATABASE_URL;
-
+const rawConnectionString = process.env.CHAT_DATABASE_URL || process.env.DATABASE_URL;
 if (!rawConnectionString) {
-  console.error("[External Chat] No database URL found. Please set CHAT_DATABASE_URL, CHAT_DIRECT_URL, DIRECT_URL, or DATABASE_URL");
+  throw new Error("CHAT_DATABASE_URL or DATABASE_URL must be set.");
 }
 
-export function normalizeExternalChatConnectionString(input: string | undefined) {
-  if (!input) return "";
-  
+export function normalizeExternalChatConnectionString(input: string) {
   let value = input.trim();
 
   if (value.startsWith("CHAT_DATABASE_URL=")) {
     value = value.slice("CHAT_DATABASE_URL=".length);
-  }
-  if (value.startsWith("CHAT_DIRECT_URL=")) {
-    value = value.slice("CHAT_DIRECT_URL=".length);
-  }
-  if (value.startsWith("DIRECT_URL=")) {
-    value = value.slice("DIRECT_URL=".length);
-  }
-  if (value.startsWith("DATABASE_URL=")) {
-    value = value.slice("DATABASE_URL=".length);
   }
 
   value = value.replace(/^["']|["']$/g, "");
@@ -42,39 +26,30 @@ export function normalizeExternalChatConnectionString(input: string | undefined)
   try {
     const url = new URL(value);
     const isSupabasePooler = /pooler\.supabase\.com$/i.test(url.hostname);
-    
     if (isSupabasePooler && !url.username.includes(".")) {
-      let projectRef = "";
-      const primaryDbUrl = process.env.DATABASE_URL || "";
-      const primaryMatch = primaryDbUrl.match(/postgresql:\/\/([^.]+)\.([^:]+):/);
-      if (primaryMatch && primaryMatch[1] && primaryMatch[2]) {
-        projectRef = primaryMatch[2];
-      }
-      if (!projectRef && url.username.includes("postgres.")) {
-        projectRef = url.username.split(".")[1];
-      }
+      const projectRefFromEnv =
+        process.env.CHAT_SUPABASE_PROJECT_REF ||
+        process.env.SUPABASE_PROJECT_REF ||
+        "";
+      const projectRefFromPrimaryDb = (() => {
+        const primary = process.env.DATABASE_URL || "";
+        const match = primary.match(/db\.([a-z0-9]+)\.supabase\.co/i);
+        return match?.[1] || "";
+      })();
+      const projectRef = projectRefFromEnv || projectRefFromPrimaryDb;
       if (projectRef) {
-        url.username = `postgres.${projectRef}`;
+        url.username = `${url.username}.${projectRef}`;
       }
     }
 
+    // Prevent libpq SSL params from overriding explicit Pool ssl config.
     url.searchParams.delete("sslmode");
     url.searchParams.delete("sslcert");
     url.searchParams.delete("sslkey");
     url.searchParams.delete("sslrootcert");
-    
-    if (!url.searchParams.has("connect_timeout")) {
-      url.searchParams.set("connect_timeout", "30");
-    }
-    
-    // Add statement timeout to prevent long-running queries
-    if (!url.searchParams.has("statement_timeout")) {
-      url.searchParams.set("statement_timeout", "30000");
-    }
-    
     return url.toString();
-  } catch (error) {
-    console.error("[External Chat] Failed to parse connection string:", error);
+  } catch {
+    // Fallback for malformed strings: strip SSL params with regex.
     const stripped = value
       .replace(/([?&])(sslmode|sslcert|sslkey|sslrootcert)=[^&]*/gi, "$1")
       .replace(/\?&/, "?")
@@ -101,20 +76,20 @@ export function resolveExternalChatSslConfig(forceSslEnabled: boolean) {
         ca: fs.readFileSync(candidate, "utf8"),
       };
     } catch {
-      // Ignore bad cert reads
+      // Ignore bad cert reads and continue with next candidate.
     }
   }
 
   return { rejectUnauthorized: false };
 }
 
-export const normalizedExternalChatConnectionString = rawConnectionString ? normalizeExternalChatConnectionString(rawConnectionString) : "";
+export const normalizedExternalChatConnectionString = normalizeExternalChatConnectionString(rawConnectionString);
 
-const isSupabaseConnection = rawConnectionString ? /supabase\.(co|com)/i.test(rawConnectionString) : false;
+const isSupabaseConnection = /supabase\.(co|com)/i.test(rawConnectionString);
 const forceSsl =
   isSupabaseConnection ||
   process.env.NODE_ENV === "production" ||
-  (rawConnectionString && /sslmode=/i.test(rawConnectionString)) ||
+  /sslmode=/i.test(rawConnectionString) ||
   process.env.PGSSLMODE === "require";
 
 export const externalChatForceSsl = forceSsl;
@@ -132,59 +107,30 @@ const poolKey = JSON.stringify({
 });
 
 if (globalForPrisma.externalChatPool && globalForPrisma.externalChatPoolKey !== poolKey) {
-  try {
-    globalForPrisma.externalChatPool.end().catch(() => undefined);
-  } catch {
-    // ignore
-  }
+  void globalForPrisma.externalChatPool.end().catch(() => undefined);
   globalForPrisma.externalChatPool = undefined;
   globalForPrisma.externalChatPrisma = undefined;
 }
 
-let pool: Pool;
-let adapter: PrismaPg | undefined;
-let prismaClient: PrismaClient;
+const pool =
+  globalForPrisma.externalChatPool ??
+  new Pool({
+    connectionString: normalizedExternalChatConnectionString,
+    max: 10,
+    ssl: resolveExternalChatSslConfig(forceSsl),
+  });
 
-if (normalizedExternalChatConnectionString) {
-  try {
-    // REDUCED pool size - critical fix for connection exhaustion
-    pool =
-      globalForPrisma.externalChatPool ??
-      new Pool({
-        connectionString: normalizedExternalChatConnectionString,
-        max: 8,           // Reduced from 20 to 8 to prevent connection exhaustion
-        min: 2,           // Keep 2 connections ready
-        idleTimeoutMillis: 5000,     // Close idle connections faster (5 seconds)
-        connectionTimeoutMillis: 10000,
-        allowExitOnIdle: true,
-        ssl: resolveExternalChatSslConfig(forceSsl),
-      });
+const adapter = new PrismaPg(pool);
 
-    adapter = new PrismaPg(pool);
-
-    prismaClient =
-      globalForPrisma.externalChatPrisma ??
-      new PrismaClient({
-        adapter,
-        log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
-      });
-  } catch (error) {
-    console.error("[External Chat] Failed to create database connection:", error);
-    prismaClient = new PrismaClient();
-    pool = new Pool({ max: 1 });
-    adapter = undefined;
-  }
-} else {
-  console.warn("[External Chat] No database connection string found. External chat features will be unavailable.");
-  prismaClient = new PrismaClient();
-  pool = new Pool({ max: 1 });
-  adapter = undefined;
-}
+export const externalChatPrisma =
+  globalForPrisma.externalChatPrisma ??
+  new PrismaClient({
+    adapter,
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
+  });
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.externalChatPool = pool;
   globalForPrisma.externalChatPoolKey = poolKey;
-  globalForPrisma.externalChatPrisma = prismaClient;
+  globalForPrisma.externalChatPrisma = externalChatPrisma;
 }
-
-export const externalChatPrisma = prismaClient;

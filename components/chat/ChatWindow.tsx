@@ -304,71 +304,22 @@ export default function ChatWindow({
   }, []);
 
   useEffect(() => {
-    // Load initial message history so the chat UI renders immediately.
-    if (!isOpen || !roomId || !meId) return;
-
-    let active = true;
-
-    const loadHistory = async () => {
-      try {
-        const res = await fetch(`/api/chat/${encodeURIComponent(roomId)}/messages`, {
-          cache: "no-store",
-        });
-        const body = await parseApiBody(res);
-        if (!active) return;
-
-        if (!res.ok) {
-          const errorMsg = (body as { error?: string }).error || "Failed to load messages";
-          setError(errorMsg);
-          return;
-        }
-
-        const nextMessages = (body as { messages?: ChatMessage[] }).messages ?? [];
-        setMessages(nextMessages);
-      } catch (e) {
-        if (!active) return;
-        setError(e instanceof Error ? e.message : "Failed to load messages");
-      }
-    };
-
-    void loadHistory();
-
-    return () => {
-      active = false;
-    };
-  }, [isOpen, roomId, meId]);
-
-  const publishDataRef = useRef(publishData);
-  const notifyMentionRef = useRef(notifyMention);
-  const meRef = useRef(me);
-  const meNameRef = useRef(meName);
-
-  useEffect(() => {
-    publishDataRef.current = publishData;
-    notifyMentionRef.current = notifyMention;
-    meRef.current = me;
-    meNameRef.current = meName;
-  });
-
-  useEffect(() => {
-    if (!isOpen || !roomId || !meId) return;
-
     const handleIncoming = (parsed: ChatWireMessage) => {
       try {
         if (parsed.type === "chat") {
           if (parsed.message.recipients && !parsed.message.recipients.includes(meId)) return;
           setMessages((prev) => (prev.some((entry) => entry.id === parsed.message.id) ? prev : [...prev, parsed.message]));
           if (parsed.message.senderId !== meId) {
-            void publishDataRef.current({ type: "seen", messageId: parsed.message.id, user: meRef.current });
+            void publishData({ type: "seen", messageId: parsed.message.id, user: me });
             const mentions = extractMentions(parsed.message.content);
-            const meTokens = [normalizeMentionToken(meId), normalizeMentionToken(meNameRef.current.split(" ")[0] ?? "")].filter(Boolean);
+            const meTokens = [normalizeMentionToken(meId), normalizeMentionToken(meName.split(" ")[0] ?? "")].filter(Boolean);
             if (!isOpen) {
               setUnreadCount((prev) => prev + 1);
             }
             const isMentioned = mentions.includes("all") || mentions.some((mention) => meTokens.includes(mention));
             if (isMentioned) {
               setMentionAlerts((prev) => [`${parsed.message.senderName} mentioned you: ${parsed.message.content || "(file/poll)"}`, ...prev].slice(0, 6));
-              notifyMentionRef.current(parsed.message.senderName, parsed.message.content);
+              notifyMention(parsed.message.senderName, parsed.message.content);
             }
           }
           return;
@@ -378,23 +329,21 @@ export default function ChatWindow({
           return;
         }
         if (parsed.type === "edit") {
-          setMessages((prev) => {
-            const existing = prev.find((entry) => entry.id === parsed.messageId);
-            if (existing && existing.content !== parsed.content) {
-              setEditHistoryByMessage((prevHistory) => ({
-                ...prevHistory,
-                [parsed.messageId]: [
-                  {
-                    content: existing.content,
-                    editedAt: parsed.editedAt,
-                    editedByName: existing.senderName,
-                  },
-                  ...(prevHistory[parsed.messageId] ?? []),
-                ],
-              }));
-            }
-            return prev.map((entry) => (entry.id === parsed.messageId ? { ...entry, content: parsed.content, editedAt: parsed.editedAt } : entry));
-          });
+          const existing = messageMap.get(parsed.messageId);
+          if (existing && existing.content !== parsed.content) {
+            setEditHistoryByMessage((prev) => ({
+              ...prev,
+              [parsed.messageId]: [
+                {
+                  content: existing.content,
+                  editedAt: parsed.editedAt,
+                  editedByName: existing.senderName,
+                },
+                ...(prev[parsed.messageId] ?? []),
+              ],
+            }));
+          }
+          setMessages((prev) => prev.map((entry) => (entry.id === parsed.messageId ? { ...entry, content: parsed.content, editedAt: parsed.editedAt } : entry)));
           return;
         }
         if (parsed.type === "seen") {
@@ -479,7 +428,7 @@ export default function ChatWindow({
       Object.values(typingExpiryRef.current).forEach(clearTimeout);
       typingExpiryRef.current = {};
     };
-  }, [isOpen, roomId, meId]);
+  }, [isOpen, me, meId, meName, messageMap, notifyMention, publishData, roomId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -804,13 +753,13 @@ export default function ChatWindow({
                     {entry.content ? <p className="text-sm whitespace-pre-wrap">{renderMentions(entry.content)}</p> : null}
                     {entry.poll ? (
                       <div className={`mt-2 rounded-lg border p-2 ${isMine ? "border-blue-300/40 bg-blue-500/20" : "border-border bg-muted/40"}`}>
-                        <p className="mb-2 break-words text-xs font-semibold">
+                        <p className="mb-2 wrap-break-word text-xs font-semibold">
                           Poll: {entry.poll.question}
                         </p>
                         <div className="space-y-1">
                           {entry.poll.options.map((option) => {
                             const voted = option.votes.some((vote) => vote.id === meId);
-                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900 dark:bg-emerald-500/20 dark:text-emerald-100" : "border-border bg-card text-card-foreground"}`}><span className="min-w-0 flex-1 break-words pr-2">{option.text}</span><span className="shrink-0">{option.votes.length}</span></button>;
+                            return <button key={option.id} type="button" onClick={() => void votePoll(entry.id, option.id)} className={`w-full flex items-center justify-between text-left rounded px-2 py-1 text-xs border ${voted ? "border-emerald-500 bg-emerald-50 text-slate-900 dark:bg-emerald-500/20 dark:text-emerald-100" : "border-border bg-card text-card-foreground"}`}><span className="min-w-0 flex-1 wrap-break-word pr-2">{option.text}</span><span className="shrink-0">{option.votes.length}</span></button>;
                           })}
                         </div>
                       </div>

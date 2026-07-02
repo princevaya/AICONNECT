@@ -42,9 +42,8 @@ export default function CustomSignUp() {
 
             await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
             setPendingVerification(true);
-        } catch (err: unknown) {
-            const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-            setError(anyErr.errors?.[0]?.longMessage || "Registration failed");
+        } catch (err: any) {
+            setError(err.errors?.[0]?.longMessage || "Registration failed");
         } finally {
             setIsLoading(false);
         }
@@ -69,9 +68,8 @@ export default function CustomSignUp() {
             } else {
                 setError("Verification failed. Please try again.");
             }
-        } catch (err: unknown) {
-            const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-            setError(anyErr.errors?.[0]?.longMessage || "Invalid verification code");
+        } catch (err: any) {
+            setError(err.errors?.[0]?.longMessage || "Invalid verification code");
         } finally {
             setIsLoading(false);
         }
@@ -89,9 +87,8 @@ export default function CustomSignUp() {
                 redirectUrl: "/auth/sso-callback",
                 redirectUrlComplete: "/dashboard",
             });
-        } catch (err: unknown) {
-            const anyErr = err as { errors?: Array<{ longMessage?: string }> };
-            setError(anyErr.errors?.[0]?.longMessage || "OAuth sign-up failed");
+        } catch (err: any) {
+            setError(err.errors?.[0]?.longMessage || "OAuth sign-up failed");
             setIsLoading(false);
         }
     };

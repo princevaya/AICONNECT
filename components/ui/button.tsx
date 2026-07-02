@@ -41,23 +41,17 @@ function Button({
   variant,
   size,
   asChild = false,
-  "aria-label": ariaLabel,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
-    asChild?: boolean;
-    "aria-label"?: string;
+    asChild?: boolean
   }) {
   const Comp = asChild ? Slot : "button"
-
-  // Auto-generate aria-label from children text if not provided and button has text content
-  const computedAriaLabel = ariaLabel || (typeof props.children === "string" ? props.children : undefined);
 
   return (
     <Comp
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
-      aria-label={computedAriaLabel}
       {...props}
     />
   )

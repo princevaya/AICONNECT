@@ -118,7 +118,7 @@
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background text-foreground;
   }
 }
 
@@ -154,21 +154,18 @@
 
 @layer components {
   .chat-shell {
-    --chat-safe-top: max(env(safe-area-inset-top), 0px);
-    --chat-safe-bottom: max(env(safe-area-inset-bottom), 0px);
     background:
-      radial-gradient(1200px 600px at 10% -10%, color-mix(in oklab, var(--primary) 18%, transparent), transparent),
+      radial-gradient(1200px 600px at 10% -10%, color-mix(in oklab, var(--primary) 14%, transparent), transparent),
       radial-gradient(1000px 500px at 100% 0%, color-mix(in oklab, var(--chart-2) 12%, transparent), transparent),
-      linear-gradient(180deg, color-mix(in oklab, var(--background) 88%, white 12%), var(--background));
-    padding-top: var(--chat-safe-top);
+      linear-gradient(to bottom, color-mix(in oklab, var(--background) 94%, transparent), var(--background));
   }
 
   .chat-grid {
-    @apply grid grid-cols-1 gap-3 lg:grid-cols-[minmax(300px,360px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)_340px];
+    @apply grid grid-cols-1 gap-3 xl:grid-cols-[320px_minmax(0,1fr)_320px];
   }
 
   .chat-panel {
-    @apply overflow-hidden rounded-[1.75rem] border border-border/60 bg-card/72 shadow-[0_16px_48px_rgba(15,23,42,0.08)] backdrop-blur-xl;
+    @apply rounded-xl border border-border/60 bg-card/70 backdrop-blur-xl;
   }
 
   .chat-row-active {
@@ -186,88 +183,4 @@
   .chat-bubble-sent {
     @apply rounded-2xl rounded-br-sm border border-primary/25 bg-primary/90 px-3 py-2 text-sm text-primary-foreground;
   }
-
-  .chat-story-ring {
-    background:
-      linear-gradient(var(--background), var(--background)) padding-box,
-      linear-gradient(135deg, color-mix(in oklab, var(--chart-2) 70%, white), color-mix(in oklab, var(--primary) 78%, white), color-mix(in oklab, var(--chart-4) 85%, white)) border-box;
-    border: 1px solid transparent;
-  }
-}
-
-/* Focus visible styles for keyboard navigation */
-*:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-  border-radius: 0.25rem;
-}
-
-/* Skip to main content link - for keyboard users */
-.skip-to-main {
-  position: absolute;
-  top: -40px;
-  left: 0;
-  background: var(--primary);
-  color: var(--primary-foreground);
-  padding: 8px;
-  z-index: 100;
-  text-decoration: none;
-  border-radius: 0.25rem;
-}
-
-.skip-to-main:focus {
-  top: 0;
-}
-
-/* Ensure modals trap focus properly */
-[role="dialog"]:focus-visible {
-  outline: none;
-}
-
-/* Live region for screen readers */
-.live-region-polite {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
-}
-
-.live-region-assertive {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
-}
-
-/* High contrast mode support */
-@media (forced-colors: active) {
-  .button {
-    border: 1px solid CanvasText;
-  }
-}
-
-/* Reduced motion preference */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-html {
-  scroll-behavior: smooth;
 }
