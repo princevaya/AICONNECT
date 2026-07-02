@@ -41,6 +41,7 @@ import ChatWindow from "@/components/chat/ChatWindow";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ThemeToggle from "@/components/navigation/theme-toggle";
+import { copyToClipboard } from "@/lib/utils";
 
 interface MeetingRoomProps {
   roomName: string;
@@ -507,7 +508,8 @@ export default function MeetingRoom({
     }
 
     try {
-      await navigator.clipboard.writeText(meetingInviteLink);
+      const ok = await copyToClipboard(meetingInviteLink);
+      if (!ok) throw new Error("Copy failed");
       setMeetingLinkCopied(true);
       window.setTimeout(() => setMeetingLinkCopied(false), 1800);
     } catch {
@@ -683,7 +685,10 @@ export default function MeetingRoom({
         refreshParticipants();
       } catch (error) {
         if (disposed || intentionalLeaveRef.current) return;
-        const message = error instanceof Error ? error.message : "Failed to join meeting.";
+        let message = error instanceof Error ? error.message : "Failed to join meeting.";
+        if (typeof window !== "undefined" && !window.isSecureContext) {
+          message = "Media access (Camera/Mic/Recording) requires a secure context (HTTPS or localhost). Please access the app via http://localhost:3005 or configure HTTPS/Chrome flags.";
+        }
         setMediaError(message);
         setConnectionStatus("disconnected");
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {

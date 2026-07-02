@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Video, VideoOff, Mic, MicOff } from "lucide-react";
+import { copyToClipboard as utilCopyToClipboard } from "@/lib/utils";
 
 interface PreJoinScreenProps {
   onJoin: (
@@ -66,7 +67,10 @@ export default function PreJoinScreen({
   }, []);
 
   const toggleVideo = async () => {
-    if (!canUseMediaApi()) return;
+    if (!canUseMediaApi()) {
+      setJoinError("Camera access requires a secure context (HTTPS or localhost). Please run on localhost or configure HTTPS/Chrome flags.");
+      return;
+    }
     setJoinError(null);
     setMediaBusy(true);
     try {
@@ -91,7 +95,10 @@ export default function PreJoinScreen({
   };
 
   const toggleAudio = async () => {
-    if (!canUseMediaApi()) return;
+    if (!canUseMediaApi()) {
+      setJoinError("Microphone access requires a secure context (HTTPS or localhost). Please run on localhost or configure HTTPS/Chrome flags.");
+      return;
+    }
     setJoinError(null);
     setMediaBusy(true);
     try {
@@ -223,7 +230,8 @@ export default function PreJoinScreen({
 
   const copyToClipboard = async (text: string, successLabel: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      const ok = await utilCopyToClipboard(text);
+      if (!ok) throw new Error("Copy failed");
       setCopyMessage(successLabel);
       setTimeout(() => setCopyMessage(null), 1800);
     } catch {

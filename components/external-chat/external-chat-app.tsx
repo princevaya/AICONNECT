@@ -43,6 +43,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { copyToClipboard } from "@/lib/utils";
 import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
 
@@ -2016,7 +2017,8 @@ export default function ExternalChatApp() {
   const copyMessageContent = async (m: Message) => {
     if (!m.content?.trim()) return;
     try {
-      await navigator.clipboard.writeText(m.content);
+      const ok = await copyToClipboard(m.content);
+      if (!ok) throw new Error("Copy failed");
     } catch {
       setError("Copy failed");
     }
@@ -3709,7 +3711,8 @@ export default function ExternalChatApp() {
               variant="outline"
               onClick={async () => {
                 try {
-                  await navigator.clipboard.writeText(inviteShareText);
+                  const ok = await copyToClipboard(inviteShareText);
+                  if (!ok) throw new Error("Copy failed");
                   pushNotification({ level: "success", title: "Copied", message: "Invite message copied to clipboard." });
                 } catch {
                   setError("Failed to copy invite message");

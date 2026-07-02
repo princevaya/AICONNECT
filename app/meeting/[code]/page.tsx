@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
+import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -204,7 +205,8 @@ export default function MeetingPage() {
 
   const copyText = async (text: string, successMessage: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      const ok = await copyToClipboard(text);
+      if (!ok) throw new Error("Copy failed");
       setLinkCopiedMessage(successMessage);
       setTimeout(() => setLinkCopiedMessage(null), 2000);
     } catch {

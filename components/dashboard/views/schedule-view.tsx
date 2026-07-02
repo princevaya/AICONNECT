@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Calendar } from "@/components/ui/calendar";
 import { CalendarCheck, Copy, RefreshCw, Users } from "lucide-react";
+import { copyToClipboard } from "@/lib/utils";
 
 /* ---------------- types ---------------- */
 interface ScheduleApiMeeting {
@@ -164,7 +165,8 @@ export default function ScheduleView() {
 
   const handleCopyLink = async (link: string) => {
     try {
-      await navigator.clipboard.writeText(resolveLink(link));
+      const ok = await copyToClipboard(resolveLink(link));
+      if (!ok) throw new Error("Copy failed");
       setCopyState("copied");
       setTimeout(() => setCopyState("idle"), 2000);
     } catch {
@@ -176,7 +178,8 @@ export default function ScheduleView() {
   const handleCardCopyLink = async (code: string) => {
     try {
       const link = `${window.location.origin}/meeting/${code}`;
-      await navigator.clipboard.writeText(link);
+      const ok = await copyToClipboard(link);
+      if (!ok) throw new Error("Copy failed");
       setCardCopyState((prev) => ({ ...prev, [code]: "copied" }));
       setTimeout(() => setCardCopyState((prev) => ({ ...prev, [code]: "idle" })), 2000);
     } catch {
