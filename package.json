@@ -3,15 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev --webpack -p 3005",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3005",
     "lint": "eslint",
     "postinstall": "prisma generate"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.957.0",
-    "@aws-sdk/s3-request-presigner": "^3.957.0",
     "@clerk/nextjs": "^6.36.5",
     "@codesandbox/sandpack-react": "^2.20.0",
     "@livekit/components-react": "^2.9.17",

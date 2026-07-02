@@ -2,19 +2,11 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
 import { AppUser } from "@/services/user.service";
 
 const MAX_SIZE = Number(process.env.EXTERNAL_CHAT_MAX_UPLOAD_BYTES || 25 * 1024 * 1024);
 const LOCAL_ROOT = path.join(process.cwd(), "storage", "chat-system");
-const PREFIX = (process.env.EXTERNAL_CHAT_S3_PREFIX || "chat-system").replace(/^\/+|\/+$/g, "");
-const BUCKET = process.env.EXTERNAL_CHAT_S3_BUCKET || process.env.AWS_S3_BUCKET;
-const REGION = process.env.EXTERNAL_CHAT_AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
-const TTL = Number(process.env.EXTERNAL_CHAT_SIGNED_URL_TTL_SECONDS || 900);
-
-const s3Client = null;
 
 const ALLOWED = new Set([
   "application/pdf",
@@ -73,11 +65,7 @@ function validateFile(file: File, buffer: Buffer) {
   }
 }
 
-function s3Key(input: { roomCode: string; uploader: string; originalName: string }) {
-  const ext = path.extname(input.originalName).toLowerCase();
-  const base = sanitize(path.basename(input.originalName, ext)) || "file";
-  return `${PREFIX}/${new Date().toISOString().slice(0, 10)}/${sanitize(input.roomCode)}/${sanitize(input.uploader)}/${Date.now()}-${randomUUID()}-${base}${ext}`;
-}
+
 
 async function uploadLocal(file: File, buffer: Buffer) {
   await fs.mkdir(LOCAL_ROOT, { recursive: true });
@@ -87,21 +75,6 @@ async function uploadLocal(file: File, buffer: Buffer) {
   const absolute = path.join(LOCAL_ROOT, name);
   await fs.writeFile(absolute, buffer);
   return { provider: "local", key: path.posix.join("storage", "chat-system", name) } as const;
-}
-
-async function uploadS3(file: File, buffer: Buffer, roomCode: string, uploader: string) {
-  if (!s3Client || !BUCKET) throw new Error("S3 is not configured");
-  const key = s3Key({ roomCode, uploader, originalName: file.name });
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: buffer,
-      ContentType: file.type || "application/octet-stream",
-      ContentDisposition: `attachment; filename="${sanitize(file.name) || "file"}"`,
-    })
-  );
-  return { provider: "s3", key } as const;
 }
 
 export async function uploadAttachment(input: {
@@ -124,10 +97,7 @@ export async function uploadAttachment(input: {
   });
   if (!member) throw new Error("Not allowed");
 
-  const stored =
-    s3Client && BUCKET
-      ? await uploadS3(input.file, buffer, input.roomCode, input.uploader.clerkId)
-      : await uploadLocal(input.file, buffer);
+  const stored = await uploadLocal(input.file, buffer);
 
   const created = await prisma.externalChatAttachment.create({
     data: {
@@ -185,13 +155,7 @@ export async function buildAttachmentDownload(input: { attachmentId: string; req
   }
 
   if (file.storageProvider === "s3") {
-    if (!s3Client || !BUCKET) throw new Error("S3 unavailable");
-    const signedUrl = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({ Bucket: BUCKET, Key: file.storageKey }),
-      { expiresIn: TTL }
-    );
-    return { mode: "redirect" as const, signedUrl };
+    throw new Error("S3 storage provider is no longer supported.");
   }
 
   return {
@@ -210,14 +174,53 @@ export async function cleanupAttachmentIfUnused(attachmentId: string) {
   if (!file || file.messages.length > 0) return;
 
   if (file.storageProvider === "s3") {
-    if (s3Client && BUCKET) {
-      await s3Client
-        .send(new DeleteObjectCommand({ Bucket: BUCKET, Key: file.storageKey }))
-        .catch(() => undefined);
-    }
+    // S3 cleanup is not possible since AWS SDK has been removed
   } else {
     await fs.unlink(path.join(process.cwd(), file.storageKey)).catch(() => undefined);
   }
 
   await prisma.externalChatAttachment.delete({ where: { id: file.id } }).catch(() => undefined);
+}
+
+// Stub implementations to replace S3 multipart uploads
+export function externalChatSupportsMultipartUploads() {
+  return false;
+}
+
+export async function createMultipartUploadSession(input: {
+  roomCode: string;
+  uploader: AppUser;
+  fileName: string;
+  mimeType: string;
+  totalSizeBytes: number;
+}): Promise<{ storageProvider: string; storageKey: string; multipartUploadId: string }> {
+  throw new Error("Multipart uploads are not supported without AWS SDK");
+}
+
+export async function createMultipartUploadPartUrl(input: {
+  storageKey: string;
+  partNumber: number;
+  uploadId: string;
+  mimeType: string;
+}): Promise<{ uploadUrl: string }> {
+  throw new Error("Multipart uploads are not supported without AWS SDK");
+}
+
+export async function completeMultipartUploadSession(input: {
+  storageKey: string;
+  uploadId: string;
+  parts: Array<{ partNumber: number; etag: string }>;
+}): Promise<void> {
+  throw new Error("Multipart uploads are not supported without AWS SDK");
+}
+
+export async function abortMultipartUploadSession(input: {
+  storageKey: string;
+  uploadId: string;
+}): Promise<void> {
+  throw new Error("Multipart uploads are not supported without AWS SDK");
+}
+
+export function getUploadProgress(input: { sessionId: string; actor: AppUser }): never {
+  throw new Error("Multipart uploads are not supported without AWS SDK");
 }

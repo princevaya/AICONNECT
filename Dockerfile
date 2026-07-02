@@ -22,7 +22,7 @@ RUN pnpm run build
 # Production runner stage
 FROM base AS runner
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3005
 ENV HOSTNAME="0.0.0.0"
 
 # Create storage and upload directories with correct permissions
@@ -37,6 +37,6 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/next.config.js ./next.config.js || true
 COPY --from=builder /app/next.config.ts ./next.config.ts || true
 
-EXPOSE 3000
+EXPOSE 3005
 
 CMD ["pnpm", "run", "start"]

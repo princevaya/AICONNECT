@@ -2,40 +2,10 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { prisma } from "@/lib/prisma";
 import type { AppUser } from "@/services/user.service";
 
 const LOCAL_ROOT = path.join(process.cwd(), "storage", "generated-images");
-const PREFIX = (process.env.GENERATED_IMAGES_S3_PREFIX || "generated-images").replace(/^\/+|\/+$/g, "");
-const BUCKET = process.env.GENERATED_IMAGES_S3_BUCKET || process.env.AWS_S3_BUCKET;
-const REGION = process.env.GENERATED_IMAGES_AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
-const TTL = Number(process.env.GENERATED_IMAGES_SIGNED_URL_TTL_SECONDS || 900);
-
-const s3Client = null;
-
-function shouldFallbackFromS3(error: unknown) {
-  const code =
-    typeof error === "object" && error !== null && "Code" in error
-      ? String((error as { Code?: unknown }).Code || "")
-      : "";
-  const name =
-    typeof error === "object" && error !== null && "name" in error
-      ? String((error as { name?: unknown }).name || "")
-      : "";
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-
-  return (
-    code === "NoSuchBucket" ||
-    code === "InvalidAccessKeyId" ||
-    code === "AccessDenied" ||
-    name === "NoSuchBucket" ||
-    message.includes("no such bucket") ||
-    message.includes("the specified bucket does not exist") ||
-    message.includes("access denied")
-  );
-}
 
 function sanitize(name: string) {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
@@ -46,11 +16,6 @@ function extensionForMime(mimeType: string) {
   if (mimeType === "image/webp") return ".webp";
   if (mimeType === "image/jpeg") return ".jpg";
   return ".bin";
-}
-
-function buildS3Key(generationId: string, userId: string, mimeType: string) {
-  const ext = extensionForMime(mimeType);
-  return `${PREFIX}/${new Date().toISOString().slice(0, 10)}/${sanitize(userId)}/${sanitize(generationId)}-${randomUUID()}${ext}`;
 }
 
 function buildLocalKey(generationId: string, userKey: string, mimeType: string) {
@@ -72,36 +37,12 @@ async function uploadLocal(buffer: Buffer, generationId: string, userKey: string
   return { provider: "local", key: target.key } as const;
 }
 
-async function uploadS3(buffer: Buffer, generationId: string, userId: string, mimeType: string) {
-  if (!s3Client || !BUCKET) throw new Error("Generated image S3 is not configured");
-  const key = buildS3Key(generationId, userId, mimeType);
-  await s3Client.send(
-    new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      Body: buffer,
-      ContentType: mimeType,
-      ContentDisposition: `inline; filename="${sanitize(generationId)}${extensionForMime(mimeType)}"`,
-      CacheControl: "private, max-age=31536000, immutable",
-    })
-  );
-  return { provider: "s3", key } as const;
-}
-
 export async function saveGeneratedImage(input: {
   generationId: string;
   userKey: string;
   mimeType: string;
   buffer: Buffer;
 }) {
-  if (s3Client && BUCKET) {
-    try {
-      return await uploadS3(input.buffer, input.generationId, input.userKey, input.mimeType);
-    } catch (error) {
-      if (!shouldFallbackFromS3(error)) throw error;
-    }
-  }
-
   return uploadLocal(input.buffer, input.generationId, input.userKey, input.mimeType);
 }
 
@@ -135,33 +76,11 @@ export async function writeGeneratedImageManifest(input: {
   const body = JSON.stringify(input.manifest);
 
   if (input.storageProvider === "s3") {
-    if (s3Client && BUCKET) {
-      try {
-        await s3Client.send(
-          new PutObjectCommand({
-            Bucket: BUCKET,
-            Key: key,
-            Body: body,
-            ContentType: "application/json",
-          })
-        );
-        return;
-      } catch (error) {
-        if (!shouldFallbackFromS3(error)) throw error;
-      }
-    }
+    // S3 manifests are not supported since AWS SDK has been removed
   }
 
   await fs.mkdir(path.dirname(path.join(process.cwd(), key)), { recursive: true });
   await fs.writeFile(path.join(process.cwd(), key), body, "utf8");
-}
-
-async function readS3Manifest(key: string) {
-  if (!s3Client || !BUCKET) return null;
-  const response = await s3Client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
-  const text = await response.Body?.transformToString();
-  if (!text) return null;
-  return JSON.parse(text) as StorageManifest;
 }
 
 async function readLocalManifest(key: string) {
@@ -169,61 +88,8 @@ async function readLocalManifest(key: string) {
   return JSON.parse(text) as StorageManifest;
 }
 
-async function buildSignedImageUrl(key: string) {
-  if (!s3Client || !BUCKET) return null;
-  return getSignedUrl(s3Client, new GetObjectCommand({ Bucket: BUCKET, Key: key }), { expiresIn: TTL });
-}
-
 export async function listGeneratedImageHistoryFromStorage(subjectKey: string) {
   const safeKey = sanitize(subjectKey);
-
-  if (s3Client && BUCKET) {
-    const prefix = `${PREFIX}/`;
-    try {
-      const listed = await s3Client.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, MaxKeys: 200 }));
-      const manifestKeys = (listed.Contents || [])
-        .map((item) => item.Key || "")
-        .filter((key) => key.endsWith(`/${safeKey}/`) || key.includes(`/${safeKey}/`))
-        .filter((key) => key.endsWith(".json"))
-        .sort()
-        .reverse()
-        .slice(0, Number(process.env.GENERATED_IMAGES_HISTORY_LIMIT || 24));
-
-      const manifests = await Promise.all(
-        manifestKeys.map(async (key) => {
-          try {
-            const manifest = await readS3Manifest(key);
-            if (!manifest) return null;
-            const imageUrl = await buildSignedImageUrl(manifest.imageKey);
-            return {
-              id: manifest.id,
-              status: "succeeded",
-              prompt: manifest.prompt,
-              enhancedPrompt: manifest.enhancedPrompt || null,
-              stylePreset: manifest.stylePreset || null,
-              aspectRatio: manifest.aspectRatio || "1:1",
-              quality: manifest.quality || "standard",
-              background: manifest.background || null,
-              provider: manifest.provider,
-              model: manifest.model,
-              mimeType: manifest.mimeType,
-              width: manifest.width || null,
-              height: manifest.height || null,
-              errorMessage: null,
-              imageUrl,
-              createdAt: manifest.createdAt,
-            };
-          } catch {
-            return null;
-          }
-        })
-      );
-
-      return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
-    } catch (error) {
-      if (!shouldFallbackFromS3(error)) throw error;
-    }
-  }
 
   const root = path.join(LOCAL_ROOT, safeKey);
   const files = await fs.readdir(root).catch(() => [] as string[]);
@@ -286,13 +152,7 @@ export async function buildGeneratedImageDownload(input: { generationId: string;
   }
 
   if (generation.storageProvider === "s3") {
-    if (!s3Client || !BUCKET) throw new Error("Generated image storage unavailable");
-    const signedUrl = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({ Bucket: BUCKET, Key: generation.storageKey }),
-      { expiresIn: TTL }
-    );
-    return { mode: "redirect" as const, signedUrl };
+    throw new Error("S3 storage provider is no longer supported.");
   }
 
   return {
@@ -314,11 +174,7 @@ export async function cleanupGeneratedImageStorage(generationId: string) {
   if (!generation?.storageKey || !generation.storageProvider) return;
 
   if (generation.storageProvider === "s3") {
-    if (s3Client && BUCKET) {
-      await s3Client
-        .send(new DeleteObjectCommand({ Bucket: BUCKET, Key: generation.storageKey }))
-        .catch(() => undefined);
-    }
+    // S3 cleanup is not possible since AWS SDK has been removed
     return;
   }
 

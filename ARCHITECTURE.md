@@ -143,10 +143,10 @@ sequenceDiagram
     Host->>Server: Schedules Meeting (/api/schedule)
     Server->>DB: Insert into meeting_rooms (status = 'scheduled')
     Host->>Guest: Share Invite Link (/meeting/join?room=CODE)
-
+    
     Guest->>Server: Requests Join Permission (/api/request-join)
     Server->>DB: Store Request in pending_joins
-
+    
     loop Every 2s (Polling)
         Host->>Server: Fetch pending join requests (/api/get-pending)
         Server->>DB: Read pending_joins
@@ -155,7 +155,7 @@ sequenceDiagram
 
     Host->>Server: Approve Guest (/api/approve)
     Server->>DB: Update request status = 'approved'
-
+    
     loop Every 2s (Polling)
         Guest->>Server: Check approval status (/api/check-approval)
         Server->>DB: Read request status
@@ -185,7 +185,7 @@ sequenceDiagram
     Alice->>WebRTC: Publish code-sync payload (binary encoded JSON)
     WebRTC-->>Bob: Receive dataReceived event
     Bob->>Bob: Sync Monaco state with incoming JSON file tree
-
+    
     Alice->>Exec: Click "Run" (Request execution payload)
     Exec-->>Alice: Return code output / terminal logs
 ```
@@ -201,7 +201,7 @@ sequenceDiagram
     autonumber
     actor Candidate
     participant App as Next.js Client (Web Speech API)
-
+    
     App->>App: Retrieve next question from QUESTIONS list
     App->>App: Invoke SpeechSynthesis (AI Speaks out loud)
     Candidate->>App: Click "Answer"
@@ -223,7 +223,7 @@ sequenceDiagram
     actor Receiver
     participant API as Next.js API (/api/realtime)
     participant DB as Supabase Postgres
-
+    
     Receiver->>API: Connect to SSE stream (LISTEN ec_room_<room_hash>)
     Sender->>API: Post message (/api/external-chat/send)
     API->>DB: Save message in database (conversation_messages)
