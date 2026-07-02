@@ -71,7 +71,7 @@ export function StatusModal({ onClose }: { onClose: () => void }) {
               onPost={async (text, file, visibility) => {
                 await api("/api/external-chat/statuses", {
                   method: "POST",
-                  body: JSON.stringify({ text, visibility, fileId: file?.id ?? null }),
+                  body: JSON.stringify({ text, visibility, fileId: (file as any)?.id ?? null, attachmentId: (file as any)?.id ?? null }),
                 });
                 setCreatorOpen(false);
                 // Reload statuses
