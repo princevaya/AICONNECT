@@ -129,7 +129,10 @@ export async function listGeneratedImageHistoryFromStorage(subjectKey: string) {
   return manifests.filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
-export async function buildGeneratedImageDownload(input: { generationId: string; requester: AppUser }) {
+export async function buildGeneratedImageDownload(input: { generationId: string; requester: AppUser }): Promise<
+  | { mode: "stream"; stream: any; mimeType: string }
+  | { mode: "redirect"; signedUrl: string }
+> {
   const generation = await prisma.generatedImage.findUnique({
     where: { id: input.generationId },
     select: {

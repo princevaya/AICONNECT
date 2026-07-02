@@ -142,7 +142,10 @@ export async function uploadChatFile(input: {
   };
 }
 
-export async function buildDownloadResponse(input: { fileId: string; requestedBy: AppUser }) {
+export async function buildDownloadResponse(input: { fileId: string; requestedBy: AppUser }): Promise<
+  | { mode: "stream"; file: { id: string; name: string; fileType: string; fileSize: number; absolutePath: string } }
+  | { mode: "redirect"; signedUrl: string }
+> {
   const file = await prisma.file.findUnique({
     where: { id: input.fileId },
     include: {

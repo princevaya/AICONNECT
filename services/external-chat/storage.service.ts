@@ -120,7 +120,10 @@ export async function uploadAttachment(input: {
   };
 }
 
-export async function buildAttachmentDownload(input: { attachmentId: string; requester: AppUser }) {
+export async function buildAttachmentDownload(input: { attachmentId: string; requester: AppUser }): Promise<
+  | { mode: "stream"; stream: any; fileName: string; mimeType: string }
+  | { mode: "redirect"; signedUrl: string }
+> {
   const file = await prisma.externalChatAttachment.findUnique({
     where: { id: input.attachmentId },
     include: {
