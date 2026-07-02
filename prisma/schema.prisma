@@ -65,6 +65,7 @@ model User {
   externalChatRoomReportsResolved ExternalChatRoomReport[] @relation("ExternalChatReportResolver")
   externalChatRoomMutes ExternalChatRoomMute[]
   externalChatHiddenRooms ExternalChatRoomHidden[]
+  recordings              Recording[]
 
   @@map("users")
 }
@@ -88,13 +89,16 @@ model Meeting {
 }
 
 model Recording {
-  id        String   @id @default(cuid())
-  meetingId String   @map("meeting_id")
+  id        String    @id @default(cuid())
+  meetingId String    @map("meeting_id")
+  userId    String?   @map("user_id")
   title     String
-  s3Url     String   @map("s3_url")
+  s3Url     String    @map("s3_url")
   duration  Int?
-  createdAt DateTime @default(now()) @map("created_at")
-  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now()) @map("created_at")
+  expiresAt DateTime? @map("expires_at")
+  meeting   Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("recordings")
 }

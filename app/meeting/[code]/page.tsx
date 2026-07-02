@@ -317,7 +317,7 @@ export default function MeetingPage() {
             </TabsList>
 
             <TabsContent value="requests" className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
-              {approvalMessage ? (
+              {approvalMessage && (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
               )}
               {approvalError && (

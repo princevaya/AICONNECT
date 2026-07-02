@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aiconnect-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/aiconnect?schema=public
+      - DIRECT_URL=postgresql://postgres:postgres@db:5432/aiconnect?schema=public
+      # Add other required env variables here, or docker-compose will load from a local .env file
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Persistent local storage for recordings, exports, and chat files
+      - uploads_data:/app/public/uploads
+      - storage_data:/app/storage
+
+  db:
+    image: postgres:16-alpine
+    container_name: aiconnect-db
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=aiconnect
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aiconnect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  uploads_data:
+    driver: local
+  storage_data:
+    driver: local
+  db_data:
+    driver: local

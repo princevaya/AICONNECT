@@ -34,18 +34,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "audio/wav",
 ]);
 
-const s3Client =
-  process.env.AWS_ACCESS_KEY_ID &&
-  process.env.AWS_SECRET_ACCESS_KEY &&
-  AWS_S3_BUCKET
-    ? new S3Client({
-        region: AWS_REGION,
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        },
-      })
-    : null;
+const s3Client = null;
 
 function isAdmin(user: AppUser) {
   return user.role.toLowerCase() === "admin";

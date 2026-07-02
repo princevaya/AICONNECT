@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import VSCodeEditor from "./vscode-editor";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -791,7 +791,19 @@ export default function MeetingRoom({
               id,
               emoji: parsed.emoji,
               participantId: parsed.participantId || participant.identity,
+            },
+          ]);
+          return;
+        }
+        if (parsed.type === "qna_add") {
+          setQaItems((prev) =>
+            prev.some((item) => item.id === parsed.item.id) ? prev : [parsed.item, ...prev]
+          );
+          return;
+        }
+        if (parsed.type === "qna_vote") {
           const voterId = parsed.participantId || participant.identity;
+          setQaItems((prev) =>
             prev.map((item) => {
               if (item.id !== parsed.questionId) return item;
               return {

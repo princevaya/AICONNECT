@@ -1,38 +1,27 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fs from "fs/promises";
+import path from "path";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const AWS_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
-const AWS_S3_BUCKET = process.env.AWS_S3_BUCKET;
-
-const s3Client =
-  process.env.AWS_ACCESS_KEY_ID &&
-  process.env.AWS_SECRET_ACCESS_KEY &&
-  AWS_S3_BUCKET
-    ? new S3Client({
-        region: AWS_REGION,
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        },
-      })
-    : null;
 
 function sanitize(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_");
 }
 
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-  if (!userId) {
+  const { userId: clerkId } = await auth();
+  if (!clerkId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!s3Client || !AWS_S3_BUCKET) {
-    return NextResponse.json({ error: "S3 is not configured" }, { status: 503 });
+
+  const dbUser = await prisma.user.findUnique({
+    where: { clerkId },
+  });
+  if (!dbUser) {
+    return NextResponse.json({ error: "User not found in database" }, { status: 404 });
   }
 
   try {
@@ -48,37 +37,57 @@ export async function POST(req: NextRequest) {
     }
 
     const safeRoom = sanitize(roomName.trim());
-    const safeUser = sanitize(userId);
-    const day = new Date().toISOString().slice(0, 10);
+    const safeUser = sanitize(clerkId);
     const extension =
       file.type === "video/mp4"
         ? "mp4"
         : file.type.includes("webm")
         ? "webm"
         : "webm";
-    const key = `meeting/recordings/${safeRoom}/${safeUser}/${day}/${Date.now()}-ui-recording.${extension}`;
+
+    const dirPath = path.join(process.cwd(), "public", "uploads", "recordings");
+    await fs.mkdir(dirPath, { recursive: true });
+
+    const timestamp = Date.now();
+    const filename = `${safeRoom}-${safeUser}-${timestamp}.${extension}`;
+    const filepath = path.join(dirPath, filename);
+
     const buffer = Buffer.from(await file.arrayBuffer());
+    await fs.writeFile(filepath, buffer);
 
-    await s3Client.send(
-      new PutObjectCommand({
-        Bucket: AWS_S3_BUCKET,
-        Key: key,
-        Body: buffer,
-        ContentType: file.type || "video/webm",
-        ContentDisposition: `attachment; filename="${sanitize(file.name || `recording.${extension}`)}"`,
-      })
-    );
+    const localUrl = `/uploads/recordings/${filename}`;
 
-    const url = await getSignedUrl(
-      s3Client,
-      new GetObjectCommand({
-        Bucket: AWS_S3_BUCKET,
-        Key: key,
-      }),
-      { expiresIn: 60 * 60 * 24 }
-    );
+    // Get or create meeting
+    let meeting = await prisma.meeting.findUnique({
+      where: { code: roomName },
+    });
+    if (!meeting) {
+      meeting = await prisma.meeting.create({
+        data: {
+          code: roomName,
+          title: `Meeting ${roomName}`,
+          date: new Date(),
+          scheduledFor: new Date(),
+          startTime: new Date(),
+          endTime: new Date(Date.now() + 60 * 60 * 1000),
+          durationMins: 60,
+        },
+      });
+    }
 
-    return NextResponse.json({ ok: true, key, url }, { status: 201 });
+    // Save to database with 30-day expiration
+    await prisma.recording.create({
+      data: {
+        meetingId: meeting.id,
+        userId: dbUser.id,
+        title: `Recording - ${roomName} - ${new Date().toLocaleDateString()}`,
+        s3Url: localUrl,
+        duration: 0,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    return NextResponse.json({ ok: true, key: filename, url: localUrl }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Upload failed" },
