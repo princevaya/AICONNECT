@@ -5,22 +5,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DATABASE_URL: ${DATABASE_URL}
+        CHAT_DATABASE_URL: ${CHAT_DATABASE_URL}
     container_name: aiconnect-app
     restart: always
     ports:
       - "3005:3005"
     environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/aiconnect?schema=public
-      - DIRECT_URL=postgresql://postgres:postgres@db:5432/aiconnect?schema=public
-      # Add other required env variables here, or docker-compose will load from a local .env file
+      NODE_ENV: production
+      PORT: 3005
+      DATABASE_URL: ${DATABASE_URL}
+      CHAT_DATABASE_URL: ${CHAT_DATABASE_URL}
+      DIRECT_URL: ${DIRECT_URL}
     env_file:
       - .env
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      # Persistent local storage for recordings, exports, and chat files
+      # Persistent storage
       - uploads_data:/app/public/uploads
       - storage_data:/app/storage
 
@@ -29,9 +33,9 @@ services:
     container_name: aiconnect-db
     restart: always
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=aiconnect
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aiconnect
     ports:
       - "5432:5432"
     volumes:
