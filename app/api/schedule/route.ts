@@ -54,10 +54,15 @@ function toClientPayload(meeting: MeetingRecord) {
 /* ---------- GET /api/schedule ---------- */
 export async function GET(req: Request) {
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      return failure("Unauthorized", 401);
+    }
+
     const { searchParams } = new URL(req.url);
     const showAll = searchParams.get("all") === "true";
 
-    const meetings = showAll ? await listAllMeetings() : await listMeetings();
+    const meetings = showAll ? await listAllMeetings(userId) : await listMeetings(userId);
     return success({
       meetings: meetings.map(toClientPayload),
     });

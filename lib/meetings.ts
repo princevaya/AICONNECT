@@ -102,8 +102,15 @@ function mapRow(row: MeetingRow): MeetingRecord {
 }
 
 /* ---------- queries ---------- */
-export async function listMeetings(): Promise<MeetingRecord[]> {
+export async function listMeetings(userId?: string): Promise<MeetingRecord[]> {
   await ensureTable();
+  if (userId) {
+    const result = await pool.query(
+      "SELECT * FROM meeting_rooms WHERE is_active = true AND created_by = $1 ORDER BY scheduled_for ASC",
+      [userId]
+    );
+    return result.rows.map(mapRow);
+  }
   const result = await pool.query(
     "SELECT * FROM meeting_rooms WHERE is_active = true ORDER BY scheduled_for ASC"
   );
@@ -216,8 +223,15 @@ function deriveIsActiveFromStatus(status: MeetingStatus): boolean {
   return status !== "closed";
 }
 
-export async function listAllMeetings(): Promise<MeetingRecord[]> {
+export async function listAllMeetings(userId?: string): Promise<MeetingRecord[]> {
   await ensureTable();
+  if (userId) {
+    const result = await pool.query(
+      "SELECT * FROM meeting_rooms WHERE created_by = $1 ORDER BY scheduled_for DESC",
+      [userId]
+    );
+    return result.rows.map(mapRow);
+  }
   const result = await pool.query(
     "SELECT * FROM meeting_rooms ORDER BY scheduled_for DESC"
   );

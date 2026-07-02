@@ -1669,17 +1669,22 @@ export default function MeetingRoom({
     async (options?: { skipUpload?: boolean }) => {
       const recorder = uiRecorderRef.current;
       if (!recorder) return "";
-      const stopped = new Promise<Blob>((resolve) => {
-        recorder.onstop = () => {
-          const blob = new Blob(uiRecordingChunksRef.current, {
-            type: recorder.mimeType || "video/webm",
-          });
-          resolve(blob);
-        };
-      });
-
-      if (recorder.state !== "inactive") {
+      let blob: Blob;
+      if (recorder.state === "inactive") {
+        blob = new Blob(uiRecordingChunksRef.current, {
+          type: recorder.mimeType || "video/webm",
+        });
+      } else {
+        const stopped = new Promise<Blob>((resolve) => {
+          recorder.onstop = () => {
+            const b = new Blob(uiRecordingChunksRef.current, {
+              type: recorder.mimeType || "video/webm",
+            });
+            resolve(b);
+          };
+        });
         recorder.stop();
+        blob = await stopped;
       }
 
       uiCaptureStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -1691,8 +1696,6 @@ export default function MeetingRoom({
       uiCaptureStreamRef.current = null;
       uiMicStreamRef.current = null;
       uiRecorderRef.current = null;
-
-      const blob = await stopped;
       uiRecordingChunksRef.current = [];
       const filename = `meeting-ui-${roomName}-${Date.now()}.webm`;
       downloadBlobFile(filename, blob);
@@ -1733,66 +1736,63 @@ export default function MeetingRoom({
       systemAudio: "include",
     });
 
-    const [pickedVideoTrack] = displayStream.getVideoTracks();
-    const pickedSurface = pickedVideoTrack?.getSettings().displaySurface;
-    if (pickedSurface && pickedSurface !== "browser") {
-      displayStream.getTracks().forEach((track) => track.stop());
-      throw new Error(
-        "Please select the current meeting browser tab in the capture picker (not window/screen)."
-      );
-    }
-
     const composed = new MediaStream();
     displayStream.getVideoTracks().forEach((track) => composed.addTrack(track));
 
-    const displayAudioTracks = displayStream.getAudioTracks();
-    if (displayAudioTracks.length > 0) {
-      displayAudioTracks.forEach((track) => composed.addTrack(track));
-    } else {
-      setRecordingMessage(
-        "Tab audio not shared. Falling back to mixed mic + participant audio."
-      );
-      const audioContext = new AudioContext();
-      uiAudioContextRef.current = audioContext;
-      const destination = audioContext.createMediaStreamDestination();
-      let mixedCount = 0;
+    const audioContext = new AudioContext();
+    uiAudioContextRef.current = audioContext;
+    const destination = audioContext.createMediaStreamDestination();
+    let mixedCount = 0;
 
-      const addTrackToMix = (track?: MediaStreamTrack) => {
-        if (!track || track.kind !== "audio") return;
-        try {
-          const source = audioContext.createMediaStreamSource(new MediaStream([track]));
-          source.connect(destination);
-          mixedCount += 1;
-        } catch {
-          // Ignore unusable tracks.
-        }
-      };
-
+    const addTrackToMix = (track?: MediaStreamTrack) => {
+      if (!track || track.kind !== "audio") return;
       try {
-        const micStream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: false,
-        });
-        uiMicStreamRef.current = micStream;
-        micStream.getAudioTracks().forEach((track) => addTrackToMix(track));
+        const source = audioContext.createMediaStreamSource(new MediaStream([track]));
+        source.connect(destination);
+        mixedCount += 1;
       } catch {
-        // Continue with remote tracks only.
+        // Ignore unusable tracks.
       }
+    };
 
-      for (const track of remoteAudioTracks) {
-        const mediaTrack = (track as unknown as { mediaStreamTrack?: MediaStreamTrack })
-          .mediaStreamTrack;
-        addTrackToMix(mediaTrack);
-      }
+    // 1. Add shared display / tab system audio if available
+    displayStream.getAudioTracks().forEach((track) => {
+      addTrackToMix(track);
+    });
+
+    // 2. Add local microphone (direct getUserMedia)
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      });
+      uiMicStreamRef.current = micStream;
+      micStream.getAudioTracks().forEach((track) => addTrackToMix(track));
+    } catch {
+      // Continue with remote/fallback tracks
+    }
+
+    // 3. Add remote participants' audio tracks
+    for (const track of remoteAudioTracks) {
+      const mediaTrack = (track as unknown as { mediaStreamTrack?: MediaStreamTrack })
+        .mediaStreamTrack;
+      addTrackToMix(mediaTrack);
+    }
+
+    // 4. Add local participant track if direct micStream wasn't captured
+    if (!uiMicStreamRef.current) {
       const localMicTrack = (localParticipant?.micTrack as unknown as
         | { mediaStreamTrack?: MediaStreamTrack }
         | undefined)?.mediaStreamTrack;
       addTrackToMix(localMicTrack);
+    }
 
-      if (mixedCount > 0) {
-        const mixedTrack = destination.stream.getAudioTracks()[0];
-        if (mixedTrack) composed.addTrack(mixedTrack);
-      }
+    if (mixedCount > 0) {
+      const mixedTrack = destination.stream.getAudioTracks()[0];
+      if (mixedTrack) composed.addTrack(mixedTrack);
+    } else {
+      void audioContext.close().catch(() => undefined);
+      uiAudioContextRef.current = null;
     }
 
     const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
