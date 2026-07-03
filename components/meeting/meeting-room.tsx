@@ -820,8 +820,6 @@ export default function MeetingRoom({
           );
           return;
         }
-          return;
-        }
         if (parsed.type === "poll_create") {
           setPolls((prev) =>
             prev.some((poll) => poll.id === parsed.poll.id) ? prev : [parsed.poll, ...prev]

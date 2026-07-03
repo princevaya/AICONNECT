@@ -322,7 +322,6 @@ export default function MeetingPage() {
               {approvalMessage && (
                 <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
               )}
-              )}
 
               {approvalError && (
                 <p className="text-sm text-destructive">
