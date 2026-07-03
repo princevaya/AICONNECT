@@ -43,11 +43,13 @@ function createPrismaClient() {
 
   const connectionString = normalizeConnectionString(rawConnectionString);
   const isSupabaseConnection = /supabase\.(co|com)/i.test(rawConnectionString);
+  const isLocalHost = /(?::\/\/|@)(?:localhost|127\.0\.0\.1|db)(?::|\/)/i.test(rawConnectionString);
   const forceSsl =
-    isSupabaseConnection ||
-    process.env.NODE_ENV === "production" ||
-    /sslmode=require/i.test(rawConnectionString) ||
-    process.env.PGSSLMODE === "require";
+    (isSupabaseConnection ||
+      (process.env.NODE_ENV === "production" && !isLocalHost) ||
+      /sslmode=require/i.test(rawConnectionString) ||
+      process.env.PGSSLMODE === "require") &&
+    !/sslmode=disable/i.test(rawConnectionString);
 
   const poolKey = JSON.stringify({
     connectionString,

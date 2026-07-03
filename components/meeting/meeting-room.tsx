@@ -1928,7 +1928,9 @@ export default function MeetingRoom({
         streamUrl?: string | null;
         storageLocation?: string;
       }>;
-      const latest = recordings.find((entry) => entry.egressId === recordingEgressId);
+      const latest =
+        recordings.find((entry) => entry.egressId === recordingEgressId) ||
+        recordings[0];
 
       if (uiUrl) {
         window.open(uiUrl, "_blank", "noopener,noreferrer");
@@ -1964,7 +1966,11 @@ export default function MeetingRoom({
       } else {
         setRecordingMessage("Recording stopped and metadata saved to S3.");
       }
-    } catch {
+    } catch (error) {
+      console.error("Recording stop sequence failed:", error);
+      setRecordingMessage(
+        error instanceof Error ? error.message : "Failed to stop recording"
+      );
       setRecordingState("recording");
     }
   }, [
