@@ -462,7 +462,17 @@ export default function RecordingView() {
                   onError={(e) => {
                     setLoadingVideo(false);
                     const mediaError = (e.currentTarget as HTMLVideoElement).error;
-                    const msg = mediaError?.message || "Unable to play recording. The URL may have expired — refresh and try again.";
+                    let msg = "Unable to play recording.";
+                    if (mediaError) {
+                      const codeMap: Record<number, string> = {
+                        1: "MEDIA_ERR_ABORTED (Playback aborted by user)",
+                        2: "MEDIA_ERR_NETWORK (Network error occurred)",
+                        3: "MEDIA_ERR_DECODE (Decoding error / Corrupt file)",
+                        4: "MEDIA_ERR_SRC_NOT_SUPPORTED (Format not supported by browser / server MIME type mismatch)",
+                      };
+                      const codeText = codeMap[mediaError.code] || `Unknown error code ${mediaError.code}`;
+                      msg = `Playback error (${codeText}): ${mediaError.message || "No detailed message from browser"}`;
+                    }
                     setVideoError(msg);
                   }}
                 >
