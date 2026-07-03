@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { InterviewSessionStatus } from "@prisma/client";
 import type {
   CandidateDetailsInput,
   InterviewEvaluation,
@@ -12,7 +13,7 @@ type SessionRecord = {
   userId: string;
   clerkUserId: string | null;
   candidateId: string;
-  status: string;
+  status: InterviewSessionStatus;
   resumeFileUrl: string | null;
   resumeFileName: string | null;
   resumeStorageProvider: string | null;
@@ -220,17 +221,17 @@ async function loadSessionRecord(sessionId: string, userId: string): Promise<Ses
       questionId: answer.questionId,
       score: answer.score
         ? {
-            score: answer.score.score,
-            feedback: answer.score.feedback,
-          }
+          score: answer.score.score,
+          feedback: answer.score.feedback,
+        }
         : null,
     })),
     report: record.report
       ? {
-          overallScore: record.report.overallScore,
-          summary: record.report.summary,
-          reportText: record.report.reportText,
-        }
+        overallScore: record.report.overallScore,
+        summary: record.report.summary,
+        reportText: record.report.reportText,
+      }
       : null,
   };
 }
@@ -386,7 +387,7 @@ export async function updateInterviewReadiness(input: {
   userId: string;
   micReady?: boolean;
   cameraReady?: boolean;
-  status?: string;
+  status?: InterviewSessionStatus;
 }) {
   const session = await getInterviewSessionById(input.sessionId, input.userId);
   if (!session) {
@@ -405,7 +406,7 @@ export async function updateInterviewReadiness(input: {
   const data: {
     micReady?: boolean;
     cameraReady?: boolean;
-    status?: import("@prisma/client").InterviewSessionStatus;
+    status?: InterviewSessionStatus;
   } = {};
 
   if (typeof input.micReady === "boolean") {
@@ -415,7 +416,7 @@ export async function updateInterviewReadiness(input: {
     data.cameraReady = input.cameraReady;
   }
   if (input.status) {
-    data.status = input.status as import("@prisma/client").InterviewSessionStatus;
+    data.status = input.status;
   }
 
   const updated = await prisma.interviewSession.update({

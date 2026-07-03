@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import { InterviewSessionStatus } from "@prisma/client";
 import {
   getInterviewSessionById,
   updateInterviewReadiness,
@@ -44,7 +45,7 @@ export async function PATCH(request: NextRequest, context: Context) {
     }
 
     const body = (await request.json().catch(() => null)) as
-      | { micReady?: boolean; cameraReady?: boolean; status?: string }
+      | { micReady?: boolean; cameraReady?: boolean; status?: InterviewSessionStatus }
       | null;
 
     const user = await ensureLocalUser(clerkUserId);
