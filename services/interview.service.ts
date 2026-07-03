@@ -7,27 +7,46 @@ import type {
   InterviewSession,
 } from "@/lib/interview-types";
 
-type SessionRow = {
+type SessionRecord = {
   id: string;
-  user_id: string | null;
-  clerk_user_id: string | null;
-  candidate_name: string;
-  candidate_email: string;
-  candidate_phone: string;
-  job_role: string;
-  resume_file_url: string | null;
-  resume_file_name: string | null;
-  resume_storage_provider: string | null;
-  resume_text: string | null;
-  questions: unknown;
-  answers: unknown;
-  evaluations: unknown;
-  overall_score: number | null;
+  userId: string;
+  clerkUserId: string | null;
+  candidateId: string;
   status: string;
-  mic_ready: boolean;
-  camera_ready: boolean;
-  created_at: Date;
-  updated_at: Date;
+  resumeFileUrl: string | null;
+  resumeFileName: string | null;
+  resumeStorageProvider: string | null;
+  resumeText: string | null;
+  overallScore: number | null;
+  micReady: boolean;
+  cameraReady: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  candidate: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    jobRole: string;
+  };
+  questions: Array<{
+    id: string;
+    questionNumber: number;
+    questionText: string;
+  }>;
+  answers: Array<{
+    answerText: string;
+    questionId: string;
+    score: {
+      score: number;
+      feedback: string;
+    } | null;
+  }>;
+  report: {
+    overallScore: number | null;
+    summary: string | null;
+    reportText: string | null;
+  } | null;
 };
 
 const globalForInterviewSessions = globalThis as unknown as {
@@ -39,22 +58,11 @@ const localInterviewSessions =
 
 globalForInterviewSessions.aiconnectInterviewSessions = localInterviewSessions;
 
-let ensureTablesPromise: Promise<void> | null = null;
-
 function isDatabaseUnavailable(error: unknown) {
   if (!(error instanceof Error)) return false;
   return /ETIMEDOUT|timed out|ECONNREFUSED|ENOTFOUND|Can't reach database|Connection terminated/i.test(
     `${error.message} ${JSON.stringify(error)}`
   );
-}
-
-function withDatabaseTimeout<T>(promise: Promise<T>) {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => {
-      setTimeout(() => reject(new Error("Database request timed out")), 5000);
-    }),
-  ]);
 }
 
 function saveLocalSession(session: InterviewSession) {
@@ -84,85 +92,174 @@ function sanitizeQuestion(value: string) {
   return sanitizeDatabaseText(value).slice(0, 280);
 }
 
-function normalizeStringArray(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item));
-}
-
-function normalizeEvaluations(value: unknown): InterviewEvaluation[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => {
-    const candidate = item as Partial<InterviewEvaluation>;
-    return {
-      score: Number(candidate.score || 0),
-      feedback: String(candidate.feedback || ""),
-    };
-  });
-}
-
-function mapSession(row: SessionRow): InterviewSession {
-  return {
-    id: row.id,
-    userId: row.user_id,
-    clerkUserId: row.clerk_user_id,
-    candidateName: row.candidate_name,
-    candidateEmail: row.candidate_email,
-    candidatePhone: row.candidate_phone,
-    jobRole: row.job_role,
-    resumeFileUrl: row.resume_file_url,
-    resumeFileName: row.resume_file_name,
-    resumeStorageProvider: row.resume_storage_provider,
-    resumeText: row.resume_text || "",
-    questions: normalizeStringArray(row.questions),
-    answers: normalizeStringArray(row.answers),
-    evaluations: normalizeEvaluations(row.evaluations),
-    overallScore: row.overall_score,
-    status: row.status,
-    micReady: row.mic_ready,
-    cameraReady: row.camera_ready,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-  };
-}
-
-async function ensureInterviewTables() {
-  if (!ensureTablesPromise) {
-    ensureTablesPromise = prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS interview_sessions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-        clerk_user_id TEXT,
-        candidate_name TEXT NOT NULL,
-        candidate_email TEXT NOT NULL,
-        candidate_phone TEXT NOT NULL,
-        job_role TEXT NOT NULL,
-        resume_file_url TEXT,
-        resume_file_name TEXT,
-        resume_storage_provider TEXT,
-        resume_text TEXT DEFAULT '',
-        questions JSONB NOT NULL DEFAULT '[]'::jsonb,
-        answers JSONB NOT NULL DEFAULT '[]'::jsonb,
-        evaluations JSONB NOT NULL DEFAULT '[]'::jsonb,
-        overall_score DOUBLE PRECISION,
-        status TEXT NOT NULL DEFAULT 'draft',
-        mic_ready BOOLEAN NOT NULL DEFAULT false,
-        camera_ready BOOLEAN NOT NULL DEFAULT false,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_interview_sessions_user_id ON interview_sessions(user_id);
-      CREATE INDEX IF NOT EXISTS idx_interview_sessions_status ON interview_sessions(status);
-    `).then(() => undefined);
-  }
-
-  await ensureTablesPromise;
-}
-
 function calculateOverallScore(evaluations: InterviewEvaluation[]) {
   if (evaluations.length === 0) return null;
   const total = evaluations.reduce((sum, item) => sum + item.score, 0);
   return Number((total / evaluations.length).toFixed(1));
+}
+
+function mapSessionRecord(record: SessionRecord): InterviewSession {
+  const orderedQuestions = [...record.questions].sort((left, right) => left.questionNumber - right.questionNumber);
+  const answerMap = new Map(record.answers.map((answer) => [answer.questionId, answer]));
+
+  const questions = orderedQuestions.map((question) => question.questionText);
+  const answers = orderedQuestions.map((question) => {
+    const answer = answerMap.get(question.id);
+    return answer?.answerText ?? "";
+  });
+  const evaluations = orderedQuestions.map((question) => {
+    const answer = answerMap.get(question.id);
+    if (!answer?.score) {
+      return { score: 0, feedback: "" };
+    }
+
+    return {
+      score: Number(answer.score.score || 0),
+      feedback: String(answer.score.feedback || ""),
+    };
+  });
+
+  return {
+    id: record.id,
+    userId: record.userId,
+    clerkUserId: record.clerkUserId,
+    candidateName: record.candidate.name,
+    candidateEmail: record.candidate.email,
+    candidatePhone: record.candidate.phone,
+    jobRole: record.candidate.jobRole,
+    resumeFileUrl: record.resumeFileUrl,
+    resumeFileName: record.resumeFileName,
+    resumeStorageProvider: record.resumeStorageProvider,
+    resumeText: record.resumeText || "",
+    questions,
+    answers,
+    evaluations,
+    overallScore: record.overallScore ?? calculateOverallScore(evaluations),
+    status: record.status,
+    micReady: record.micReady,
+    cameraReady: record.cameraReady,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+async function loadSessionRecord(sessionId: string, userId: string): Promise<SessionRecord | null> {
+  const record = await prisma.interviewSession.findFirst({
+    where: { id: sessionId, userId },
+    include: {
+      candidate: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          jobRole: true,
+        },
+      },
+      questions: {
+        orderBy: { questionNumber: "asc" },
+        select: {
+          id: true,
+          questionNumber: true,
+          questionText: true,
+        },
+      },
+      answers: {
+        include: {
+          score: {
+            select: {
+              score: true,
+              feedback: true,
+            },
+          },
+        },
+      },
+      report: {
+        select: {
+          overallScore: true,
+          summary: true,
+          reportText: true,
+        },
+      },
+    },
+  });
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    id: record.id,
+    userId: record.userId,
+    clerkUserId: record.clerkUserId,
+    candidateId: record.candidateId,
+    status: record.status,
+    resumeFileUrl: record.resumeFileUrl,
+    resumeFileName: record.resumeFileName,
+    resumeStorageProvider: record.resumeStorageProvider,
+    resumeText: record.resumeText,
+    overallScore: record.overallScore,
+    micReady: record.micReady,
+    cameraReady: record.cameraReady,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    candidate: {
+      id: record.candidate.id,
+      name: record.candidate.name,
+      email: record.candidate.email,
+      phone: record.candidate.phone,
+      jobRole: record.candidate.jobRole,
+    },
+    questions: record.questions.map((question) => ({
+      id: question.id,
+      questionNumber: question.questionNumber,
+      questionText: question.questionText,
+    })),
+    answers: record.answers.map((answer) => ({
+      answerText: answer.answerText,
+      questionId: answer.questionId,
+      score: answer.score
+        ? {
+            score: answer.score.score,
+            feedback: answer.score.feedback,
+          }
+        : null,
+    })),
+    report: record.report
+      ? {
+          overallScore: record.report.overallScore,
+          summary: record.report.summary,
+          reportText: record.report.reportText,
+        }
+      : null,
+  };
+}
+
+function createLocalSession(input: CandidateDetailsInput, id: string, userId: string, clerkUserId: string): InterviewSession {
+  const now = new Date().toISOString();
+
+  return {
+    id,
+    userId,
+    clerkUserId,
+    candidateName: input.name,
+    candidateEmail: input.email,
+    candidatePhone: input.phone,
+    jobRole: input.jobRole,
+    resumeFileUrl: null,
+    resumeFileName: null,
+    resumeStorageProvider: null,
+    resumeText: "",
+    questions: [],
+    answers: [],
+    evaluations: [],
+    overallScore: null,
+    status: "draft",
+    micReady: false,
+    cameraReady: false,
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 export async function createInterviewSession(input: {
@@ -173,83 +270,96 @@ export async function createInterviewSession(input: {
   const id = crypto.randomUUID();
 
   if (input.userId.startsWith("local-")) {
-    const now = new Date().toISOString();
-    const session: InterviewSession = {
-      id,
-      userId: input.userId,
-      clerkUserId: input.clerkUserId,
-      candidateName: input.details.name,
-      candidateEmail: input.details.email,
-      candidatePhone: input.details.phone,
-      jobRole: input.details.jobRole,
-      resumeFileUrl: null,
-      resumeFileName: null,
-      resumeStorageProvider: null,
-      resumeText: "",
-      questions: [],
-      answers: [],
-      evaluations: [],
-      overallScore: null,
-      status: "draft",
-      micReady: false,
-      cameraReady: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const session = createLocalSession(input.details, id, input.userId, input.clerkUserId);
     localInterviewSessions.set(session.id, session);
     return session;
   }
 
   try {
-    await withDatabaseTimeout(ensureInterviewTables());
+    const result = await prisma.$transaction(async (tx) => {
+      const candidate = await tx.candidate.create({
+        data: {
+          userId: input.userId,
+          clerkUserId: input.clerkUserId,
+          name: input.details.name,
+          email: input.details.email,
+          phone: input.details.phone,
+          jobRole: input.details.jobRole,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          jobRole: true,
+        },
+      });
 
-    const rows = await withDatabaseTimeout(prisma.$queryRawUnsafe<SessionRow[]>(
-      `
-        INSERT INTO interview_sessions (
-          id, user_id, clerk_user_id, candidate_name, candidate_email, candidate_phone, job_role
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *;
-      `,
-      id,
-      input.userId,
-      input.clerkUserId,
-      input.details.name,
-      input.details.email,
-      input.details.phone,
-      input.details.jobRole
-    ));
+      const session = await tx.interviewSession.create({
+        data: {
+          id,
+          userId: input.userId,
+          clerkUserId: input.clerkUserId,
+          candidateId: candidate.id,
+          status: "draft",
+        },
+        select: {
+          id: true,
+          userId: true,
+          clerkUserId: true,
+          candidateId: true,
+          status: true,
+          resumeFileUrl: true,
+          resumeFileName: true,
+          resumeStorageProvider: true,
+          resumeText: true,
+          overallScore: true,
+          micReady: true,
+          cameraReady: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
 
-    return mapSession(rows[0]);
+      return {
+        session,
+        candidate,
+      };
+    });
+
+    return mapSessionRecord({
+      id: result.session.id,
+      userId: result.session.userId,
+      clerkUserId: result.session.clerkUserId,
+      candidateId: result.session.candidateId,
+      status: result.session.status,
+      resumeFileUrl: result.session.resumeFileUrl,
+      resumeFileName: result.session.resumeFileName,
+      resumeStorageProvider: result.session.resumeStorageProvider,
+      resumeText: result.session.resumeText,
+      overallScore: result.session.overallScore,
+      micReady: result.session.micReady,
+      cameraReady: result.session.cameraReady,
+      createdAt: result.session.createdAt,
+      updatedAt: result.session.updatedAt,
+      candidate: {
+        id: result.candidate.id,
+        name: result.candidate.name,
+        email: result.candidate.email,
+        phone: result.candidate.phone,
+        jobRole: result.candidate.jobRole,
+      },
+      questions: [],
+      answers: [],
+      report: null,
+    });
   } catch (error) {
     if (!isDatabaseUnavailable(error)) {
       throw error;
     }
 
     console.warn("[interview] database unavailable, using local dev session fallback");
-    const now = new Date().toISOString();
-    const session: InterviewSession = {
-      id,
-      userId: input.userId,
-      clerkUserId: input.clerkUserId,
-      candidateName: input.details.name,
-      candidateEmail: input.details.email,
-      candidatePhone: input.details.phone,
-      jobRole: input.details.jobRole,
-      resumeFileUrl: null,
-      resumeFileName: null,
-      resumeStorageProvider: null,
-      resumeText: "",
-      questions: [],
-      answers: [],
-      evaluations: [],
-      overallScore: null,
-      status: "draft",
-      micReady: false,
-      cameraReady: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const session = createLocalSession(input.details, id, input.userId, input.clerkUserId);
     localInterviewSessions.set(session.id, session);
     return session;
   }
@@ -260,13 +370,8 @@ export async function getInterviewSessionById(sessionId: string, userId: string)
   if (localSession) return localSession;
 
   try {
-    await withDatabaseTimeout(ensureInterviewTables());
-    const rows = await withDatabaseTimeout(prisma.$queryRawUnsafe<SessionRow[]>(
-      `SELECT * FROM interview_sessions WHERE id = $1 AND user_id = $2 LIMIT 1;`,
-      sessionId,
-      userId
-    ));
-    return rows[0] ? mapSession(rows[0]) : null;
+    const record = await loadSessionRecord(sessionId, userId);
+    return record ? mapSessionRecord(record) : null;
   } catch (error) {
     if (!isDatabaseUnavailable(error)) {
       throw error;
@@ -297,25 +402,33 @@ export async function updateInterviewReadiness(input: {
     });
   }
 
-  const rows = await prisma.$queryRawUnsafe<SessionRow[]>(
-    `
-      UPDATE interview_sessions
-      SET
-        mic_ready = COALESCE($3, mic_ready),
-        camera_ready = COALESCE($4, camera_ready),
-        status = COALESCE($5, status),
-        updated_at = NOW()
-      WHERE id = $1 AND user_id = $2
-      RETURNING *;
-    `,
-    input.sessionId,
-    input.userId,
-    input.micReady,
-    input.cameraReady,
-    input.status
-  );
+  const data: {
+    micReady?: boolean;
+    cameraReady?: boolean;
+    status?: string;
+  } = {};
 
-  return mapSession(rows[0]);
+  if (typeof input.micReady === "boolean") {
+    data.micReady = input.micReady;
+  }
+  if (typeof input.cameraReady === "boolean") {
+    data.cameraReady = input.cameraReady;
+  }
+  if (input.status) {
+    data.status = input.status;
+  }
+
+  const updated = await prisma.interviewSession.update({
+    where: { id: input.sessionId, userId: input.userId },
+    data,
+  });
+
+  const record = await loadSessionRecord(updated.id, input.userId);
+  if (!record) {
+    throw new Error("Interview session not found.");
+  }
+
+  return mapSessionRecord(record);
 }
 
 export async function saveResumeDetails(input: {
@@ -344,34 +457,23 @@ export async function saveResumeDetails(input: {
     });
   }
 
-  await ensureInterviewTables();
+  const updated = await prisma.interviewSession.update({
+    where: { id: input.sessionId, userId: input.userId },
+    data: {
+      resumeText: sanitizedResumeText,
+      resumeFileName: input.resumeFileName,
+      resumeFileUrl: input.resumeFileUrl,
+      resumeStorageProvider: input.resumeStorageProvider,
+      status: "resume_uploaded",
+    },
+  });
 
-  const rows = await prisma.$queryRawUnsafe<SessionRow[]>(
-    `
-      UPDATE interview_sessions
-      SET
-        resume_text = $3,
-        resume_file_name = $4,
-        resume_file_url = $5,
-        resume_storage_provider = $6,
-        status = 'resume_uploaded',
-        updated_at = NOW()
-      WHERE id = $1 AND user_id = $2
-      RETURNING *;
-    `,
-    input.sessionId,
-    input.userId,
-    sanitizedResumeText,
-    input.resumeFileName,
-    input.resumeFileUrl,
-    input.resumeStorageProvider
-  );
-
-  if (!rows[0]) {
+  const record = await loadSessionRecord(updated.id, input.userId);
+  if (!record) {
     throw new Error("Interview session not found.");
   }
 
-  return mapSession(rows[0]);
+  return mapSessionRecord(record);
 }
 
 export async function saveInterviewQuestions(input: {
@@ -389,28 +491,27 @@ export async function saveInterviewQuestions(input: {
     });
   }
 
-  await ensureInterviewTables();
+  await prisma.$transaction(async (tx) => {
+    await tx.interviewQuestion.deleteMany({ where: { sessionId: input.sessionId } });
+    await tx.interviewQuestion.createMany({
+      data: sanitizedQuestions.map((question, index) => ({
+        sessionId: input.sessionId,
+        questionNumber: index,
+        questionText: question,
+      })),
+    });
+    await tx.interviewSession.update({
+      where: { id: input.sessionId, userId: input.userId },
+      data: { status: "questions_ready" },
+    });
+  });
 
-  const rows = await prisma.$queryRawUnsafe<SessionRow[]>(
-    `
-      UPDATE interview_sessions
-      SET
-        questions = $3::jsonb,
-        status = 'questions_ready',
-        updated_at = NOW()
-      WHERE id = $1 AND user_id = $2
-      RETURNING *;
-    `,
-    input.sessionId,
-    input.userId,
-    JSON.stringify(sanitizedQuestions)
-  );
-
-  if (!rows[0]) {
+  const record = await loadSessionRecord(input.sessionId, input.userId);
+  if (!record) {
     throw new Error("Interview session not found.");
   }
 
-  return mapSession(rows[0]);
+  return mapSessionRecord(record);
 }
 
 export async function saveInterviewQuestionAt(input: {
@@ -429,31 +530,38 @@ export async function saveInterviewQuestionAt(input: {
     throw new Error("Question index must be zero or greater.");
   }
 
-  const questions = [...session.questions];
-  questions[input.questionIndex] = sanitizeQuestion(input.question);
+  const sanitizedQuestion = sanitizeQuestion(input.question);
 
   if (localInterviewSessions.has(input.sessionId)) {
+    const questions = [...session.questions];
+    questions[input.questionIndex] = sanitizedQuestion;
     return saveLocalSession({
       ...session,
       questions,
     });
   }
 
-  const rows = await prisma.$queryRawUnsafe<SessionRow[]>(
-    `
-      UPDATE interview_sessions
-      SET
-        questions = $3::jsonb,
-        updated_at = NOW()
-      WHERE id = $1 AND user_id = $2
-      RETURNING *;
-    `,
-    input.sessionId,
-    input.userId,
-    JSON.stringify(questions)
-  );
+  await prisma.interviewQuestion.upsert({
+    where: {
+      sessionId_questionNumber: {
+        sessionId: input.sessionId,
+        questionNumber: input.questionIndex,
+      },
+    },
+    update: { questionText: sanitizedQuestion },
+    create: {
+      sessionId: input.sessionId,
+      questionNumber: input.questionIndex,
+      questionText: sanitizedQuestion,
+    },
+  });
 
-  return mapSession(rows[0]);
+  const record = await loadSessionRecord(input.sessionId, input.userId);
+  if (!record) {
+    throw new Error("Interview session not found.");
+  }
+
+  return mapSessionRecord(record);
 }
 
 export async function saveInterviewAnswer(input: {
@@ -469,18 +577,18 @@ export async function saveInterviewAnswer(input: {
     throw new Error("Interview session not found.");
   }
 
-  const answers = [...session.answers];
-  const evaluations = [...session.evaluations];
-
-  answers[input.questionIndex] = input.answer;
-  evaluations[input.questionIndex] = input.evaluation;
-
-  const overallScore = calculateOverallScore(evaluations);
-  const answeredCount = evaluations.filter((item) => typeof item?.score === "number").length;
-  const isComplete = answeredCount >= session.questions.length && session.questions.length > 0;
-  const status = isComplete ? "completed" : "interview_in_progress";
-
   if (localInterviewSessions.has(input.sessionId)) {
+    const answers = [...session.answers];
+    const evaluations = [...session.evaluations];
+
+    answers[input.questionIndex] = input.answer;
+    evaluations[input.questionIndex] = input.evaluation;
+
+    const overallScore = calculateOverallScore(evaluations);
+    const answeredCount = evaluations.filter((item) => typeof item?.score === "number").length;
+    const isComplete = answeredCount >= session.questions.length && session.questions.length > 0;
+    const status = isComplete ? "completed" : "interview_in_progress";
+
     return saveLocalSession({
       ...session,
       answers,
@@ -490,27 +598,105 @@ export async function saveInterviewAnswer(input: {
     });
   }
 
-  const rows = await prisma.$queryRawUnsafe<SessionRow[]>(
-    `
-      UPDATE interview_sessions
-      SET
-        answers = $3::jsonb,
-        evaluations = $4::jsonb,
-        overall_score = $5,
-        status = $6,
-        updated_at = NOW()
-      WHERE id = $1 AND user_id = $2
-      RETURNING *;
-    `,
-    input.sessionId,
-    input.userId,
-    JSON.stringify(answers),
-    JSON.stringify(evaluations),
-    overallScore,
-    status
-  );
+  const updatedSession = await prisma.$transaction(async (tx) => {
+    const question = await tx.interviewQuestion.findFirst({
+      where: {
+        sessionId: input.sessionId,
+        questionNumber: input.questionIndex,
+      },
+      select: { id: true },
+    });
 
-  return mapSession(rows[0]);
+    if (!question) {
+      throw new Error("Question not found for that index.");
+    }
+
+    const answer = await tx.interviewAnswer.upsert({
+      where: { questionId: question.id },
+      update: {
+        answerText: input.answer,
+      },
+      create: {
+        sessionId: input.sessionId,
+        questionId: question.id,
+        answerText: input.answer,
+      },
+      select: { id: true },
+    });
+
+    await tx.interviewScore.upsert({
+      where: { answerId: answer.id },
+      update: {
+        score: input.evaluation.score,
+        feedback: input.evaluation.feedback,
+      },
+      create: {
+        answerId: answer.id,
+        score: input.evaluation.score,
+        feedback: input.evaluation.feedback,
+      },
+    });
+
+    const questionRows = await tx.interviewQuestion.findMany({
+      where: { sessionId: input.sessionId },
+      orderBy: { questionNumber: "asc" },
+      select: { id: true, questionNumber: true, questionText: true },
+    });
+    const answerRows = await tx.interviewAnswer.findMany({
+      where: { sessionId: input.sessionId },
+      include: { score: { select: { score: true, feedback: true } } },
+    });
+
+    const evaluations = questionRows.map((questionRow) => {
+      const answerRow = answerRows.find((row) => row.questionId === questionRow.id);
+      if (!answerRow?.score) {
+        return { score: 0, feedback: "" };
+      }
+
+      return {
+        score: Number(answerRow.score.score || 0),
+        feedback: String(answerRow.score.feedback || ""),
+      };
+    });
+
+    const overallScore = calculateOverallScore(evaluations);
+    const answeredCount = evaluations.filter((item) => typeof item?.score === "number").length;
+    const isComplete = answeredCount >= questionRows.length && questionRows.length > 0;
+    const status = isComplete ? "completed" : "interview_in_progress";
+
+    await tx.interviewSession.update({
+      where: { id: input.sessionId, userId: input.userId },
+      data: {
+        overallScore,
+        status,
+      },
+    });
+
+    const summary = `Completed ${answeredCount} of ${questionRows.length} interview responses.`;
+    await tx.interviewReport.upsert({
+      where: { sessionId: input.sessionId },
+      update: {
+        overallScore,
+        summary,
+        reportText: summary,
+      },
+      create: {
+        sessionId: input.sessionId,
+        overallScore,
+        summary,
+        reportText: summary,
+      },
+    });
+
+    return { questionRows, answerRows };
+  });
+
+  const record = await loadSessionRecord(input.sessionId, input.userId);
+  if (!record) {
+    throw new Error("Interview session not found.");
+  }
+
+  return mapSessionRecord(record);
 }
 
 export async function saveResumeFile(input: {

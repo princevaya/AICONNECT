@@ -316,12 +316,20 @@ export default function MeetingPage() {
               <TabsTrigger value="settings">Host Settings</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="requests" className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
-              {approvalMessage ? (
-                <p className="text-sm text-emerald-600 dark:text-emerald-400">{approvalMessage}</p>
+            <TabsContent
+              value="requests"
+              className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1"
+            >
+              {approvalMessage && (
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">
+                  {approvalMessage}
+                </p>
               )}
+
               {approvalError && (
-                <p className="text-sm text-destructive">{approvalError}</p>
+                <p className="text-sm text-destructive">
+                  {approvalError}
+                </p>
               )}
 
               {pendingUsers.length > 0 ? (

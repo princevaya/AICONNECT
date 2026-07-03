@@ -22,12 +22,15 @@ type FileNode =
 export default function VSCodeEditor({
   room,
   roomId,
+  participantName,
 }: {
   room: any;
   roomId: string;
+  participantName: string;
 }) {
 
   const [darkMode, setDarkMode] = useState(true);
+  const [activeCoder, setActiveCoder] = useState<string | null>(null);
 
   const [files, setFiles] = useState<Record<string, FileNode>>({
     main: {
@@ -164,10 +167,13 @@ export default function VSCodeEditor({
           setActivePath(data.activePath);
 
           if (!openTabs.includes(data.activePath)) {
-            setOpenTabs([...openTabs, data.activePath]);
+            setOpenTabs((prev) =>
+              prev.includes(data.activePath) ? prev : [...prev, data.activePath]
+            );
           }
 
           const lang = detectLanguage(data.activePath);
+          setActiveCoder(data.author || null);
         }
 
       } catch {}
@@ -189,6 +195,8 @@ export default function VSCodeEditor({
 
     if (!room) return;
 
+    setActiveCoder(participantName);
+
     await room.localParticipant.publishData(
       new TextEncoder().encode(
         JSON.stringify({
@@ -196,6 +204,7 @@ export default function VSCodeEditor({
           files: newFiles,
           activePath: path,
           languageId: lang.id,
+          author: participantName,
         })
       )
     );
@@ -604,10 +613,16 @@ export default function VSCodeEditor({
             className={`flex justify-between items-center px-4 py-2 ${topbar}`}
           >
 
-            <span className="text-xs">
-              {activePath}
-            </span>
-
+            <div className="flex flex-col">
+              <span className="text-xs">{activePath}</span>
+              {activeCoder ? (
+                <span className="text-[11px] text-slate-300">
+                  {activeCoder === participantName
+                    ? "You are live coding"
+                    : `${activeCoder} is live coding`}
+                </span>
+              ) : null}
+            </div>
 
             <div className="flex items-center gap-2">
 

@@ -65,6 +65,8 @@ model User {
   externalChatRoomReportsResolved ExternalChatRoomReport[] @relation("ExternalChatReportResolver")
   externalChatRoomMutes ExternalChatRoomMute[]
   externalChatHiddenRooms ExternalChatRoomHidden[]
+  interviewCandidates Candidate[]
+  interviewSessions InterviewSession[]
 
   @@map("users")
 }
@@ -532,4 +534,119 @@ model ExternalChatRoomHidden {
   @@unique([roomId, userId], map: "uq_external_chat_hidden_room_user")
   @@index([userId], map: "idx_external_chat_hidden_user")
   @@map("external_chat_room_hidden")
+}
+
+enum InterviewSessionStatus {
+  draft
+  resume_uploaded
+  questions_ready
+  mic_verified
+  camera_verified
+  interview_in_progress
+  completed
+}
+
+model Candidate {
+  id              String   @id @default(cuid())
+  userId          String?  @map("user_id")
+  clerkUserId     String?  @map("clerk_user_id")
+  name            String
+  email           String
+  phone           String
+  jobRole         String   @map("job_role")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  interviewSessions InterviewSession[]
+
+  @@index([userId, email], map: "idx_interview_candidates_user_email")
+  @@map("interview_candidates")
+}
+
+model InterviewSession {
+  id                      String                @id @default(cuid())
+  userId                  String                @map("user_id")
+  clerkUserId             String?               @map("clerk_user_id")
+  candidateId             String                @map("candidate_id")
+  status                  InterviewSessionStatus @default(draft)
+  resumeFileUrl           String?               @map("resume_file_url")
+  resumeFileName          String?               @map("resume_file_name")
+  resumeStorageProvider   String?               @map("resume_storage_provider")
+  resumeText              String?               @default("") @map("resume_text")
+  overallScore            Float?                @map("overall_score")
+  micReady                Boolean               @default(false) @map("mic_ready")
+  cameraReady             Boolean               @default(false) @map("camera_ready")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  updatedAt               DateTime              @updatedAt @map("updated_at")
+
+  owner                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  candidate               Candidate             @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  questions               InterviewQuestion[]
+  answers                 InterviewAnswer[]
+  report                  InterviewReport?
+
+  @@index([userId, createdAt], map: "idx_interview_sessions_user_created")
+  @@index([status], map: "idx_interview_sessions_status")
+  @@map("interview_sessions")
+}
+
+model InterviewQuestion {
+  id              String   @id @default(cuid())
+  sessionId       String   @map("session_id")
+  questionNumber  Int      @map("question_number")
+  questionText    String   @map("question_text")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  answer          InterviewAnswer?
+
+  @@unique([sessionId, questionNumber], map: "uq_interview_question_session_order")
+  @@index([sessionId, questionNumber], map: "idx_interview_questions_session_order")
+  @@map("interview_questions")
+}
+
+model InterviewAnswer {
+  id              String   @id @default(cuid())
+  sessionId       String   @map("session_id")
+  questionId      String   @unique @map("question_id")
+  answerText      String   @map("answer_text")
+  recordedAt      DateTime @default(now()) @map("recorded_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question        InterviewQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  score           InterviewScore?
+
+  @@index([sessionId], map: "idx_interview_answers_session")
+  @@map("interview_answers")
+}
+
+model InterviewScore {
+  id              String   @id @default(cuid())
+  answerId        String   @unique @map("answer_id")
+  score           Float    @default(0)
+  feedback        String   @default("")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  answer          InterviewAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@map("interview_scores")
+}
+
+model InterviewReport {
+  id              String   @id @default(cuid())
+  sessionId       String   @unique @map("session_id")
+  overallScore    Float?   @map("overall_score")
+  summary         String?
+  reportText      String?  @map("report_text")
+  generatedAt     DateTime @default(now()) @map("generated_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("interview_reports")
 }

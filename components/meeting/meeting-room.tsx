@@ -791,15 +791,8 @@ export default function MeetingRoom({
               id,
               emoji: parsed.emoji,
               participantId: parsed.participantId || participant.identity,
-          const voterId = parsed.participantId || participant.identity;
-            prev.map((item) => {
-              if (item.id !== parsed.questionId) return item;
-              return {
-                ...item,
-                votesByUser: { ...item.votesByUser, [voterId]: parsed.vote },
-              };
-            })
-          );
+            },
+          ]);
           return;
         }
         if (parsed.type === "poll_create") {
@@ -2089,9 +2082,10 @@ export default function MeetingRoom({
       </div>
 
       <VSCodeEditor
-  room={roomRef.current}
-  roomId={roomName}
-/>
+        room={roomRef.current}
+        roomId={roomName}
+        participantName={displayName}
+      />
     </div>
   </div>
 ) : null}
