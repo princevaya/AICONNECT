@@ -453,7 +453,6 @@ export default function RecordingView() {
                 )}
                 <video
                   key={videoUrl}
-                  src={videoUrl}
                   controls
                   autoPlay
                   playsInline
@@ -467,8 +466,7 @@ export default function RecordingView() {
                     setVideoError(msg);
                   }}
                 >
-                  <source src={videoUrl} type="video/mp4" />
-                  <source src={videoUrl} type="video/webm" />
+                  <source src={videoUrl} type={videoUrl.toLowerCase().endsWith(".mp4") ? "video/mp4" : "video/webm"} />
                 </video>
               </>
             ) : (

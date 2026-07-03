@@ -68,27 +68,41 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const normalized = recordings.map((rec) => {
-      const startedAt = rec.createdAt.getTime();
-      const endedAt = startedAt + (rec.duration || 0) * 1000;
-      
-      return {
-        id: rec.id,
-        egressId: rec.id,
-        roomName: rec.meeting.code,
-        status: "EGRESS_COMPLETE",
-        statusCode: 3, // COMPLETE
-        startedAt,
-        endedAt,
-        updatedAt: startedAt,
-        durationSeconds: rec.duration || 0,
-        filename: rec.title,
-        sizeBytes: 0,
-        downloadUrl: rec.s3Url,
-        streamUrl: rec.s3Url,
-        storageLocation: "local",
-      };
-    });
+    const normalized = await Promise.all(
+      recordings.map(async (rec) => {
+        const startedAt = rec.createdAt.getTime();
+        const endedAt = startedAt + (rec.duration || 0) * 1000;
+        
+        let sizeBytes = 0;
+        if (rec.s3Url && rec.s3Url.startsWith("/uploads/")) {
+          const relativePath = rec.s3Url.replace(/^\//, "");
+          const filePath = path.join(process.cwd(), "public", relativePath);
+          try {
+            const stats = await fs.stat(filePath);
+            sizeBytes = stats.size;
+          } catch {
+            // File might not exist
+          }
+        }
+
+        return {
+          id: rec.id,
+          egressId: rec.id,
+          roomName: rec.meeting.code,
+          status: "EGRESS_COMPLETE",
+          statusCode: 3, // COMPLETE
+          startedAt,
+          endedAt,
+          updatedAt: startedAt,
+          durationSeconds: rec.duration || 0,
+          filename: rec.title,
+          sizeBytes,
+          downloadUrl: rec.s3Url,
+          streamUrl: rec.s3Url,
+          storageLocation: "local",
+        };
+      })
+    );
 
     return NextResponse.json(normalized);
   } catch (error) {
