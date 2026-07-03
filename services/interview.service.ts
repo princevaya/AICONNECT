@@ -277,78 +277,71 @@ export async function createInterviewSession(input: {
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const candidate = await tx.candidate.create({
-        data: {
-          userId: input.userId,
-          clerkUserId: input.clerkUserId,
-          name: input.details.name,
-          email: input.details.email,
-          phone: input.details.phone,
-          jobRole: input.details.jobRole,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          jobRole: true,
-        },
-      });
+    const candidate = await prisma.candidate.create({
+      data: {
+        userId: input.userId,
+        clerkUserId: input.clerkUserId,
+        name: input.details.name,
+        email: input.details.email,
+        phone: input.details.phone,
+        jobRole: input.details.jobRole,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        jobRole: true,
+      },
+    });
 
-      const session = await tx.interviewSession.create({
-        data: {
-          id,
-          userId: input.userId,
-          clerkUserId: input.clerkUserId,
-          candidateId: candidate.id,
-          status: "draft",
-        },
-        select: {
-          id: true,
-          userId: true,
-          clerkUserId: true,
-          candidateId: true,
-          status: true,
-          resumeFileUrl: true,
-          resumeFileName: true,
-          resumeStorageProvider: true,
-          resumeText: true,
-          overallScore: true,
-          micReady: true,
-          cameraReady: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-
-      return {
-        session,
-        candidate,
-      };
+    const session = await prisma.interviewSession.create({
+      data: {
+        id,
+        userId: input.userId,
+        clerkUserId: input.clerkUserId,
+        candidateId: candidate.id,
+        status: "draft",
+      },
+      select: {
+        id: true,
+        userId: true,
+        clerkUserId: true,
+        candidateId: true,
+        status: true,
+        resumeFileUrl: true,
+        resumeFileName: true,
+        resumeStorageProvider: true,
+        resumeText: true,
+        overallScore: true,
+        micReady: true,
+        cameraReady: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     return mapSessionRecord({
-      id: result.session.id,
-      userId: result.session.userId,
-      clerkUserId: result.session.clerkUserId,
-      candidateId: result.session.candidateId,
-      status: result.session.status,
-      resumeFileUrl: result.session.resumeFileUrl,
-      resumeFileName: result.session.resumeFileName,
-      resumeStorageProvider: result.session.resumeStorageProvider,
-      resumeText: result.session.resumeText,
-      overallScore: result.session.overallScore,
-      micReady: result.session.micReady,
-      cameraReady: result.session.cameraReady,
-      createdAt: result.session.createdAt,
-      updatedAt: result.session.updatedAt,
+      id: session.id,
+      userId: session.userId,
+      clerkUserId: session.clerkUserId,
+      candidateId: session.candidateId,
+      status: session.status,
+      resumeFileUrl: session.resumeFileUrl,
+      resumeFileName: session.resumeFileName,
+      resumeStorageProvider: session.resumeStorageProvider,
+      resumeText: session.resumeText,
+      overallScore: session.overallScore,
+      micReady: session.micReady,
+      cameraReady: session.cameraReady,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
       candidate: {
-        id: result.candidate.id,
-        name: result.candidate.name,
-        email: result.candidate.email,
-        phone: result.candidate.phone,
-        jobRole: result.candidate.jobRole,
+        id: candidate.id,
+        name: candidate.name,
+        email: candidate.email,
+        phone: candidate.phone,
+        jobRole: candidate.jobRole,
       },
       questions: [],
       answers: [],
