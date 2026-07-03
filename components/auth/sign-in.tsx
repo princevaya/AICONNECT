@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useSignIn } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,8 @@ export default function CustomSignIn() {
   const [error, setError] = React.useState("");
   const [isLoading, setIsLoading] = React.useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get("redirect_url") || "/dashboard";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +44,7 @@ export default function CustomSignIn() {
 
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
-        router.push("/dashboard");
+        router.push(redirectUrl);
       } else {
         setError("Sign in failed. Please try again.");
       }
@@ -63,7 +65,7 @@ export default function CustomSignIn() {
       await signIn.authenticateWithRedirect({
         strategy,
         redirectUrl: "/auth/sso-callback",
-        redirectUrlComplete: "/dashboard",
+        redirectUrlComplete: redirectUrl,
       });
     } catch (err: any) {
       setError(err.errors?.[0]?.longMessage || "OAuth sign-in failed");
@@ -187,7 +189,7 @@ export default function CustomSignIn() {
           <div className="text-center text-sm">
             Don&apos;t have an account?{" "}
             <Link
-              href="/auth/sign-up"
+              href={redirectUrl !== "/dashboard" ? `/auth/sign-up?redirect_url=${encodeURIComponent(redirectUrl)}` : "/auth/sign-up"}
               className="font-semibold text-primary hover:underline"
             >
               Sign up

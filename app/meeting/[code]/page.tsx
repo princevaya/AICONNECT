@@ -254,7 +254,22 @@ export default function MeetingPage() {
     }
   };
 
+  // Enforce login and redirect back after successful authentication
+  useEffect(() => {
+    if (isLoaded && !user) {
+      router.replace(`/auth/sign-in?redirect_url=${encodeURIComponent(window.location.href)}`);
+    }
+  }, [isLoaded, user, router]);
+
   if (!meetingCode) return null;
+
+  if (!isLoaded || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground text-sm">Redirecting to login...</p>
+      </div>
+    );
+  }
 
   // ✅ Show loading while checking if user is host
   if (isCheckingHost) {

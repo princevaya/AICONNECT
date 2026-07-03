@@ -485,19 +485,17 @@ export async function saveInterviewQuestions(input: {
     });
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.interviewQuestion.deleteMany({ where: { sessionId: input.sessionId } });
-    await tx.interviewQuestion.createMany({
-      data: sanitizedQuestions.map((question, index) => ({
-        sessionId: input.sessionId,
-        questionNumber: index,
-        questionText: question,
-      })),
-    });
-    await tx.interviewSession.update({
-      where: { id: input.sessionId, userId: input.userId },
-      data: { status: "questions_ready" },
-    });
+  await prisma.interviewQuestion.deleteMany({ where: { sessionId: input.sessionId } });
+  await prisma.interviewQuestion.createMany({
+    data: sanitizedQuestions.map((question, index) => ({
+      sessionId: input.sessionId,
+      questionNumber: index,
+      questionText: question,
+    })),
+  });
+  await prisma.interviewSession.update({
+    where: { id: input.sessionId, userId: input.userId },
+    data: { status: "questions_ready" },
   });
 
   const record = await loadSessionRecord(input.sessionId, input.userId);
@@ -592,97 +590,93 @@ export async function saveInterviewAnswer(input: {
     });
   }
 
-  const updatedSession = await prisma.$transaction(async (tx) => {
-    const question = await tx.interviewQuestion.findFirst({
-      where: {
-        sessionId: input.sessionId,
-        questionNumber: input.questionIndex,
-      },
-      select: { id: true },
-    });
+  const question = await prisma.interviewQuestion.findFirst({
+    where: {
+      sessionId: input.sessionId,
+      questionNumber: input.questionIndex,
+    },
+    select: { id: true },
+  });
 
-    if (!question) {
-      throw new Error("Question not found for that index.");
+  if (!question) {
+    throw new Error("Question not found for that index.");
+  }
+
+  const answer = await prisma.interviewAnswer.upsert({
+    where: { questionId: question.id },
+    update: {
+      answerText: input.answer,
+    },
+    create: {
+      sessionId: input.sessionId,
+      questionId: question.id,
+      answerText: input.answer,
+    },
+    select: { id: true },
+  });
+
+  await prisma.interviewScore.upsert({
+    where: { answerId: answer.id },
+    update: {
+      score: input.evaluation.score,
+      feedback: input.evaluation.feedback,
+    },
+    create: {
+      answerId: answer.id,
+      score: input.evaluation.score,
+      feedback: input.evaluation.feedback,
+    },
+  });
+
+  const questionRows = await prisma.interviewQuestion.findMany({
+    where: { sessionId: input.sessionId },
+    orderBy: { questionNumber: "asc" },
+    select: { id: true, questionNumber: true, questionText: true },
+  });
+  const answerRows = await prisma.interviewAnswer.findMany({
+    where: { sessionId: input.sessionId },
+    include: { score: { select: { score: true, feedback: true } } },
+  });
+
+  const evaluations = questionRows.map((questionRow) => {
+    const answerRow = answerRows.find((row) => row.questionId === questionRow.id);
+    if (!answerRow?.score) {
+      return { score: 0, feedback: "" };
     }
 
-    const answer = await tx.interviewAnswer.upsert({
-      where: { questionId: question.id },
-      update: {
-        answerText: input.answer,
-      },
-      create: {
-        sessionId: input.sessionId,
-        questionId: question.id,
-        answerText: input.answer,
-      },
-      select: { id: true },
-    });
+    return {
+      score: Number(answerRow.score.score || 0),
+      feedback: String(answerRow.score.feedback || ""),
+    };
+  });
 
-    await tx.interviewScore.upsert({
-      where: { answerId: answer.id },
-      update: {
-        score: input.evaluation.score,
-        feedback: input.evaluation.feedback,
-      },
-      create: {
-        answerId: answer.id,
-        score: input.evaluation.score,
-        feedback: input.evaluation.feedback,
-      },
-    });
+  const overallScore = calculateOverallScore(evaluations);
+  const answeredCount = evaluations.filter((item) => typeof item?.score === "number").length;
+  const isComplete = answeredCount >= questionRows.length && questionRows.length > 0;
+  const status = isComplete ? "completed" : "interview_in_progress";
 
-    const questionRows = await tx.interviewQuestion.findMany({
-      where: { sessionId: input.sessionId },
-      orderBy: { questionNumber: "asc" },
-      select: { id: true, questionNumber: true, questionText: true },
-    });
-    const answerRows = await tx.interviewAnswer.findMany({
-      where: { sessionId: input.sessionId },
-      include: { score: { select: { score: true, feedback: true } } },
-    });
+  await prisma.interviewSession.update({
+    where: { id: input.sessionId, userId: input.userId },
+    data: {
+      overallScore,
+      status,
+    },
+  });
 
-    const evaluations = questionRows.map((questionRow) => {
-      const answerRow = answerRows.find((row) => row.questionId === questionRow.id);
-      if (!answerRow?.score) {
-        return { score: 0, feedback: "" };
-      }
-
-      return {
-        score: Number(answerRow.score.score || 0),
-        feedback: String(answerRow.score.feedback || ""),
-      };
-    });
-
-    const overallScore = calculateOverallScore(evaluations);
-    const answeredCount = evaluations.filter((item) => typeof item?.score === "number").length;
-    const isComplete = answeredCount >= questionRows.length && questionRows.length > 0;
-    const status = isComplete ? "completed" : "interview_in_progress";
-
-    await tx.interviewSession.update({
-      where: { id: input.sessionId, userId: input.userId },
-      data: {
-        overallScore,
-        status,
-      },
-    });
-
-    const summary = `Completed ${answeredCount} of ${questionRows.length} interview responses.`;
-    await tx.interviewReport.upsert({
-      where: { sessionId: input.sessionId },
-      update: {
-        overallScore,
-        summary,
-        reportText: summary,
-      },
-      create: {
-        sessionId: input.sessionId,
-        overallScore,
-        summary,
-        reportText: summary,
-      },
-    });
-
-    return { questionRows, answerRows };
+  const summary = `Completed ${answeredCount} of ${questionRows.length} interview responses.`;
+  await prisma.interviewReport.upsert({
+    where: { sessionId: input.sessionId },
+    update: {
+      overallScore,
+      summary,
+      reportText: summary,
+    },
+    create: {
+      sessionId: input.sessionId,
+      overallScore,
+      summary,
+      reportText: summary,
+    },
   });
 
   const record = await loadSessionRecord(input.sessionId, input.userId);

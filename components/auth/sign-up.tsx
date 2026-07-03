@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useSignUp } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,8 @@ export default function CustomSignUp() {
     const [error, setError] = React.useState("");
     const [isLoading, setIsLoading] = React.useState(false);
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const redirectUrl = searchParams.get("redirect_url") || "/dashboard";
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -64,7 +66,7 @@ export default function CustomSignUp() {
 
             if (completeSignUp.status === "complete") {
                 await setActive({ session: completeSignUp.createdSessionId });
-                router.push("/dashboard");
+                router.push(redirectUrl);
             } else {
                 setError("Verification failed. Please try again.");
             }
@@ -85,7 +87,7 @@ export default function CustomSignUp() {
             await signUp.authenticateWithRedirect({
                 strategy,
                 redirectUrl: "/auth/sso-callback",
-                redirectUrlComplete: "/dashboard",
+                redirectUrlComplete: redirectUrl,
             });
         } catch (err: any) {
             setError(err.errors?.[0]?.longMessage || "OAuth sign-up failed");
@@ -247,7 +249,7 @@ export default function CustomSignUp() {
                             <div className="text-center text-sm">
                                 Already have an account?{" "}
                                 <Link
-                                    href="/auth/sign-in"
+                                    href={redirectUrl !== "/dashboard" ? `/auth/sign-in?redirect_url=${encodeURIComponent(redirectUrl)}` : "/auth/sign-in"}
                                     className="font-semibold text-primary hover:underline"
                                 >
                                     Sign in
