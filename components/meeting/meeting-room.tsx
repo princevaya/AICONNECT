@@ -1698,7 +1698,7 @@ export default function MeetingRoom({
       uiRecorderRef.current = null;
       uiRecordingChunksRef.current = [];
       const filename = `meeting-ui-${roomName}-${Date.now()}.webm`;
-      downloadBlobFile(filename, blob);
+      // downloadBlobFile(filename, blob); // Disabled local browser download
       uiLocalSavedRef.current = true;
 
       if (options?.skipUpload) {
@@ -1958,11 +1958,9 @@ export default function MeetingRoom({
       setRecordingEgressId("");
       void setLocalRecordingAttribute(false);
       if (uiCaptureAttempted && uiUrl) {
-        setRecordingMessage("UI recording saved (local + S3 upload complete).");
+        setRecordingMessage("UI recording saved (server upload complete).");
       } else if (uiCaptureAttempted) {
-        setRecordingMessage(uiLocalSavedRef.current
-          ? "UI recording saved locally, but S3 upload failed. Check exact error above."
-          : "UI recording stop completed, but local file save failed.");
+        setRecordingMessage("UI recording stop completed, but server upload failed. Check exact error above.");
       } else {
         setRecordingMessage("Recording stopped and metadata saved to S3.");
       }
