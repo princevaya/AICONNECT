@@ -820,6 +820,8 @@ export default function MeetingRoom({
           );
           return;
         }
+          return;
+        }
         if (parsed.type === "poll_create") {
           setPolls((prev) =>
             prev.some((poll) => poll.id === parsed.poll.id) ? prev : [parsed.poll, ...prev]
@@ -2105,9 +2107,10 @@ export default function MeetingRoom({
       </div>
 
       <VSCodeEditor
-  room={roomRef.current}
-  roomId={roomName}
-/>
+        room={roomRef.current}
+        roomId={roomName}
+        participantName={displayName}
+      />
     </div>
   </div>
 ) : null}

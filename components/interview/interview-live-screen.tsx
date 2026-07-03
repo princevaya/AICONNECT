@@ -580,22 +580,19 @@ export default function InterviewLiveScreen() {
                   <span className="text-xs">Stop</span>
                 </Button>
               )}
-                <Button
-                  onClick={() => void replayQuestion()}
-                  variant="outline"
-                  className="flex h-14 min-w-16 flex-col gap-1 rounded-full border-white/15 bg-white text-slate-950 hover:bg-blue-50 sm:h-16 sm:min-w-20"
-                >
-                  <Phone className="h-4 w-4" />
-                  <span className="text-xs">Replay</span>
-                </Button>
-                <Button
-                  onClick={() => setShowStats((value) => !value)}
-                  variant="outline"
-                  className="flex h-14 min-w-16 flex-col gap-1 rounded-full border-white/15 bg-white text-slate-950 hover:bg-blue-50 sm:h-16 sm:min-w-20"
-                >
-                  <Radio className="h-4 w-4" />
-                  <span className="text-xs">Stats</span>
-                </Button>
+              <Button
+                onClick={() => void replayQuestion()}
+                className="flex h-14 min-w-16 flex-col gap-1 rounded-full bg-white text-slate-950 hover:bg-blue-50 sm:h-16 sm:min-w-20"
+              >
+                <Phone className="h-4 w-4" />
+                <span className="text-xs">Replay</span>
+              </Button>
+              <Button
+                onClick={() => setShowStats((value) => !value)}
+                className="flex h-14 min-w-16 flex-col gap-1 rounded-full bg-white text-slate-950 hover:bg-blue-50 sm:h-16 sm:min-w-20"
+              >
+                <span className="text-xs">{showStats ? "Hide Status" : "Show Status"}</span>
+              </Button>
                 <Button
                   onClick={() => void submitAnswer()}
                   disabled={evaluationLoading}
