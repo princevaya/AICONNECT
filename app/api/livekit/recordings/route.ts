@@ -85,6 +85,11 @@ export async function GET(req: NextRequest) {
           }
         }
 
+        const streamFilename = path.basename(rec.s3Url);
+        const streamUrl = rec.s3Url.startsWith("/uploads/")
+          ? `/api/meeting/recordings/stream/${streamFilename}`
+          : rec.s3Url;
+
         return {
           id: rec.id,
           egressId: rec.id,
@@ -98,7 +103,7 @@ export async function GET(req: NextRequest) {
           filename: rec.title,
           sizeBytes,
           downloadUrl: rec.s3Url,
-          streamUrl: rec.s3Url,
+          streamUrl,
           storageLocation: "local",
         };
       })
