@@ -405,7 +405,7 @@ export async function updateInterviewReadiness(input: {
   const data: {
     micReady?: boolean;
     cameraReady?: boolean;
-    status?: string;
+    status?: import("@prisma/client").InterviewSessionStatus;
   } = {};
 
   if (typeof input.micReady === "boolean") {
@@ -415,7 +415,7 @@ export async function updateInterviewReadiness(input: {
     data.cameraReady = input.cameraReady;
   }
   if (input.status) {
-    data.status = input.status;
+    data.status = input.status as import("@prisma/client").InterviewSessionStatus;
   }
 
   const updated = await prisma.interviewSession.update({
