@@ -784,6 +784,8 @@ model ExternalChatTranscriptionJob {
   @@index([status, createdAt], map: "idx_external_chat_transcription_status_created")
   @@index([requestedBy], map: "idx_external_chat_transcription_requester")
   @@map("external_chat_transcription_jobs")
+}
+
 enum InterviewSessionStatus {
   draft
   resume_uploaded
