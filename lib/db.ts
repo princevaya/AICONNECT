@@ -38,11 +38,13 @@ const createPool = () =>
     ssl: (() => {
       if (!connectionString) return undefined;
 
+      const isLocalHost = /(?::\/\/|@)(?:localhost|127\.0\.0\.1|db)(?::|\/)/i.test(connectionString);
       const forceSsl =
-        /supabase\.(co|com)/i.test(connectionString) ||
-        /sslmode=require/i.test(connectionString) ||
-        process.env.PGSSLMODE === "require" ||
-        process.env.NODE_ENV === "production";
+        (/supabase\.(co|com)/i.test(connectionString) ||
+          /sslmode=require/i.test(connectionString) ||
+          process.env.PGSSLMODE === "require" ||
+          (process.env.NODE_ENV === "production" && !isLocalHost)) &&
+        !/sslmode=disable/i.test(connectionString);
 
       return forceSsl ? { rejectUnauthorized: false } : undefined;
     })(),

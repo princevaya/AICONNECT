@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
+import { ensureLocalUser } from "@/services/user.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,12 +18,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const dbUser = await prisma.user.findUnique({
-    where: { clerkId },
-  });
-  if (!dbUser) {
-    return NextResponse.json({ error: "User not found in database" }, { status: 404 });
-  }
+  const dbUser = await ensureLocalUser(clerkId);
 
   try {
     const form = await req.formData();

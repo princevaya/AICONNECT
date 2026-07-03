@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import fs from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
+import { ensureLocalUser } from "@/services/user.service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,12 +47,7 @@ export async function GET(req: NextRequest) {
   );
 
   try {
-    const dbUser = await prisma.user.findUnique({
-      where: { clerkId },
-    });
-    if (!dbUser) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
+    const dbUser = await ensureLocalUser(clerkId);
 
     const roomFilter = req.nextUrl.searchParams.get("room") || undefined;
 
