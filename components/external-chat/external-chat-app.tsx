@@ -14,6 +14,7 @@ import {
   LogIn,
   Loader2,
   LayoutDashboard,
+  MessageCircleMore,
   MessageSquare,
   Mic,
   MoreVertical,
@@ -25,8 +26,7 @@ import {
   PlusCircle,
   Settings2,
   Shield,
-  Reply,
-  Search,
+  Reply, Search,
   Send,
   Star,
   StarOff,
@@ -37,6 +37,12 @@ import {
   X,
   Type,
   Trash2,
+  Camera,
+  Circle,
+  CircleCheck,
+  CircleDot,
+  CircleUser,
+  History,
 } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
@@ -46,6 +52,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { copyToClipboard } from "@/lib/utils";
 import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
+import DirectCallModal from "@/components/external-chat/direct-call-modal";
+import IncomingCallModal from "@/components/external-chat/incoming-call-modal";
+import CallSelectorModal from "@/components/external-chat/call-selector-modal";
+import StatusCreator from "@/components/external-chat/status-creator";
+import StatusViewer from "@/components/external-chat/status-viewer";
 
 type Room = {
   id: string;
@@ -116,12 +127,37 @@ type InvitePreview = {
   alreadyMember: boolean;
 };
 
+type CallHistory = {
+  id: string;
+  type: "audio" | "video";
+  status: "ringing" | "active" | "ended" | "missed" | "declined";
+  createdAt: string;
+  starter: UserRow;
+};
+
+type StatusItem = {
+  id: string;
+  userId: string;
+  author: UserRow;
+  text: string | null;
+  visibility: string;
+  publishedAt: string;
+  expiresAt: string;
+  viewedByViewer: boolean;
+  viewerCount: number;
+  reactions: Array<{ emoji: string; count: number; viewerReacted?: boolean }>;
+  attachment: { id: string; fileName: string; downloadUrl: string } | null;
+};
+
+const WHATSAPP_GREEN = "#25D366";
+const WHATSAPP_DARK_GREEN = "#075E54";
+const WHATSAPP_TEAL = "#128C7E";
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "🔥"];
 const MESSAGE_PAGE_SIZE = 60;
 const TIMELINE_WINDOW_SIZE = 260;
 const NOTE_COLORS = [
   { id: "amber", label: "Amber", className: "border-amber-500/40 bg-amber-500/18" },
-  { id: "emerald", label: "Emerald", className: "border-emerald-500/40 bg-emerald-500/16" },
+  { id: "emerald", label: "Emerald", className: "border-emerald-500/40 bg-[#25D366]/16" },
   { id: "sky", label: "Sky", className: "border-sky-500/40 bg-sky-500/16" },
   { id: "rose", label: "Rose", className: "border-rose-500/40 bg-rose-500/16" },
   { id: "violet", label: "Violet", className: "border-violet-500/40 bg-violet-500/16" },
@@ -473,6 +509,20 @@ export default function ExternalChatApp() {
   const lastGroupSettingsRoomRef = useRef<string | null>(null);
   const inviteParamHandledRef = useRef(false);
 
+  // WhatsApp-style tabs
+  const [activeTab, setActiveTab] = useState<"chats" | "status" | "calls" | "you">("chats");
+  const [statuses, setStatuses] = useState<StatusItem[]>([]);
+  const [selfStatus, setSelfStatus] = useState<StatusItem | null>(null);
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [viewerStatuses, setViewerStatuses] = useState<StatusItem[]>([]);
+  const [callsHistory, setCallsHistory] = useState<CallHistory[]>([]);
+  const [incomingCall, setIncomingCall] = useState<{ id: string; type: "audio" | "video"; livekitRoomName: string; starter: UserRow; roomCode: string } | null>(null);
+  const [directCallModalOpen, setDirectCallModalOpen] = useState(false);
+  const [directCallTarget, setDirectCallTarget] = useState<UserRow | null>(null);
+  const [directCallType, setDirectCallType] = useState<"audio" | "video">("audio");
+
   const activeRoom = useMemo(() => rooms.find((r) => r.code === activeRoomCode) || null, [rooms, activeRoomCode]);
   const selfUserId = selfUser?.id || null;
   const pushNotification = useCallback((entry: Omit<InAppNotification, "id" | "createdAt">) => {
@@ -498,6 +548,9 @@ export default function ExternalChatApp() {
       return true;
     });
   }, [visibleRooms, filterTab, starredRoomCodes]);
+  const directRooms = useMemo(() => filteredRooms.filter((room) => room.type !== "group"), [filteredRooms]);
+  const groupRooms = useMemo(() => filteredRooms.filter((room) => room.type === "group"), [filteredRooms]);
+  const storyRooms = useMemo(() => filteredRooms.slice(0, 6), [filteredRooms]);
   const sharedMedia = useMemo(
     () => messages.filter((m) => Boolean(m.attachment)).slice(-6),
     [messages]
@@ -599,6 +652,31 @@ export default function ExternalChatApp() {
   const authCoolingDown = authCooldownUntil > Date.now();
   const authReady = authLoaded && Boolean(authUserId);
 
+  // Recent statuses
+  const recentStatuses = useMemo(() => statuses.filter(s => !s.viewedByViewer), [statuses]);
+  const viewedStatuses = useMemo(() => statuses.filter(s => s.viewedByViewer), [statuses]);
+
+  // Load statuses
+  const loadStatuses = useCallback(async () => {
+    try {
+      const data = await api<{ selfStatus: StatusItem | null; statuses: StatusItem[] }>("/api/external-chat/statuses");
+      setSelfStatus(data.selfStatus || null);
+      setStatuses(data.statuses || []);
+    } catch (error) {
+      console.error("Failed to load statuses:", error);
+    }
+  }, []);
+
+  // Load calls history
+  const loadCallsHistory = useCallback(async () => {
+    try {
+      const data = await api<{ calls: CallHistory[] }>("/api/external-chat/calls/history");
+      setCallsHistory(data.calls || []);
+    } catch (error) {
+      console.error("Failed to load calls history:", error);
+    }
+  }, []);
+
   useEffect(() => {
     roomsRef.current = rooms;
   }, [rooms]);
@@ -606,7 +684,6 @@ export default function ExternalChatApp() {
   const handleApiError = useCallback((err: unknown, fallback: string) => {
     const e = err as ApiError;
     if (e?.status === 401) {
-      // Pause background refresh briefly to avoid 401 storms during auth refresh windows.
       setAuthCooldownUntil(Date.now() + 8000);
       setError("");
       eventRef.current?.close();
@@ -774,19 +851,20 @@ export default function ExternalChatApp() {
     }, 420);
   }, [activeRoomCode, authCooldownUntil, authLoaded, authUserId, loadConnections, loadMessages, loadRooms]);
 
+  // Bootstrap
   useEffect(() => {
     if (!authReady || setupRequired || authCoolingDown) return;
     let cancelled = false;
     const bootstrap = async () => {
       const profileLoaded = await loadProfile();
       if (!profileLoaded || cancelled) return;
-      await Promise.all([loadConnections(), loadRooms()]);
+      await Promise.all([loadConnections(), loadRooms(), loadStatuses(), loadCallsHistory()]);
     };
     void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, [authCoolingDown, authReady, loadConnections, loadProfile, loadRooms, setupRequired]);
+  }, [authCoolingDown, authReady, loadConnections, loadProfile, loadRooms, loadStatuses, loadCallsHistory, setupRequired]);
 
   useEffect(() => {
     if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
@@ -807,10 +885,13 @@ export default function ExternalChatApp() {
       if (activeRoomCode) {
         void loadMessages(activeRoomCode, { silent: true });
       }
+      void loadStatuses();
+      void loadCallsHistory();
     }, 10000);
     return () => clearInterval(timer);
-  }, [activeRoomCode, authCoolingDown, authReady, loadConnections, loadMessages, loadRooms, setupRequired]);
+  }, [activeRoomCode, authCoolingDown, authReady, loadConnections, loadMessages, loadRooms, loadStatuses, loadCallsHistory, setupRequired]);
 
+  // Realtime events
   useEffect(() => {
     if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
     const currentRoom = rooms.find((room) => room.code === activeRoomCode);
@@ -856,12 +937,12 @@ export default function ExternalChatApp() {
               seenBy: message.seenBy.map((entry) =>
                 entry.userId === nextUser.id
                   ? {
-                      ...entry,
-                      user: {
-                        ...(entry.user || { id: nextUser.id, clerkId: nextUser.clerkId, name: null, email: null }),
-                        ...nextUser,
-                      },
-                    }
+                    ...entry,
+                    user: {
+                      ...(entry.user || { id: nextUser.id, clerkId: nextUser.clerkId, name: null, email: null }),
+                      ...nextUser,
+                    },
+                  }
                   : entry
               ),
             }))
@@ -881,10 +962,21 @@ export default function ExternalChatApp() {
             });
           }
         }
+        // Handle incoming call
+        if (body.payload?.type === "incoming_call") {
+          const callData = body.payload as { callId: string; type: "audio" | "video"; livekitRoomName: string; starter: UserRow; roomCode: string };
+          setIncomingCall({
+            id: callData.callId,
+            type: callData.type,
+            livekitRoomName: callData.livekitRoomName,
+            starter: callData.starter,
+            roomCode: callData.roomCode,
+          });
+        }
       } catch {
-        // Ignore malformed realtime payloads and fall back to full reloads.
+        // Ignore malformed realtime payloads
       }
-      if (eventType === "profile") return;
+      if (eventType === "profile" || eventType === "incoming_call") return;
       if (eventType === "seen") {
         void loadMessages(activeRoomCode, { silent: true });
         return;
@@ -897,6 +989,7 @@ export default function ExternalChatApp() {
     };
   }, [activeRoom?.name, activeRoomCode, authCoolingDown, authReady, loadMessages, pushNotification, scheduleRealtimeRefresh, selfUserId, setupRequired]);
 
+  // Search users
   useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -917,6 +1010,7 @@ export default function ExternalChatApp() {
     return () => clearTimeout(t);
   }, [handleApiError, query]);
 
+  // Local storage prefs
   useEffect(() => {
     try {
       const raw = localStorage.getItem("external-chat-drafts");
@@ -1273,6 +1367,8 @@ export default function ExternalChatApp() {
       cancelled = true;
     };
   }, [activeRoomCode, groupSettingsOpen, groupSettingsTab]);
+
+  // --- Functions ---
 
   const sendRequest = async (clerkId: string) => {
     try {
@@ -2238,6 +2334,114 @@ export default function ExternalChatApp() {
     }
   };
 
+  const handleViewStatus = (status: StatusItem, index: number, allStatuses: StatusItem[]) => {
+    setViewerStatuses(allStatuses);
+    setViewerIndex(index);
+    setViewerOpen(true);
+  };
+
+  const handleStatusViewed = async (statusId: string) => {
+    try {
+      await api(`/api/external-chat/statuses/${statusId}/view`, { method: "POST" });
+      await loadStatuses();
+    } catch (error) {
+      console.error("Failed to mark status viewed:", error);
+    }
+  };
+
+  const handleStatusReact = async (statusId: string, emoji: string) => {
+    try {
+      await api(`/api/external-chat/statuses/${statusId}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji }),
+      });
+      await loadStatuses();
+    } catch (error) {
+      console.error("Failed to react to status:", error);
+    }
+  };
+
+  const handleStatusComment = async (statusId: string, content: string) => {
+    try {
+      await api(`/api/external-chat/statuses/${statusId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      });
+      await loadStatuses();
+    } catch (error) {
+      console.error("Failed to comment on status:", error);
+    }
+  };
+
+  const handleStartCall = (targetUser: UserRow | null, type: "audio" | "video") => {
+    setDirectCallTarget(targetUser);
+    setDirectCallType(type);
+    setDirectCallModalOpen(true);
+    setCallOverlayOpen(false);
+  };
+
+  const handleIncomingCallAccept = () => {
+    if (incomingCall) {
+      router.push(`/meeting/${incomingCall.livekitRoomName}?name=${encodeURIComponent(incomingCall.starter.name || "User")}&video=${incomingCall.type === "video" ? "1" : "0"}&audio=1&direct=1`);
+    }
+    setIncomingCall(null);
+  };
+
+  const handleIncomingCallReject = () => {
+    setIncomingCall(null);
+  };
+
+  // Render bottom navigation with WhatsApp styling
+  const renderBottomNav = () => (
+    <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-background/95 backdrop-blur-xl md:hidden">
+      <div className="flex items-center justify-around py-1">
+        <button
+          onClick={() => setActiveTab("chats")}
+          className={`flex flex-col items-center p-1 transition-colors ${activeTab === "chats" ? "text-[#25D366]" : "text-muted-foreground"
+            }`}
+        >
+          <MessageCircleMore className="h-6 w-6" />
+          <span className="text-[10px] font-medium">Chats</span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab("status");
+            void loadStatuses();
+          }}
+          className={`flex flex-col items-center p-1 transition-colors ${activeTab === "status" ? "text-[#25D366]" : "text-muted-foreground"
+            }`}
+        >
+          <Circle className="h-6 w-6" />
+          <span className="text-[10px] font-medium">Status</span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab("calls");
+            void loadCallsHistory();
+          }}
+          className={`flex flex-col items-center p-1 transition-colors ${activeTab === "calls" ? "text-[#25D366]" : "text-muted-foreground"
+            }`}
+        >
+          <Phone className="h-6 w-6" />
+          <span className="text-[10px] font-medium">Calls</span>
+        </button>
+        <button
+          onClick={() => setActiveTab("you")}
+          className={`flex flex-col items-center p-1 transition-colors ${activeTab === "you" ? "text-[#25D366]" : "text-muted-foreground"
+            }`}
+        >
+          <div className="h-6 w-6 rounded-full bg-[#25D366]/15 flex items-center justify-center">
+            <span className="text-xs font-semibold text-[#25D366]">
+              {selfUser?.name?.[0] || selfUser?.email?.[0] || "U"}
+            </span>
+          </div>
+          <span className="text-[10px] font-medium">You</span>
+        </button>
+      </div>
+    </div>
+  );
+
+  // Setup required screen
   if (setupRequired) {
     return (
       <div className="flex h-full min-h-full items-center justify-center p-4 md:p-8">
@@ -2265,266 +2469,214 @@ export default function ExternalChatApp() {
     );
   }
 
+  // Main render
   return (
     <ChatShell>
-      <ChatPanel className="hidden p-3 xl:block">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4" />
-            <p className="text-sm font-semibold">Conversations</p>
-          </div>
-          <ThemeToggle />
-        </div>
-
-        <div className="mb-3 rounded-lg border border-border/70 bg-muted/25 p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 overflow-hidden rounded-full border border-border/70 bg-primary/15">
-                <UserAvatar
-                  user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
-                  className="h-full w-full object-cover"
-                  fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-primary"
-                />
-              </div>
-              <div>
-                <p className="text-xs font-semibold">My Profile</p>
-                <p className="text-[11px] text-muted-foreground">Account & preferences</p>
-              </div>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)}>
-              <Settings2 className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-
-        <div className="mb-3 space-y-2 rounded-lg border border-border/70 bg-muted/35 p-2">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)}>
-              <PlusCircle className="mr-1 h-4 w-4" />
-              Group
-            </Button>
-          </div>
-          <div className="max-h-36 space-y-1 overflow-y-auto">
-            {searching ? <p className="text-xs text-muted-foreground">Searching...</p> : null}
-            {results.map((u) => (
-              <div key={u.id} className="flex items-center justify-between rounded-md border border-border/70 bg-card/65 px-2 py-1.5">
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium">{userLabel(u)}</p>
-                  <p className="truncate text-[11px] text-muted-foreground">{u.email || "No email provided"}</p>
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    size="sm"
-                    variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "outline"}
-                    onClick={() => toggleGroupMember(u.clerkId)}
-                  >
-                    <PlusCircle className="h-4 w-4" />
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void sendRequest(u.clerkId)}>
-                    <UserPlus className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-          {selectedGroupMemberIds.length > 0 ? (
-            <p className="text-[11px] text-muted-foreground">{selectedGroupMemberIds.length} selected for group creation</p>
-          ) : null}
-        </div>
-
-        <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
-
-        <div className="mb-3 rounded-md border border-border/70 bg-muted/25 p-2">
-          <p className="mb-1 text-xs font-semibold">Incoming Requests</p>
-          <div className="max-h-28 space-y-1 overflow-y-auto">
-            {incoming.length === 0 ? <p className="text-[11px] text-muted-foreground">No pending requests</p> : null}
-            {incoming.map((r) => (
-              <div key={r.id} className="flex items-center justify-between rounded border border-border/70 px-2 py-1">
-                <p className="truncate text-xs">{userLabel(r.sender)}</p>
-                <div className="flex gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "accept")}><Check className="h-4 w-4 text-emerald-600" /></Button>
-                  <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "decline")}><X className="h-4 w-4 text-red-600" /></Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mb-3 rounded-md border border-border/70 bg-muted/25 p-2">
-          <p className="mb-1 text-xs font-semibold">Starred Messages</p>
-          <div className="max-h-28 space-y-1 overflow-y-auto">
-            {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-muted-foreground">No starred messages</p> : null}
-            {bookmarkedMessages.slice(-3).reverse().map((m) => (
+      {/* Desktop Sidebar - WhatsApp Style */}
+      <ChatPanel className="relative hidden overflow-hidden rounded-[8px] border-0 bg-[#FFFFFF] dark:bg-[#111B21] p-0 shadow-[0_12px_30px_rgba(22,43,35,0.12)] xl:block">
+        {/* WhatsApp Header - Dark Green */}
+        <div className="bg-[#075E54] dark:bg-[#1F2C33] px-3 pb-3 pt-2 text-white">
+          <div className="mb-2 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setActiveTab("chats")}
+              className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[12px] font-semibold text-white"
+            >
+              <MessageCircleMore className="h-3.5 w-3.5" />
+              Chats
+            </button>
+            <div className="flex items-center gap-1">
               <button
-                key={`sidebar-starred-${m.id}`}
                 type="button"
                 onClick={() => {
-                  scrollToMessageById(m.id);
+                  setActiveTab("status");
+                  void loadStatuses();
                 }}
-                className="w-full rounded border border-border/70 px-2 py-1 text-left hover:bg-accent/60"
+                className={`inline-flex h-7 items-center justify-center rounded-full px-3 text-[12px] font-medium transition-colors ${activeTab === "status" ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10"
+                  }`}
               >
-                <p className="line-clamp-2 text-xs">{m.content || "Attachment"}</p>
+                <Circle className="mr-1 h-3.5 w-3.5" />
+                Status
               </button>
-            ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("calls");
+                  void loadCallsHistory();
+                }}
+                className={`inline-flex h-7 items-center justify-center rounded-full px-3 text-[12px] font-medium transition-colors ${activeTab === "calls" ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10"
+                  }`}
+              >
+                <Phone className="mr-1 h-3.5 w-3.5" />
+                Calls
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("you")}
+                className={`inline-flex h-7 items-center justify-center rounded-full px-3 text-[12px] font-medium transition-colors ${activeTab === "you" ? "bg-white/20 text-white" : "text-white/80 hover:bg-white/10"
+                  }`}
+              >
+                <CircleUser className="mr-1 h-3.5 w-3.5" />
+                You
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-white/60" />
+              <Input
+                className="h-7 rounded-full border-0 bg-white/15 pl-7 pr-2 text-[11px] text-white placeholder:text-white/50 focus-visible:ring-1 focus-visible:ring-white/50"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search or start new chat"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateGroupOpen(true)}
+              className="text-white/90 hover:text-white"
+            >
+              <PlusCircle className="h-4 w-4" />
+            </button>
           </div>
         </div>
 
-        <div className="max-h-[calc(100%-330px)] space-y-1 overflow-y-auto pr-1">
-          {loadingRooms ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading chats...</div> : null}
-          {filteredRooms.map((room) => {
-            const starred = starredRoomCodes.includes(room.code);
-            return (
-              <div
-                key={room.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => setActiveRoomCode(room.code)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setActiveRoomCode(room.code);
-                  }
-                }}
-                onTouchStart={(e) => onConversationTouchStart(e.changedTouches[0]?.clientX ?? 0)}
-                onTouchEnd={(e) => onConversationTouchEnd(e.changedTouches[0]?.clientX ?? 0, room.code)}
-                className={`chat-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "chat-row-active" : "border-border/70"} cursor-pointer`}
-              >
-                <div className="flex items-start gap-2">
-                    <div className="relative">
-                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                        {roomAvatarImage(room, selfUserId) ? (
-                          <img src={roomAvatarImage(room, selfUserId) || ""} alt={room.name} className="h-full w-full object-cover" />
-                        ) : (
-                          (room.name || "DM").slice(0, 2).toUpperCase()
-                        )}
-                      </div>
-                      <OnlineDot />
+        <div className="bg-[#FFFFFF] dark:bg-[#111B21] px-3 pb-16 pt-2">
+          {/* Incoming Requests */}
+          {incoming.length > 0 && (
+            <div className="mb-3 rounded-lg border border-border/50 bg-muted/30 p-2">
+              <p className="mb-1 text-xs font-semibold text-muted-foreground">Pending Requests</p>
+              {incoming.map((r) => (
+                <div key={r.id} className="flex items-center justify-between rounded-md border border-border/50 bg-background/50 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-[#25D366]/15 flex items-center justify-center text-xs font-semibold text-[#25D366]">
+                      {r.sender.name?.[0] || r.sender.email?.[0] || "U"}
                     </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm font-medium">{room.name}</p>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setStarredRoomCodes((prev) =>
-                              prev.includes(room.code) ? prev.filter((c) => c !== room.code) : [...prev, room.code]
-                            );
-                          }}
-                          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                        >
-                          <Pin className={`h-3.5 w-3.5 ${starred ? "text-amber-500" : ""}`} />
-                        </button>
-                        {room.unreadCount > 0 ? <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] text-primary-foreground">{room.unreadCount}</span> : null}
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      {room.type === "group" ? "Group" : "Direct"} chat{room.archivedAt ? " · Archived" : ""}
-                    </p>
+                    <span className="text-sm">{r.sender.name || r.sender.email || "User"}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => void actRequest(r.id, "accept")}
+                      className="rounded-full bg-[#25D366] p-1.5 text-white hover:bg-[#128C7E]"
+                    >
+                      <Check className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => void actRequest(r.id, "decline")}
+                      className="rounded-full bg-red-500 p-1.5 text-white hover:bg-red-600"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-          {archivedRooms.length > 0 ? (
-            <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 p-2">
-              <button
-                type="button"
-                className="mb-2 flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                onClick={() => setArchivedOpen((v) => !v)}
-              >
-                <span>Archived</span>
-                <ChevronRight className={`h-3.5 w-3.5 transition ${archivedOpen ? "rotate-90" : ""}`} />
-              </button>
-              {archivedOpen ? <div className="space-y-1">
-                {archivedRooms.map((room) => {
-                  const role = room.viewerMembership?.role;
-                  const canUnarchive = role === "owner" || role === "admin";
-                  return (
-                    <div key={`archived-${room.id}`} className="rounded-md border border-border/70 bg-card/50 p-2">
-                      <button
-                        type="button"
-                        onClick={() => setActiveRoomCode(room.code)}
-                        className="w-full text-left"
-                      >
-                        <p className="truncate text-sm font-medium">{room.name}</p>
-                        <p className="text-[11px] text-muted-foreground">Read-only archived chat</p>
-                      </button>
-                      <div className="mt-2 flex items-center gap-1">
-                        {canUnarchive ? (
-                          <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(false, room.code)}>
-                            Unarchive
-                          </Button>
-                        ) : null}
-                        <Button size="sm" variant="ghost" onClick={() => void deleteChatForMe(room.code)}>
-                          <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete For Me
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div> : null}
+              ))}
             </div>
-          ) : null}
+          )}
+
+          {/* Chat List */}
+          <div className="flex-1 overflow-y-auto space-y-1 pb-20">
+            {loadingRooms ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : null}
+            {filteredRooms.map((room) => {
+              const starred = starredRoomCodes.includes(room.code);
+              const lastMessage = messages.find(m => m.roomId === room.id);
+              return (
+                <div
+                  key={room.id}
+                  onClick={() => setActiveRoomCode(room.code)}
+                  className={`flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] ${activeRoomCode === room.code ? "bg-[#E8F0FE] dark:bg-[#2A3942]" : ""
+                    }`}
+                >
+                  <div className="relative h-12 w-12 flex-shrink-0">
+                    <div className="h-full w-full rounded-full bg-[#25D366]/15 flex items-center justify-center text-sm font-semibold text-[#25D366] overflow-hidden">
+                      {roomAvatarImage(room, selfUserId) ? (
+                        <img
+                          src={roomAvatarImage(room, selfUserId) || ""}
+                          alt={room.name}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        (room.name || "DM").slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    {room.type === "direct" && <OnlineDot />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between">
+                      <p className="truncate text-sm font-medium text-foreground">{room.name}</p>
+                      {lastMessage && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(lastMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <p className="truncate text-xs text-muted-foreground">
+                        {lastMessage?.content
+                          ? lastMessage.content.slice(0, 30) + (lastMessage.content.length > 30 ? "..." : "")
+                          : room.type === "group" ? `${room.members?.length || 0} members` : "No messages yet"}
+                      </p>
+                      {room.unreadCount > 0 && (
+                        <span className="ml-auto rounded-full bg-[#25D366] px-2 py-0.5 text-xs text-white">
+                          {room.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {filteredRooms.length === 0 && !loadingRooms && (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <MessageCircleMore className="h-12 w-12 text-muted-foreground/30" />
+                <p className="mt-3 text-sm text-muted-foreground">No conversations yet</p>
+                <p className="text-xs text-muted-foreground/70">Start a new chat or create a group</p>
+              </div>
+            )}
+          </div>
         </div>
       </ChatPanel>
 
-      <ChatPanel className={`flex min-h-0 flex-col ${infoPanelCollapsed ? "xl:col-span-2" : ""}`}>
-        <div className="sticky top-0 z-10 border-b border-border/60 bg-background/75 p-3 backdrop-blur">
+      {/* Main Chat Area */}
+      <ChatPanel className={`flex min-h-0 flex-col ${activeTab === "chats" ? "" : "hidden xl:flex"}`}>
+        {/* Chat Header - WhatsApp Style */}
+        <div className="sticky top-0 z-10 border-b border-border/60 bg-[#F0F2F5] dark:bg-[#1F2C33] p-3 backdrop-blur">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Button
                 type="button"
                 size="icon"
                 variant="ghost"
-                className="xl:hidden"
+                className="xl:hidden text-foreground"
                 onClick={() => setMobileSidebarOpen(true)}
               >
                 <PanelLeft className="h-4 w-4" />
               </Button>
               <div className="relative">
-                <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-xs font-semibold text-primary">
+                <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#25D366]/15 text-xs font-semibold text-[#25D366]">
                   {activeRoom && roomAvatarImage(activeRoom, selfUserId) ? (
                     <img src={roomAvatarImage(activeRoom, selfUserId) || ""} alt={activeRoom.name} className="h-full w-full object-cover" />
                   ) : (
                     (activeRoom?.name || "CH").slice(0, 2).toUpperCase()
                   )}
                 </div>
-                <OnlineDot />
+                {activeRoom?.type === "direct" && <OnlineDot />}
               </div>
               <div>
-                <p className="text-sm font-semibold">{activeRoom?.name || "Select a conversation"}</p>
+                <p className="text-sm font-semibold text-foreground">{activeRoom?.name || "Select a conversation"}</p>
                 <p className="text-xs text-muted-foreground">{activeRoomSubtitle}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")}>
-                <LayoutDashboard className="mr-1 h-4 w-4" /> Dashboard
-              </Button>
-              <Button
-                size="sm"
-                variant={infoPanelCollapsed ? "outline" : "default"}
-                className="hidden xl:inline-flex"
-                onClick={() => setInfoPanelCollapsed((v) => !v)}
-              >
-                {infoPanelCollapsed ? "Show Info" : "Hide Info"}
-              </Button>
-              <div className="relative">
-                <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)}>
-                  <Bell className="h-4 w-4" />
-                </Button>
-                {inAppNotifications.length > 0 ? (
-                  <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground">
-                    {inAppNotifications.length > 9 ? "9+" : inAppNotifications.length}
-                  </span>
-                ) : null}
-              </div>
-              <Button size="sm" variant="outline" onClick={() => setCallOverlayOpen(true)}>
+              <Button size="sm" variant="outline" onClick={() => {
+                // Close any other modals first
+                setDirectCallModalOpen(false);
+                setDirectCallTarget(null);
+                setCallOverlayOpen(true);
+              }}>
                 <Phone className="h-4 w-4" />
               </Button>
               {activeRoom ? (
@@ -2674,95 +2826,23 @@ export default function ExternalChatApp() {
               ) : null}
             </div>
           </div>
-          {notificationsOpen ? (
-            <div className="mt-2 rounded-md border border-border/70 bg-card/95 p-2 shadow-sm">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notifications</p>
-                {inAppNotifications.length > 0 ? (
-                  <button
-                    type="button"
-                    className="text-[11px] text-muted-foreground underline"
-                    onClick={() => setInAppNotifications([])}
-                  >
-                    Clear all
-                  </button>
-                ) : null}
-              </div>
-              <div className="max-h-40 space-y-1 overflow-y-auto">
-                {inAppNotifications.length === 0 ? <p className="text-xs text-muted-foreground">No notifications</p> : null}
-                {inAppNotifications.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`rounded border px-2 py-1.5 text-xs ${
-                      item.level === "error"
-                        ? "border-red-500/30 bg-red-500/10"
-                        : item.level === "success"
-                          ? "border-emerald-500/30 bg-emerald-500/10"
-                          : "border-border/70 bg-muted/25"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="font-medium">{item.title}</p>
-                        {item.message ? <p className="text-muted-foreground">{item.message}</p> : null}
-                      </div>
-                      <button type="button" className="text-muted-foreground" onClick={() => dismissNotification(item.id)}>
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div className="mt-3 relative">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input ref={searchInputRef} className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search messages..." />
-          </div>
-          {search.trim() ? (
-            <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/25 px-2 py-1.5">
-              <p className="text-xs text-muted-foreground">
-                {messageMatches.length ? `${messageSearchIndex + 1}/${messageMatches.length} matches` : "No matches"}
-              </p>
-              <div className="flex items-center gap-1">
-                <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(-1)} disabled={!messageMatches.length}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(1)} disabled={!messageMatches.length}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          ) : null}
-          {pinnedMessages.length > 0 ? (
-            <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-              {pinnedMessages.map((m) => (
-                <button
-                  key={`pin-${m.id}`}
-                  type="button"
-                  onClick={() => scrollToMessageById(m.id)}
-                  className="inline-flex max-w-[220px] shrink-0 items-center gap-1 rounded-full border border-amber-500/35 bg-amber-500/10 px-2 py-1 text-xs hover:bg-amber-500/20"
-                >
-                  <Pin className="h-3 w-3 text-amber-500" />
-                  <span className="truncate">{m.content || "Pinned attachment"}</span>
-                </button>
-              ))}
+          {error ? (
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              <span>{error}</span>
+              <button type="button" onClick={() => setError("")} className="rounded px-1 hover:bg-destructive/15">Dismiss</button>
             </div>
           ) : null}
         </div>
 
-        {!networkOnline ? <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">You are offline. Messages will sync once connection returns.</div> : null}
-        {networkOnline && !realtimeConnected ? <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">Realtime disconnected. Reconnecting…</div> : null}
-        {error ? (
-          <div className="flex items-center justify-between gap-2 border-t border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError("")} className="rounded px-1 hover:bg-destructive/15">Dismiss</button>
-          </div>
-        ) : null}
-
+        {/* Message List - WhatsApp Style Chat Background */}
         <div
           ref={messageListRef}
-          className={`min-h-0 flex-1 overflow-y-auto p-3 ${dropActive ? "bg-primary/5" : ""}`}
+          className={`min-h-0 flex-1 overflow-y-auto p-3 ${dropActive ? "bg-primary/5" : ""} dark:bg-[#0B141A]`}
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23d1d8dd' fill-opacity='0.15'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+            backgroundColor: "#ECE5DD",
+          }}
+
           onScroll={(e) => {
             const el = e.currentTarget;
             const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -2803,22 +2883,30 @@ export default function ExternalChatApp() {
             </div>
           ) : null}
           {loadingMessages ? <div className="flex items-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading messages...</div> : null}
-          {!loadingMessages && messages.length === 0 ? <p className="text-sm text-muted-foreground">No messages yet.</p> : null}
+          {!loadingMessages && messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <MessageSquare className="h-12 w-12 text-muted-foreground/30" />
+              <p className="mt-3 text-sm text-muted-foreground">No messages yet</p>
+              <p className="text-xs text-muted-foreground/70">Start the conversation</p>
+            </div>
+          ) : null}
           <div className="space-y-3">
             {visibleTimelineItems.map((item) => {
               if (item.kind === "day") {
                 return (
                   <div key={item.key} className="my-2 flex items-center justify-center">
-                    <span className="rounded-full border border-border/70 bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">{item.label}</span>
+                    <span className="rounded-full bg-[#FFFFFF] dark:bg-[#1F2C33] px-3 py-1 text-[11px] text-muted-foreground shadow-sm">
+                      {item.label}
+                    </span>
                   </div>
                 );
               }
               if (item.kind === "unread") {
                 return (
                   <div key={item.key} className="my-2 flex items-center gap-2">
-                    <div className="h-px flex-1 bg-primary/40" />
-                    <span className="text-[11px] font-medium text-primary">Unread</span>
-                    <div className="h-px flex-1 bg-primary/40" />
+                    <div className="h-px flex-1 bg-[#25D366]/40" />
+                    <span className="text-[11px] font-medium text-[#25D366]">Unread</span>
+                    <div className="h-px flex-1 bg-[#25D366]/40" />
                   </div>
                 );
               }
@@ -2835,13 +2923,12 @@ export default function ExternalChatApp() {
                     ref={(node) => {
                       messageNodeRefs.current[m.id] = node;
                     }}
-                    className={`group inline-flex h-auto w-auto max-w-[82%] flex-col items-start rounded-2xl border ${compactMode ? "p-2.5" : "p-3"} transition ${
-                      m.type === "note"
+                    className={`group inline-flex h-auto w-auto max-w-[82%] flex-col items-start rounded-2xl border ${compactMode ? "p-2.5" : "p-3"} transition ${m.type === "note"
                         ? noteColorClass
                         : own
-                          ? "border-primary/35 bg-primary/12"
-                          : "border-border/70 bg-card/35"
-                    } ${messageMatches[messageSearchIndex] === m.id ? "ring-2 ring-amber-400/70" : ""}`}
+                          ? "border-[#25D366]/35 bg-[#DCF8C6] dark:bg-[#005C4B] text-[#075E54] dark:text-white"
+                          : "border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33]"
+                      } ${messageMatches[messageSearchIndex] === m.id ? "ring-2 ring-amber-400/70" : ""}`}
                     onTouchStart={() => startLongPress(m.id)}
                     onTouchEnd={clearLongPress}
                     onTouchMove={clearLongPress}
@@ -2849,11 +2936,11 @@ export default function ExternalChatApp() {
                   >
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <div className="h-6 w-6 overflow-hidden rounded-full border border-border/70 bg-primary/15">
+                        <div className="h-6 w-6 overflow-hidden rounded-full border border-border/70 bg-[#25D366]/15">
                           <UserAvatar
                             user={m.sender}
                             className="h-full w-full object-cover"
-                            fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
+                            fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-[#25D366]"
                           />
                         </div>
                         <p className="text-xs font-semibold">{own ? "You" : userLabel(m.sender)}</p>
@@ -2866,8 +2953,8 @@ export default function ExternalChatApp() {
                     </div>
                     {m.replyToId ? (
                       <div className="mb-2 max-w-full rounded-md border border-border/60 bg-muted/35 px-2 py-1.5">
-                        <div className="mb-0.5 border-l-2 border-primary pl-2">
-                          <p className="text-[11px] font-semibold text-primary">
+                        <div className="mb-0.5 border-l-2 border-[#25D366] pl-2">
+                          <p className="text-[11px] font-semibold text-[#25D366]">
                             {messageById.get(m.replyToId)?.sender ? userLabel(messageById.get(m.replyToId)!.sender) : "Reply"}
                           </p>
                           <p className="line-clamp-1 text-[11px] text-muted-foreground">
@@ -2974,9 +3061,8 @@ export default function ExternalChatApp() {
                           </Button>
                           {messageMenuOpenId === m.id ? (
                             <div
-                              className={`absolute z-30 mt-1 w-48 max-w-[min(18rem,calc(100vw-2rem))] rounded-md border border-border bg-card p-1 shadow-lg ${
-                                own ? "right-0 bottom-full mb-1 origin-bottom-right" : "left-0 bottom-full mb-1 origin-bottom-left"
-                              }`}
+                              className={`absolute z-30 mt-1 w-48 max-w-[min(18rem,calc(100vw-2rem))] rounded-md border border-border bg-card p-1 shadow-lg ${own ? "right-0 bottom-full mb-1 origin-bottom-right" : "left-0 bottom-full mb-1 origin-bottom-left"
+                                }`}
                             >
                               <div className="mb-1 flex flex-wrap gap-1 px-1 py-1">
                                 {REACTIONS.map((emoji) => (
@@ -3011,24 +3097,24 @@ export default function ExternalChatApp() {
                         {m.failed ? (
                           <Button size="sm" variant="outline" onClick={() => void retryOptimisticMessage(m.id)}>Retry</Button>
                         ) : null}
-                      <span className="text-[11px] text-muted-foreground">Seen by {m.seenBy.length}</span>
-                      {m.seenBy.length > 0 ? (
-                        <div className="ml-1 flex items-center -space-x-1">
-                          {m.seenBy.slice(0, 3).map((s) => (
-                            <span
-                              key={`${m.id}-seen-${s.userId}`}
-                              className="inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full border border-background bg-primary/20 text-[10px] font-semibold"
-                              title={userLabel(s.user || { name: null, email: null })}
-                            >
-                              <UserAvatar
-                                user={s.user}
-                                className="h-full w-full object-cover"
-                                fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold"
-                              />
-                            </span>
-                          ))}
-                        </div>
-                      ) : null}
+                        <span className="text-[11px] text-muted-foreground">Seen by {m.seenBy.length}</span>
+                        {m.seenBy.length > 0 ? (
+                          <div className="ml-1 flex items-center -space-x-1">
+                            {m.seenBy.slice(0, 3).map((s) => (
+                              <span
+                                key={`${m.id}-seen-${s.userId}`}
+                                className="inline-flex h-5 w-5 items-center justify-center overflow-hidden rounded-full border border-background bg-[#25D366]/20 text-[10px] font-semibold"
+                                title={userLabel(s.user || { name: null, email: null })}
+                              >
+                                <UserAvatar
+                                  user={s.user}
+                                  className="h-full w-full object-cover"
+                                  fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold"
+                                />
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </article>
@@ -3043,18 +3129,9 @@ export default function ExternalChatApp() {
               </Button>
             </div>
           ) : null}
-          {text.trim() ? (
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.2s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.1s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary" />
-              </span>
-              <span>You are typing...</span>
-            </div>
-          ) : null}
         </div>
 
+        {/* Composer - WhatsApp Style */}
         {!canSendInActiveRoom && activeRoom ? (
           <div className="border-t border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
             {isFormerMemberInActiveRoom
@@ -3064,7 +3141,7 @@ export default function ExternalChatApp() {
                 : "This conversation is read-only for your account."}
           </div>
         ) : null}
-        <form ref={composerFormRef} onSubmit={sendMessage} className="border-t border-border/60 bg-background/75 p-3 backdrop-blur">
+        <form ref={composerFormRef} onSubmit={sendMessage} className="border-t border-border/60 bg-[#F0F2F5] dark:bg-[#1F2C33] p-3 backdrop-blur">
           {undoSend ? (
             <div className="mb-2 flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-xs">
               <span>Message sent. Undo?</span>
@@ -3072,11 +3149,11 @@ export default function ExternalChatApp() {
             </div>
           ) : null}
           {replying ? (
-            <div className="mb-2 flex items-start justify-between gap-2 rounded-md border border-primary/25 bg-primary/8 px-2 py-1.5">
+            <div className="mb-2 flex items-start justify-between gap-2 rounded-md border border-[#25D366]/25 bg-[#25D366]/8 px-2 py-1.5">
               <div className="flex min-w-0 flex-1 items-start gap-2">
-                <span className="mt-0.5 h-8 w-1 rounded bg-primary" />
+                <span className="mt-0.5 h-8 w-1 rounded bg-[#25D366]" />
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-primary">{userLabel(replying.sender)}</p>
+                  <p className="text-xs font-semibold text-[#25D366]">{userLabel(replying.sender)}</p>
                   <p className="truncate text-xs text-muted-foreground">{replying.content.slice(0, 90)}</p>
                 </div>
               </div>
@@ -3091,7 +3168,7 @@ export default function ExternalChatApp() {
             </select>
             <div className="flex items-center gap-2">
               <input ref={fileInputRef} type="file" className="hidden" onChange={onFile} />
-               <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()} disabled={uploading || !canSendInActiveRoom}>
+              <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()} disabled={uploading || !canSendInActiveRoom}>
                 {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}<span className="ml-1">Attach</span>
               </Button>
             </div>
@@ -3104,7 +3181,7 @@ export default function ExternalChatApp() {
               {pollOptions.map((opt, i) => (
                 <Input key={`opt-${i}`} value={opt} onChange={(e) => setPollOptions((p) => p.map((x, idx) => (idx === i ? e.target.value : x)))} placeholder={`Option ${i + 1}`} />
               ))}
-             <Button type="button" size="sm" variant="outline" onClick={() => setPollOptions((p) => [...p, ""])} disabled={!canSendInActiveRoom}>Add option</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => setPollOptions((p) => [...p, ""])} disabled={!canSendInActiveRoom}>Add option</Button>
             </div>
           ) : null}
           {messageType === "note" ? (
@@ -3158,7 +3235,7 @@ export default function ExternalChatApp() {
                 value={text}
                 onChange={(e) => onTextChange(e.target.value)}
                 onKeyDown={onTextKeyDown}
-                className="min-h-[54px] max-h-40"
+                className="min-h-[54px] max-h-40 bg-[#FFFFFF] dark:bg-[#2A3942] border-[#E9EDEF] dark:border-[#2A3942] rounded-lg"
                 placeholder="Type message. Use @username for mentions."
                 disabled={!canSendInActiveRoom}
               />
@@ -3181,7 +3258,7 @@ export default function ExternalChatApp() {
                 </div>
               ) : null}
             </div>
-            <Button type="submit" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="transition-transform duration-150 active:scale-95">
+            <Button type="submit" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="bg-[#25D366] hover:bg-[#128C7E] transition-transform duration-150 active:scale-95">
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </Button>
           </div>
@@ -3205,6 +3282,7 @@ export default function ExternalChatApp() {
         </form>
       </ChatPanel>
 
+      {/* Info Panel */}
       <ChatPanel className={`${infoPanelCollapsed ? "hidden" : "hidden xl:flex"} min-h-0 flex-col p-3`}>
         <div className="mb-3 border-b border-border/60 pb-3">
           <p className="text-sm font-semibold">Info Panel</p>
@@ -3223,17 +3301,17 @@ export default function ExternalChatApp() {
               return (
                 <div key={`${activeRoom?.id}-${member.userId}`} className="flex items-center justify-between rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary/15 text-[10px] font-semibold text-primary">
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-[#25D366]/15 text-[10px] font-semibold text-[#25D366]">
                       <UserAvatar
                         user={user}
                         className="h-full w-full object-cover"
-                        fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-primary"
+                        fallbackClassName="flex h-full w-full items-center justify-center text-[10px] font-semibold text-[#25D366]"
                       />
                     </div>
                     <span className="text-xs">{label}</span>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-600">{member.role}</span>
+                    <span className="rounded-full bg-[#25D366]/15 px-2 py-0.5 text-[10px] text-[#25D366]">{member.role}</span>
                     {canManageThisMember ? (
                       <Button
                         size="sm"
@@ -3361,6 +3439,11 @@ export default function ExternalChatApp() {
         </div>
       </ChatPanel>
 
+      {/* Mobile Bottom Navigation */}
+      {renderBottomNav()}
+
+      {/* All Modals - same as before with WhatsApp colors applied where needed */}
+      {/* Profile Settings */}
       <div className={`fixed inset-0 z-[55] transition ${profileSettingsOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3381,11 +3464,11 @@ export default function ExternalChatApp() {
             <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
               <p className="text-xs font-semibold">Profile Photo</p>
               <div className="mt-2 flex items-center gap-3">
-                <div className="h-16 w-16 overflow-hidden rounded-full border border-border/70 bg-primary/15">
+                <div className="h-16 w-16 overflow-hidden rounded-full border border-border/70 bg-[#25D366]/15">
                   <UserAvatar
                     user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
                     className="h-full w-full object-cover"
-                    fallbackClassName="flex h-full w-full items-center justify-center text-sm font-semibold text-primary"
+                    fallbackClassName="flex h-full w-full items-center justify-center text-sm font-semibold text-[#25D366]"
                   />
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -3443,6 +3526,7 @@ export default function ExternalChatApp() {
         </aside>
       </div>
 
+      {/* Group Settings */}
       <div className={`fixed inset-0 z-[56] transition ${groupSettingsOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3472,7 +3556,7 @@ export default function ExternalChatApp() {
                     key={`group-tab-${tab.id}`}
                     type="button"
                     onClick={() => setGroupSettingsTab(tab.id as "general" | "members" | "activity")}
-                    className={`rounded-md px-2 py-1.5 text-xs font-medium ${groupSettingsTab === tab.id ? "bg-primary text-primary-foreground" : "hover:bg-accent/70"}`}
+                    className={`rounded-md px-2 py-1.5 text-xs font-medium ${groupSettingsTab === tab.id ? "bg-[#25D366] text-white" : "hover:bg-accent/70"}`}
                   >
                     {tab.label}
                   </button>
@@ -3484,11 +3568,11 @@ export default function ExternalChatApp() {
                   <div className="rounded-lg border border-border/70 bg-muted/25 p-3">
                     <p className="text-xs font-semibold">Group Profile</p>
                     <div className="mt-2 flex items-center gap-3">
-                      <div className="h-14 w-14 overflow-hidden rounded-full border border-border/70 bg-primary/15">
+                      <div className="h-14 w-14 overflow-hidden rounded-full border border-border/70 bg-[#25D366]/15">
                         {groupAvatarDraft ? (
                           <img src={groupAvatarDraft} alt={activeRoom.name} className="h-full w-full object-cover" />
                         ) : (
-                          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-primary">
+                          <div className="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]">
                             {(activeRoom.name || "GR").slice(0, 2).toUpperCase()}
                           </div>
                         )}
@@ -3504,7 +3588,7 @@ export default function ExternalChatApp() {
                     <div className="mt-3 space-y-2">
                       <Input value={groupNameDraft} onChange={(e) => setGroupNameDraft(e.target.value)} placeholder="Group name" />
                       <Textarea value={groupDescriptionDraft} onChange={(e) => setGroupDescriptionDraft(e.target.value)} className="min-h-20" placeholder="Group description" />
-                      <Button onClick={() => void saveGroupSettings()} disabled={!canManageMembers}>Save Group Profile</Button>
+                      <Button onClick={() => void saveGroupSettings()} disabled={!canManageMembers} className="bg-[#25D366] hover:bg-[#128C7E]">Save Group Profile</Button>
                     </div>
                   </div>
 
@@ -3562,9 +3646,8 @@ export default function ExternalChatApp() {
                         type="button"
                         onClick={() => toggleGroupMember(u.clerkId)}
                         disabled={!canManageMembers}
-                        className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-sm ${
-                          selectedGroupMemberIds.includes(u.clerkId) ? "border-primary bg-primary/10" : "border-border/70 hover:bg-accent/60"
-                        }`}
+                        className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-sm ${selectedGroupMemberIds.includes(u.clerkId) ? "border-[#25D366] bg-[#25D366]/10" : "border-border/70 hover:bg-accent/60"
+                          }`}
                       >
                         <span className="truncate">{userLabel(u)}</span>
                         <span className="text-[11px] text-muted-foreground">{selectedGroupMemberIds.includes(u.clerkId) ? "Selected" : "Add"}</span>
@@ -3573,7 +3656,7 @@ export default function ExternalChatApp() {
                   </div>
                   <div className="mt-2 flex items-center justify-between">
                     <p className="text-xs text-muted-foreground">{selectedGroupMemberIds.length} selected</p>
-                    <Button size="sm" variant="outline" disabled={!canManageMembers || selectedGroupMemberIds.length === 0} onClick={() => void addSelectedMembersToActiveGroup()}>
+                    <Button size="sm" variant="outline" disabled={!canManageMembers || selectedGroupMemberIds.length === 0} onClick={() => void addSelectedMembersToActiveGroup()} className="bg-[#25D366] hover:bg-[#128C7E] text-white">
                       Add Selected
                     </Button>
                   </div>
@@ -3600,6 +3683,7 @@ export default function ExternalChatApp() {
         </aside>
       </div>
 
+      {/* Create Group */}
       <div className={`fixed inset-0 z-[57] transition ${createGroupOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3631,9 +3715,8 @@ export default function ExternalChatApp() {
                   key={`group-pick-${u.id}`}
                   type="button"
                   onClick={() => toggleGroupMember(u.clerkId)}
-                  className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-sm ${
-                    selectedGroupMemberIds.includes(u.clerkId) ? "border-primary bg-primary/10" : "border-border/70 hover:bg-accent/60"
-                  }`}
+                  className={`flex w-full items-center justify-between rounded-md border px-2 py-1.5 text-left text-sm ${selectedGroupMemberIds.includes(u.clerkId) ? "border-primary bg-primary/10" : "border-border/70 hover:bg-accent/60"
+                    }`}
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{userLabel(u)}</p>
@@ -3653,6 +3736,7 @@ export default function ExternalChatApp() {
         </div>
       </div>
 
+      {/* Call Overlay */}
       <div className={`fixed inset-0 z-[56] transition ${callOverlayOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3684,13 +3768,61 @@ export default function ExternalChatApp() {
             <Button className="justify-start gap-2" variant="outline" onClick={scheduleMeeting}>
               <CalendarPlus className="h-4 w-4" /> Schedule Meeting
             </Button>
-            <Button className="justify-start gap-2" onClick={createMeeting}>
+            <Button className="justify-start gap-2" onClick={() => {
+              setCallOverlayOpen(false);
+              if (activeRoomPeer) {
+                handleStartCall(activeRoomPeer, "video");
+              } else {
+                setDirectCallTarget(null);
+                setDirectCallType("video");
+                setDirectCallModalOpen(true);
+              }
+            }}>
               <Video className="h-4 w-4" /> Start Video Call Now
             </Button>
           </div>
         </div>
       </div>
 
+      {/* Call Selector Modal */}
+      {callOverlayOpen && (
+        <CallSelectorModal
+          onClose={() => setCallOverlayOpen(false)}
+          onStartCall={handleStartCall}
+          currentRoomType={activeRoom?.type || "direct"}
+          currentRoomPeer={activeRoomPeer}
+          roomMembers={activeRoom?.members}
+        />
+      )}
+
+      {/* Direct Call Modal */}
+      {directCallModalOpen && (
+        <DirectCallModal
+          roomCode={activeRoomCode}
+          callType={directCallType}
+          targetUser={directCallTarget}
+          onClose={() => {
+            setDirectCallModalOpen(false);
+            setDirectCallTarget(null);
+          }}
+          onCallEnded={() => {
+            setDirectCallModalOpen(false);
+            setDirectCallTarget(null);
+          }}
+        />
+      )}
+
+      {/* Incoming Call Modal */}
+      {incomingCall && (
+        <IncomingCallModal
+          call={incomingCall}
+          onClose={() => setIncomingCall(null)}
+          onAccept={handleIncomingCallAccept}
+          onReject={handleIncomingCallReject}
+        />
+      )}
+
+      {/* Invite Share */}
       <div className={`fixed inset-0 z-[58] transition ${inviteShareOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3725,6 +3857,7 @@ export default function ExternalChatApp() {
         </div>
       </div>
 
+      {/* Invite Join */}
       <div className={`fixed inset-0 z-[59] transition ${inviteJoinOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3765,6 +3898,7 @@ export default function ExternalChatApp() {
         </div>
       </div>
 
+      {/* Mobile Sidebar */}
       <div className={`fixed inset-0 z-40 transition xl:hidden ${mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3860,6 +3994,7 @@ export default function ExternalChatApp() {
         </aside>
       </div>
 
+      {/* Action Sheet */}
       {actionSheetOpen && actionSheetMessage ? (
         <div className="fixed inset-0 z-[60] pointer-events-auto">
           <button
@@ -3892,22 +4027,23 @@ export default function ExternalChatApp() {
                 ))}
               </div>
               <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" onClick={() => { setReplyToId(actionSheetMessage.id); setActionSheetOpen(false); }}>Reply</Button>
-              <Button variant="outline" onClick={() => { openThread(actionSheetMessage); setActionSheetOpen(false); }}>Thread</Button>
-              <Button variant="outline" onClick={() => { toggleBookmark(actionSheetMessage.id); setActionSheetOpen(false); }}>
-                {bookmarkedMessageIds.includes(actionSheetMessage.id) ? <StarOff className="mr-1 h-4 w-4 text-amber-500" /> : <Star className="mr-1 h-4 w-4" />}
-                {bookmarkedMessageIds.includes(actionSheetMessage.id) ? "Unstar" : "Star"}
-              </Button>
-              <Button variant="outline" onClick={() => { void copyMessageContent(actionSheetMessage); setActionSheetOpen(false); }}>Copy</Button>
-              <Button variant="outline" onClick={() => { void mutateMessage(actionSheetMessage.id, { pinned: !Boolean(actionSheetMessage.pinnedAt) }); setActionSheetOpen(false); }}>{actionSheetMessage.pinnedAt ? "Unpin" : "Pin"}</Button>
-              <Button variant="outline" onClick={() => { const next = window.prompt("Edit message", actionSheetMessage.content); if (next !== null) void mutateMessage(actionSheetMessage.id, { content: next }); setActionSheetOpen(false); }}>Edit</Button>
-              <Button variant="destructive" className="col-span-2" onClick={() => { void deleteMessage(actionSheetMessage.id); setActionSheetOpen(false); }}>Delete</Button>
+                <Button variant="outline" onClick={() => { setReplyToId(actionSheetMessage.id); setActionSheetOpen(false); }}>Reply</Button>
+                <Button variant="outline" onClick={() => { openThread(actionSheetMessage); setActionSheetOpen(false); }}>Thread</Button>
+                <Button variant="outline" onClick={() => { toggleBookmark(actionSheetMessage.id); setActionSheetOpen(false); }}>
+                  {bookmarkedMessageIds.includes(actionSheetMessage.id) ? <StarOff className="mr-1 h-4 w-4 text-amber-500" /> : <Star className="mr-1 h-4 w-4" />}
+                  {bookmarkedMessageIds.includes(actionSheetMessage.id) ? "Unstar" : "Star"}
+                </Button>
+                <Button variant="outline" onClick={() => { void copyMessageContent(actionSheetMessage); setActionSheetOpen(false); }}>Copy</Button>
+                <Button variant="outline" onClick={() => { void mutateMessage(actionSheetMessage.id, { pinned: !Boolean(actionSheetMessage.pinnedAt) }); setActionSheetOpen(false); }}>{actionSheetMessage.pinnedAt ? "Unpin" : "Pin"}</Button>
+                <Button variant="outline" onClick={() => { const next = window.prompt("Edit message", actionSheetMessage.content); if (next !== null) void mutateMessage(actionSheetMessage.id, { content: next }); setActionSheetOpen(false); }}>Edit</Button>
+                <Button variant="destructive" className="col-span-2" onClick={() => { void deleteMessage(actionSheetMessage.id); setActionSheetOpen(false); }}>Delete</Button>
               </div>
             </div>
           </div>
         </div>
       ) : null}
 
+      {/* Thread Panel */}
       <div className={`fixed inset-0 z-50 transition ${threadOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3954,6 +4090,7 @@ export default function ExternalChatApp() {
         </aside>
       </div>
 
+      {/* Lightbox */}
       <div className={`fixed inset-0 z-[70] transition ${lightboxImage ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -3972,6 +4109,7 @@ export default function ExternalChatApp() {
         </div>
       </div>
 
+      {/* Help */}
       <div className={`fixed inset-0 z-[68] transition ${helpOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
         <button
           type="button"
@@ -4002,6 +4140,54 @@ export default function ExternalChatApp() {
           </div>
         </div>
       </div>
+
+      {/* Status Creator */}
+      {creatorOpen && (
+        <StatusCreator
+          onClose={() => {
+            setCreatorOpen(false);
+            void loadStatuses();
+          }}
+          onPost={async (text, file, visibility) => {
+            try {
+              const formData = new FormData();
+              formData.append("text", text || "");
+              formData.append("visibility", visibility);
+              if (file) {
+                formData.append("file", file);
+              }
+              await fetch("/api/external-chat/statuses", {
+                method: "POST",
+                body: formData,
+              });
+              await loadStatuses();
+              setCreatorOpen(false);
+              pushNotification({ level: "success", title: "Status posted" });
+            } catch (err) {
+              handleApiError(err, "Failed to post status");
+            }
+          }}
+          roomId=""
+          roomCode=""
+        />
+      )}
+
+      {/* Status Viewer */}
+      {viewerOpen && viewerStatuses.length > 0 && (
+        <StatusViewer
+          statuses={viewerStatuses}
+          initialIndex={viewerIndex}
+          onClose={() => setViewerOpen(false)}
+          onStatusViewed={handleStatusViewed}
+          onReact={handleStatusReact}
+          onComment={handleStatusComment}
+          currentUserId={selfUserId || ""}
+          onCreateStatus={() => {
+            setViewerOpen(false);
+            setCreatorOpen(true);
+          }}
+        />
+      )}
     </ChatShell>
   );
 }

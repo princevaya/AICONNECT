@@ -209,14 +209,16 @@ export default function StatusViewer({
   if (statuses.length === 0) {
     return (
       <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">
-        <div className="w-[92vw] max-w-md rounded-2xl border border-border/70 bg-background/95 p-6 text-center shadow-2xl">
+        <div className="w-[92vw] max-w-md rounded-2xl border border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33] p-6 text-center shadow-2xl">
           <Camera className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-          <h3 className="text-lg font-semibold mb-2">No Status Updates</h3>
+          <h3 className="text-lg font-semibold mb-2 text-foreground">No Status Updates</h3>
           <p className="text-sm text-muted-foreground mb-4">
             There are no status updates to show right now.
           </p>
           {onCreateStatus && (
-            <Button onClick={onCreateStatus}>Add Your Status</Button>
+            <Button onClick={onCreateStatus} className="bg-[#25D366] hover:bg-[#128C7E] text-white">
+              Add Your Status
+            </Button>
           )}
         </div>
       </div>
@@ -367,21 +369,21 @@ export default function StatusViewer({
 
       {/* Comments panel - pauses status when open */}
       {showComments && (
-        <div className="absolute bottom-0 left-0 right-0 z-20 bg-black/90 backdrop-blur-xl rounded-t-2xl max-h-[60vh] overflow-hidden flex flex-col">
-          <div className="p-4 border-b border-white/10 flex items-center justify-between">
-            <h3 className="text-white font-semibold">Comments</h3>
-            <button onClick={() => setShowComments(false)} className="text-white/70">
+        <div className="absolute bottom-0 left-0 right-0 z-20 bg-[#FFFFFF] dark:bg-[#1F2C33] rounded-t-2xl max-h-[60vh] overflow-hidden flex flex-col">
+          <div className="p-4 border-b border-border/60 flex items-center justify-between">
+            <h3 className="text-foreground font-semibold">Comments</h3>
+            <button onClick={() => setShowComments(false)} className="text-muted-foreground hover:text-foreground">
               <X className="h-5 w-5" />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {loadingComments && <p className="text-white/50 text-center">Loading...</p>}
+            {loadingComments && <p className="text-muted-foreground text-center">Loading...</p>}
             {!loadingComments && comments.length === 0 && (
-              <p className="text-white/50 text-center">No comments yet</p>
+              <p className="text-muted-foreground text-center">No comments yet</p>
             )}
             {comments.map(comment => (
               <div key={comment.id} className="flex gap-3">
-                <div className="h-8 w-8 rounded-full overflow-hidden bg-white/20 flex-shrink-0">
+                <div className="h-8 w-8 rounded-full overflow-hidden bg-[#25D366]/15 flex-shrink-0 flex items-center justify-center">
                   {comment.author.imageUrl ? (
                     <NextImage
                       src={comment.author.imageUrl}
@@ -391,33 +393,33 @@ export default function StatusViewer({
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <div className="h-full w-full flex items-center justify-center text-white text-xs font-semibold">
+                    <span className="text-xs font-semibold text-[#25D366]">
                       {(comment.author.name?.[0] || comment.author.email?.[0] || "U").toUpperCase()}
-                    </div>
+                    </span>
                   )}
                 </div>
                 <div className="flex-1">
-                  <p className="text-white text-sm">
+                  <p className="text-foreground text-sm">
                     <span className="font-semibold">{comment.author.name || comment.author.email || "User"}</span>
                     {" "}{comment.content}
                   </p>
-                  <p className="text-white/50 text-xs mt-1">
+                  <p className="text-muted-foreground text-xs mt-1">
                     {new Date(comment.createdAt).toLocaleTimeString()}
                   </p>
                 </div>
               </div>
             ))}
           </div>
-          <div className="p-4 border-t border-white/10 flex gap-2">
+          <div className="p-4 border-t border-border/60 flex gap-2 bg-[#F0F2F5] dark:bg-[#2A3942]">
             <Input
               value={commentText}
               onChange={(e) => setCommentText(e.target.value)}
               placeholder="Send a message..."
-              className="flex-1 bg-white/10 border-white/20 text-white placeholder:text-white/50"
+              className="flex-1 bg-[#FFFFFF] dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-foreground placeholder:text-muted-foreground"
               onKeyDown={(e) => e.key === "Enter" && handleComment()}
             />
-            <Button onClick={handleComment} size="icon" className="bg-white/10 hover:bg-white/20">
-              <Send className="h-4 w-4 text-white" />
+            <Button onClick={handleComment} size="icon" className="bg-[#25D366] hover:bg-[#128C7E] text-white">
+              <Send className="h-4 w-4" />
             </Button>
           </div>
         </div>

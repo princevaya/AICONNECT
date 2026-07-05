@@ -82,10 +82,10 @@ export default function CallSelectorModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-background/95 p-4 shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33] p-4 shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Start a Call</h3>
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <h3 className="text-lg font-semibold text-foreground">Start a Call</h3>
+          <Button size="sm" variant="ghost" onClick={onClose} className="text-foreground hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -96,8 +96,8 @@ export default function CallSelectorModal({
             onClick={() => setCallType("audio")}
             className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
               callType === "audio"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted hover:bg-muted/80"
+                ? "bg-[#25D366] text-white"
+                : "bg-[#F0F2F5] dark:bg-[#2A3942] text-foreground hover:bg-[#25D366]/10"
             }`}
           >
             <Phone className="h-4 w-4 inline mr-2" />
@@ -107,8 +107,8 @@ export default function CallSelectorModal({
             onClick={() => setCallType("video")}
             className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
               callType === "video"
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted hover:bg-muted/80"
+                ? "bg-[#25D366] text-white"
+                : "bg-[#F0F2F5] dark:bg-[#2A3942] text-foreground hover:bg-[#25D366]/10"
             }`}
           >
             <Video className="h-4 w-4 inline mr-2" />
@@ -118,11 +118,11 @@ export default function CallSelectorModal({
 
         {/* User Selection */}
         <div className="mb-4">
-          <label className="text-sm font-medium mb-2 block">Calling</label>
+          <label className="text-sm font-medium mb-2 block text-foreground">Calling</label>
           
           {currentRoomType === "direct" && currentRoomPeer && (
-            <div className="flex items-center gap-3 p-3 rounded-lg border border-border/70 bg-muted/25">
-              <div className="h-10 w-10 rounded-full overflow-hidden bg-primary/15 flex items-center justify-center">
+            <div className="flex items-center gap-3 p-3 rounded-lg border border-border/70 bg-[#F0F2F5] dark:bg-[#2A3942]">
+              <div className="h-10 w-10 rounded-full overflow-hidden bg-[#25D366]/15 flex items-center justify-center">
                 {currentRoomPeer.imageUrl ? (
                   <NextImage
                     src={currentRoomPeer.imageUrl}
@@ -132,11 +132,11 @@ export default function CallSelectorModal({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <User className="h-5 w-5 text-muted-foreground" />
+                  <User className="h-5 w-5 text-[#25D366]" />
                 )}
               </div>
               <div>
-                <p className="font-medium">{currentRoomPeer.name || currentRoomPeer.email || "User"}</p>
+                <p className="font-medium text-foreground">{currentRoomPeer.name || currentRoomPeer.email || "User"}</p>
                 <p className="text-xs text-muted-foreground">Direct chat</p>
               </div>
             </div>
@@ -149,16 +149,16 @@ export default function CallSelectorModal({
                   <div className="relative mb-2">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
-                      className="pl-9"
+                      className="pl-9 bg-[#F0F2F5] dark:bg-[#2A3942] border-[#E9EDEF] dark:border-[#2A3942] text-foreground placeholder:text-muted-foreground"
                       placeholder="Search users to call..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
-                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/70 p-1">
+                  <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border/70 p-1 bg-[#FFFFFF] dark:bg-[#1F2C33]">
                     {searching && (
                       <div className="flex justify-center py-4">
-                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        <Loader2 className="h-5 w-5 animate-spin text-[#25D366]" />
                       </div>
                     )}
                     {!searching && searchQuery.trim() && searchResults.length === 0 && (
@@ -168,9 +168,9 @@ export default function CallSelectorModal({
                       <button
                         key={user.id}
                         onClick={() => setSelectedUser(user)}
-                        className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-accent transition-colors text-left"
+                        className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] transition-colors text-left"
                       >
-                        <div className="h-8 w-8 rounded-full overflow-hidden bg-primary/15 flex items-center justify-center">
+                        <div className="h-8 w-8 rounded-full overflow-hidden bg-[#25D366]/15 flex items-center justify-center">
                           {user.imageUrl ? (
                             <NextImage
                               src={user.imageUrl}
@@ -180,11 +180,11 @@ export default function CallSelectorModal({
                               className="h-full w-full object-cover"
                             />
                           ) : (
-                            <User className="h-4 w-4 text-muted-foreground" />
+                            <User className="h-4 w-4 text-[#25D366]" />
                           )}
                         </div>
                         <div>
-                          <p className="text-sm font-medium">{user.name || user.email || "User"}</p>
+                          <p className="text-sm font-medium text-foreground">{user.name || user.email || "User"}</p>
                           <p className="text-xs text-muted-foreground">{user.email}</p>
                         </div>
                       </button>
@@ -192,9 +192,9 @@ export default function CallSelectorModal({
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-muted/25">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-[#F0F2F5] dark:bg-[#2A3942]">
                   <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full overflow-hidden bg-primary/15 flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-full overflow-hidden bg-[#25D366]/15 flex items-center justify-center">
                       {selectedUser.imageUrl ? (
                         <NextImage
                           src={selectedUser.imageUrl}
@@ -204,15 +204,15 @@ export default function CallSelectorModal({
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <User className="h-5 w-5 text-muted-foreground" />
+                        <User className="h-5 w-5 text-[#25D366]" />
                       )}
                     </div>
                     <div>
-                      <p className="font-medium">{selectedUser.name || selectedUser.email || "User"}</p>
+                      <p className="font-medium text-foreground">{selectedUser.name || selectedUser.email || "User"}</p>
                       <p className="text-xs text-muted-foreground">Selected contact</p>
                     </div>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => setSelectedUser(null)}>
+                  <Button size="sm" variant="ghost" onClick={() => setSelectedUser(null)} className="text-[#25D366] hover:text-[#128C7E]">
                     Change
                   </Button>
                 </div>
@@ -221,7 +221,7 @@ export default function CallSelectorModal({
           )}
 
           {currentRoomType === "channel" && (
-            <div className="p-3 rounded-lg border border-border/70 bg-muted/25">
+            <div className="p-3 rounded-lg border border-border/70 bg-[#F0F2F5] dark:bg-[#2A3942]">
               <p className="text-sm text-muted-foreground">Channel calls are not supported yet</p>
             </div>
           )}
@@ -231,7 +231,7 @@ export default function CallSelectorModal({
         <Button
           onClick={handleStartCall}
           disabled={(currentRoomType === "group" && !selectedUser) || currentRoomType === "channel"}
-          className="w-full"
+          className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white disabled:opacity-50"
         >
           <Phone className="h-4 w-4 mr-2" />
           Start {callType === "audio" ? "Audio" : "Video"} Call

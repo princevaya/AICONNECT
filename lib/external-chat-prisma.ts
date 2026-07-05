@@ -1,3 +1,4 @@
+// lib/external-chat-prisma.ts
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
@@ -16,6 +17,10 @@ export function normalizeExternalChatConnectionString(input: string) {
     value = value.slice("CHAT_DATABASE_URL=".length);
   }
 
+  if (value.startsWith("DATABASE_URL=")) {
+    value = value.slice("DATABASE_URL=".length);
+  }
+
   value = value.replace(/^["']|["']$/g, "");
 
   const protoIndex = value.search(/postgres(?:ql)?:\/\//i);
@@ -26,6 +31,8 @@ export function normalizeExternalChatConnectionString(input: string) {
   try {
     const url = new URL(value);
     const isSupabasePooler = /pooler\.supabase\.com$/i.test(url.hostname);
+    
+    // For Supabase pooler, ensure the username has the project ref
     if (isSupabasePooler && !url.username.includes(".")) {
       const projectRefFromEnv =
         process.env.CHAT_SUPABASE_PROJECT_REF ||
@@ -36,22 +43,40 @@ export function normalizeExternalChatConnectionString(input: string) {
         const match = primary.match(/db\.([a-z0-9]+)\.supabase\.co/i);
         return match?.[1] || "";
       })();
-      const projectRef = projectRefFromEnv || projectRefFromPrimaryDb;
+      // Use the project ref from the URL or environment
+      const projectRef = projectRefFromEnv || projectRefFromPrimaryDb || "eyvlqlinptvpqkmdmdvq";
       if (projectRef) {
         url.username = `${url.username}.${projectRef}`;
       }
     }
 
-    // Prevent libpq SSL params from overriding explicit Pool ssl config.
-    url.searchParams.delete("sslmode");
+    // Don't delete sslmode - Supabase requires it
+    // Remove only problematic params that cause issues with Prisma
     url.searchParams.delete("sslcert");
     url.searchParams.delete("sslkey");
     url.searchParams.delete("sslrootcert");
+    
+    // Ensure correct port for pooler (6543 for pgbouncer)
+    if (url.hostname.includes("pooler.supabase.com")) {
+      if (url.port === "5432" || url.port === "") {
+        url.port = "6543";
+      }
+      // Ensure pgbouncer=true is set for pooler
+      if (!url.searchParams.has("pgbouncer")) {
+        url.searchParams.set("pgbouncer", "true");
+      }
+    }
+    
+    // Ensure connect_timeout is set
+    if (!url.searchParams.has("connect_timeout")) {
+      url.searchParams.set("connect_timeout", "30");
+    }
+    
     return url.toString();
   } catch {
-    // Fallback for malformed strings: strip SSL params with regex.
+    // Fallback for malformed strings: strip SSL params with regex
     const stripped = value
-      .replace(/([?&])(sslmode|sslcert|sslkey|sslrootcert)=[^&]*/gi, "$1")
+      .replace(/([?&])(sslcert|sslkey|sslrootcert)=[^&]*/gi, "$1")
       .replace(/\?&/, "?")
       .replace(/[?&]$/, "");
     return stripped;
@@ -80,6 +105,7 @@ export function resolveExternalChatSslConfig(forceSslEnabled: boolean) {
     }
   }
 
+  // For Supabase, we need to accept self-signed certificates
   return { rejectUnauthorized: false };
 }
 
@@ -119,6 +145,8 @@ const pool =
   new Pool({
     connectionString: normalizedExternalChatConnectionString,
     max: 10,
+    connectionTimeoutMillis: 10000,
+    idleTimeoutMillis: 30000,
     ssl: resolveExternalChatSslConfig(forceSsl),
   });
 

@@ -148,7 +148,7 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
         }
       }, 1500);
       
-      // Timeout after 60 seconds - FIXED: Use currentStatus variable to avoid closure issues
+      // Timeout after 60 seconds
       const currentStatus = "ringing";
       timeoutRef.current = setTimeout(() => {
         if (currentStatus === "ringing" && mountedRef.current) {
@@ -208,22 +208,22 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-background/95 p-6 backdrop-blur-xl shadow-2xl">
+      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33] p-6 backdrop-blur-xl shadow-2xl">
         <div className="mb-4 text-center">
-          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary/20">
+          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[#25D366]/20">
             {status === "initiating" || status === "ringing" ? (
-              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <Loader2 className="h-10 w-10 animate-spin text-[#25D366]" />
             ) : status === "rejected" || status === "missed" || status === "error" || status === "ended" ? (
               <AlertCircle className="h-10 w-10 text-red-500" />
             ) : status === "connected" ? (
-              <Check className="h-10 w-10 text-emerald-500" />
+              <Check className="h-10 w-10 text-[#25D366]" />
             ) : callType === "video" ? (
-              <Video className="h-10 w-10" />
+              <Video className="h-10 w-10 text-foreground" />
             ) : (
-              <Phone className="h-10 w-10" />
+              <Phone className="h-10 w-10 text-foreground" />
             )}
           </div>
-          <h3 className="text-lg font-semibold">{statusMessages[status]}</h3>
+          <h3 className="text-lg font-semibold text-foreground">{statusMessages[status]}</h3>
           <p className="text-sm text-muted-foreground">
             {targetUser?.name || targetUser?.email || "User"}
           </p>
@@ -245,7 +245,7 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
                 variant={videoEnabled ? "default" : "outline"}
                 size="icon"
                 onClick={toggleVideo}
-                className="rounded-full h-10 w-10"
+                className={`rounded-full h-10 w-10 ${videoEnabled ? "bg-[#25D366] hover:bg-[#128C7E] text-white" : ""}`}
               >
                 {videoEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
               </Button>
@@ -253,7 +253,7 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
                 variant={audioEnabled ? "default" : "outline"}
                 size="icon"
                 onClick={toggleAudio}
-                className="rounded-full h-10 w-10"
+                className={`rounded-full h-10 w-10 ${audioEnabled ? "bg-[#25D366] hover:bg-[#128C7E] text-white" : ""}`}
               >
                 {audioEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
               </Button>
@@ -262,7 +262,7 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
         )}
 
         {status === "idle" && (
-          <Button className="w-full" onClick={startCall}>
+          <Button className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white" onClick={startCall}>
             <Phone className="mr-2 h-4 w-4" /> Start Call
           </Button>
         )}
@@ -274,7 +274,7 @@ export default function DirectCallModal({ roomCode, callType, targetUser, onClos
         )}
 
         {(status === "rejected" || status === "missed" || status === "error" || status === "ended") && (
-          <Button variant="outline" className="w-full" onClick={onClose}>
+          <Button variant="outline" className="w-full text-foreground" onClick={onClose}>
             Close
           </Button>
         )}

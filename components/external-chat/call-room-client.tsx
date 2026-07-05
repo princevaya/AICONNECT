@@ -40,7 +40,7 @@ export default function CallRoomClient({
             : "Declined";
   const statusTone =
     call.status === "active"
-      ? "bg-emerald-500"
+      ? "bg-[#25D366]"
       : call.status === "ringing"
         ? "bg-amber-500"
         : "bg-slate-500";
@@ -53,12 +53,12 @@ export default function CallRoomClient({
   };
 
   return (
-    <div className="flex min-h-dvh flex-col bg-slate-950 text-white">
-      <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 pt-[calc(0.85rem+env(safe-area-inset-top))] backdrop-blur">
+    <div className="flex min-h-dvh flex-col bg-[#ECE5DD] dark:bg-[#0B141A] text-foreground">
+      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-[#075E54] dark:bg-[#1F2C33] px-4 py-3 pt-[calc(0.85rem+env(safe-area-inset-top))] backdrop-blur">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${statusTone} ${isLive ? "animate-pulse" : ""}`} />
-            <p className="truncate text-sm font-semibold">
+            <p className="truncate text-sm font-semibold text-white">
               {isVideoCall ? "Video call" : "Audio call"} · {statusLabel}
             </p>
           </div>
@@ -88,28 +88,28 @@ export default function CallRoomClient({
         </div>
       </div>
 
-      <div className="grid gap-3 border-b border-white/10 px-4 py-3 text-xs text-white/70 md:grid-cols-3">
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+      <div className="grid gap-3 border-b border-border/60 px-4 py-3 text-xs text-white/70 md:grid-cols-3">
+        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
           <p className="text-[11px] uppercase tracking-wide text-white/45">Room</p>
           <p className="mt-1 truncate font-medium text-white">{call.room.code}</p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
           <p className="text-[11px] uppercase tracking-wide text-white/45">Participants</p>
           <p className="mt-1 font-medium text-white">{call.participants.length} connected or invited</p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
           <p className="text-[11px] uppercase tracking-wide text-white/45">Host</p>
           <p className="mt-1 flex items-center gap-2 font-medium text-white">
-            <ShieldCheck className="h-4 w-4 text-cyan-300" />
+            <ShieldCheck className="h-4 w-4 text-[#25D366]" />
             {call.starter.name || call.starter.email || "Host"}
           </p>
         </div>
       </div>
 
       {!isLive ? (
-        <div className="border-b border-white/10 px-4 py-3">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold">
+        <div className="border-b border-border/60 px-4 py-3">
+          <div className="rounded-2xl border border-border/60 bg-white/5 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
               <Circle className="h-3 w-3 fill-current text-white/75" />
               This call is {statusLabel.toLowerCase()}.
             </div>

@@ -132,10 +132,10 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-background/95 p-4 shadow-2xl">
+      <div className="w-full max-w-md rounded-2xl border border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33] p-4 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Add Status</h3>
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <h3 className="text-lg font-semibold text-foreground">Add Status</h3>
+          <Button size="sm" variant="ghost" onClick={onClose} className="text-foreground hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -178,6 +178,7 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
             size="sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={isRecording}
+            className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
           >
             <Image className="h-4 w-4 mr-1" /> Upload
           </Button>
@@ -186,6 +187,7 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
             variant={isRecording ? "destructive" : "outline"}
             size="sm"
             onClick={isRecording ? stopRecording : startRecording}
+            className={isRecording ? "" : "border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"}
           >
             <Camera className="h-4 w-4 mr-1" />
             {isRecording ? `Recording ${recordingTime}s` : "Record"}
@@ -204,13 +206,13 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Add a caption..."
-          className="mb-4 min-h-[80px]"
+          className="mb-4 min-h-[80px] bg-[#F0F2F5] dark:bg-[#2A3942] border-[#E9EDEF] dark:border-[#2A3942] text-foreground placeholder:text-muted-foreground"
           maxLength={500}
         />
 
         {/* Privacy selector */}
         <div className="mb-4">
-          <label className="text-sm font-medium mb-2 block">Who can see this status?</label>
+          <label className="text-sm font-medium mb-2 block text-foreground">Who can see this status?</label>
           <div className="flex gap-2">
             {[
               { value: "public", label: "Everyone" },
@@ -222,8 +224,8 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
                 onClick={() => setVisibility(option.value as typeof visibility)}
                 className={`flex-1 px-3 py-2 rounded-lg text-sm transition-colors ${
                   visibility === option.value
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted hover:bg-muted/80"
+                    ? "bg-[#25D366] text-white"
+                    : "bg-[#F0F2F5] dark:bg-[#2A3942] text-foreground hover:bg-[#25D366]/10"
                 }`}
               >
                 {option.label}
@@ -236,7 +238,7 @@ export default function StatusCreator({ onClose, onPost, roomId, roomCode }: Sta
         <Button
           onClick={handleSubmit}
           disabled={(!text.trim() && !file) || isSubmitting || isRecording}
-          className="w-full"
+          className="w-full bg-[#25D366] hover:bg-[#128C7E] text-white"
         >
           {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
           Post Status

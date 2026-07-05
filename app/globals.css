@@ -154,10 +154,11 @@
 
 @layer components {
   .chat-shell {
-    background:
-      radial-gradient(1200px 600px at 10% -10%, color-mix(in oklab, var(--primary) 14%, transparent), transparent),
-      radial-gradient(1000px 500px at 100% 0%, color-mix(in oklab, var(--chart-2) 12%, transparent), transparent),
-      linear-gradient(to bottom, color-mix(in oklab, var(--background) 94%, transparent), var(--background));
+    background: #ECE5DD;
+  }
+  
+  .dark .chat-shell {
+    background: #0B141A;
   }
 
   .chat-grid {
@@ -169,7 +170,7 @@
   }
 
   .chat-row-active {
-    @apply border-primary/60 bg-primary/10;
+    @apply border-[#25D366]/60 bg-[#25D366]/10;
   }
 
   .chat-row-hover {
@@ -177,10 +178,28 @@
   }
 
   .chat-bubble-received {
-    @apply rounded-2xl rounded-bl-sm border border-border/70 bg-muted/75 px-3 py-2 text-sm;
+    @apply rounded-2xl rounded-bl-sm border border-border/70 bg-white dark:bg-[#1F2C33] px-3 py-2 text-sm;
   }
 
   .chat-bubble-sent {
-    @apply rounded-2xl rounded-br-sm border border-primary/25 bg-primary/90 px-3 py-2 text-sm text-primary-foreground;
+    @apply rounded-2xl rounded-br-sm border border-[#25D366]/25 bg-[#DCF8C6] dark:bg-[#005C4B] px-3 py-2 text-sm text-foreground dark:text-white;
   }
+}
+
+/* WhatsApp Style Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #25D366;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #128C7E;
 }

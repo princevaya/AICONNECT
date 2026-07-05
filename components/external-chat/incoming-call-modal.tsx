@@ -154,9 +154,9 @@ export default function IncomingCallModal({ call, onClose, onAccept, onReject }:
   
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 animate-in fade-in duration-200">
-      <div className="w-full max-w-sm rounded-2xl border border-border/70 bg-background/95 p-6 backdrop-blur-xl shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="w-full max-w-sm rounded-2xl border border-border/70 bg-[#FFFFFF] dark:bg-[#1F2C33] p-6 backdrop-blur-xl shadow-2xl animate-in zoom-in-95 duration-200">
         <div className="mb-4 text-center">
-          <div className="mx-auto mb-4 h-20 w-20 rounded-full overflow-hidden bg-primary/20 flex items-center justify-center animate-pulse">
+          <div className="mx-auto mb-4 h-20 w-20 rounded-full overflow-hidden bg-[#25D366]/20 flex items-center justify-center animate-pulse">
             {call.starter.imageUrl ? (
               <NextImage
                 src={call.starter.imageUrl}
@@ -166,13 +166,13 @@ export default function IncomingCallModal({ call, onClose, onAccept, onReject }:
                 className="h-full w-full object-cover"
               />
             ) : (
-              <div className="h-full w-full flex items-center justify-center text-3xl font-semibold text-primary">
+              <div className="h-full w-full flex items-center justify-center text-3xl font-semibold text-[#25D366]">
                 {(call.starter.name?.[0] || call.starter.email?.[0] || "U").toUpperCase()}
               </div>
             )}
           </div>
           
-          <h3 className="text-xl font-semibold">
+          <h3 className="text-xl font-semibold text-foreground">
             {call.starter.name || call.starter.email || "Someone"}
           </h3>
           <p className="text-sm text-muted-foreground mt-1">
@@ -194,7 +194,7 @@ export default function IncomingCallModal({ call, onClose, onAccept, onReject }:
           <Button
             variant="default"
             size="lg"
-            className="rounded-full h-14 w-14 p-0 bg-emerald-500 hover:bg-emerald-600"
+            className="rounded-full h-14 w-14 p-0 bg-[#25D366] hover:bg-[#128C7E] text-white"
             onClick={handleAccept}
             disabled={isAccepting || isRejecting}
           >
@@ -204,7 +204,7 @@ export default function IncomingCallModal({ call, onClose, onAccept, onReject }:
           <Button
             variant="outline"
             size="lg"
-            className="rounded-full h-14 w-14 p-0"
+            className="rounded-full h-14 w-14 p-0 border-border text-foreground hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]"
             onClick={toggleMute}
           >
             {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}

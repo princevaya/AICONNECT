@@ -129,7 +129,7 @@ export default function StatusTabContent({ userId, onViewStatus }: StatusTabCont
                 )}
               </div>
               {!selfStatus && (
-                <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full bg-[#25D366] flex items-center justify-center">
                   <Plus className="h-3 w-3 text-white" />
                 </div>
               )}

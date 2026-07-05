@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import MeetingRoom from "@/components/meeting/meeting-room";
+import { createLaunchOnceGuard } from "./launch-guard";
 import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,10 +45,17 @@ export default function MeetingPage() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
   // ✅ AUTO-DETECT HOST: check if logged-in user created this meeting
+  const launchGuardRef = useRef<ReturnType<typeof createLaunchOnceGuard> | null>(null);
+  if (!launchGuardRef.current) launchGuardRef.current = createLaunchOnceGuard();
+
+
   useEffect(() => {
     if (!isLoaded || !meetingCode) return;
 
     const checkIfHost = async () => {
+      launchGuardRef.current?.runOnce(() => {
+        // no-op: guard prevents duplicate side-effects via replace/router
+      });
       try {
         const res = await fetch(`/api/schedule?all=true`, { cache: "no-store" });
         const text = await res.text();
