@@ -177,7 +177,7 @@ export default function ScheduleView() {
   // ✅ Copy link for individual meeting cards
   const handleCardCopyLink = async (code: string) => {
     try {
-      const link = `${window.location.origin}/meeting/${code}`;
+      const link = `${window.location.origin}/meeting/join?room=${code}`;
       const ok = await copyToClipboard(link);
       if (!ok) throw new Error("Copy failed");
       setCardCopyState((prev) => ({ ...prev, [code]: "copied" }));

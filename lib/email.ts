@@ -62,7 +62,7 @@ export async function sendMeetingInvite({
     return;
   }
 
-  const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL}/meeting/${meetingCode}`;
+  const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL}/meeting/join?room=${meetingCode}`;
   const formattedDate = scheduledFor.toLocaleString("en-IN", {
     dateStyle: "full",
     timeStyle: "short",

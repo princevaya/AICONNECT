@@ -65,17 +65,40 @@ export default function MeetingPage() {
         } else if (searchParams.get("host") === "true") {
           // ✅ Fallback: manual host param
           setIsHost(true);
+        } else {
+          // ✅ Attendee check: verify approval
+          const approvalRes = await fetch(
+            `/api/check-approval?roomId=${encodeURIComponent(meetingCode)}&name=${encodeURIComponent(
+              participantName
+            )}`,
+            { cache: "no-store" }
+          );
+          if (approvalRes.ok) {
+            const approvalData = await approvalRes.json();
+            if (!approvalData.approved) {
+              router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
+              return;
+            }
+          } else {
+            router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
+            return;
+          }
         }
       } catch {
         // fallback to URL param if API fails
-        if (searchParams.get("host") === "true") setIsHost(true);
+        if (searchParams.get("host") === "true") {
+          setIsHost(true);
+        } else {
+          router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
+          return;
+        }
       } finally {
         setIsCheckingHost(false);
       }
     };
 
     void checkIfHost();
-  }, [isLoaded, meetingCode, user?.id, searchParams]);
+  }, [isLoaded, meetingCode, user?.id, searchParams, participantName, router]);
 
   useEffect(() => {
     if (!meetingCode || !isHost) return;

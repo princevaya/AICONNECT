@@ -45,7 +45,7 @@ function toClientPayload(meeting: MeetingRecord) {
     status: meeting.status,
     isActive: meeting.isActive,
     createdBy: meeting.createdBy ?? null, // ✅ ADDED
-    link: `/meeting/${meeting.code}`,
+    link: `/meeting/join?room=${meeting.code}`,
     createdAt: meeting.createdAt.toISOString(),
     updatedAt: meeting.updatedAt.toISOString(),
   };
