@@ -1,44 +1,30 @@
 "use client";
 
-import React, { useState } from "react";
-import DashboardSidebar from "@/components/dashboard/dashboard-sidebar";
+import React, { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import OverviewView from "@/components/dashboard/views/overview-view";
 import RecordingView from "@/components/dashboard/views/recording-view";
 import ScheduleView from "@/components/dashboard/views/schedule-view";
 
-export type DashboardView =
-  | "overview"
-  | "recording"
-  | "schedule"
-  | "interview"
-  | "external-chat";
+function DashboardContent() {
+  const searchParams = useSearchParams();
+  const activeView = searchParams.get("tab") || "overview";
+
+  switch (activeView) {
+    case "recording":
+      return <RecordingView />;
+    case "schedule":
+      return <ScheduleView />;
+    case "overview":
+    default:
+      return <OverviewView />;
+  }
+}
 
 export default function DashboardPage() {
-  const [activeView, setActiveView] = useState<DashboardView>("overview");
-
-  const renderView = () => {
-    switch (activeView) {
-      case "overview":
-        return <OverviewView setActiveView={setActiveView} />;
-
-      case "recording":
-        return <RecordingView />;
-
-      case "schedule":
-        return <ScheduleView />;
-
-      default:
-        return <OverviewView setActiveView={setActiveView} />;
-    }
-  };
-
   return (
-    <div className="flex gap-8">
-      <DashboardSidebar
-        activeView={activeView}
-        onViewChange={setActiveView}
-      />
-      <main className="flex-1">{renderView()}</main>
-    </div>
+    <Suspense fallback={<div className="p-8 text-sm">Loading view...</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }

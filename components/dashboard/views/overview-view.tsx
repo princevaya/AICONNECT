@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { format, isToday } from "date-fns";
 import {
@@ -19,11 +19,17 @@ import {
   Users,
   PlayCircle,
   Loader2,
-  MessageSquareText,
   RefreshCw,
+  Keyboard,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Check,
+  CalendarRange,
 } from "lucide-react";
 
 import { useUser } from "@clerk/nextjs";
+import { cn, copyToClipboard } from "@/lib/utils";
 
 type ScheduleApiMeeting = {
   id: string;
@@ -74,21 +80,59 @@ const summarizeAttendees = (attendees: string[]) => {
   return `${attendees[0]} + ${attendees.length - 1} more`;
 };
 
-export default function OverviewView({
-  setActiveView,
-}: {
-  setActiveView: (view: "overview" | "recording" | "schedule") => void;
-}) {
-
+export default function OverviewView() {
   const router = useRouter();
   const { user } = useUser();
 
   const [meetingCode, setMeetingCode] = useState("");
-
   const [upcomingMeetings, setUpcomingMeetings] = useState<UpcomingMeeting[]>([]);
   const [isLoadingUpcoming, setIsLoadingUpcoming] = useState(true);
   const [upcomingError, setUpcomingError] = useState<string | null>(null);
 
+  // New states for Google Meet UI
+  const [isNewMeetingDropdownOpen, setIsNewMeetingDropdownOpen] = useState(false);
+  const [createdMeetingLink, setCreatedMeetingLink] = useState<string | null>(null);
+  const [copiedCreatedLink, setCopiedCreatedLink] = useState(false);
+  const [currentSlide, setCurrentSlide] = useState(0);
+
+  const fetchUpcomingMeetings = useCallback(async () => {
+    setIsLoadingUpcoming(true);
+    setUpcomingError(null);
+
+    try {
+      const response = await fetch("/api/schedule", { cache: "no-store" });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load upcoming meetings");
+      }
+
+      if (!Array.isArray(payload?.data)) {
+        throw new Error("Invalid upcoming meetings response");
+      }
+
+      setUpcomingMeetings(payload.data.map(normalizeMeeting));
+    } catch (error) {
+      console.error(error);
+      setUpcomingError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load upcoming meetings"
+      );
+    } finally {
+      setIsLoadingUpcoming(false);
+    }
+  }, []);
+
+  // Fetch upcoming meetings on component mount
+  useEffect(() => {
+    fetchUpcomingMeetings();
+  }, [fetchUpcomingMeetings]);
+
+  const upcomingPreview = useMemo(
+    () => upcomingMeetings.slice(0, 3),
+    [upcomingMeetings]
+  );
 
   const handleCreateMeeting = () => {
     if (!user) return;
@@ -120,293 +164,319 @@ export default function OverviewView({
     router.push(`/meeting/join?room=${encodeURIComponent(room)}`);
   };
 
-  const fetchUpcomingMeetings = useCallback(async () => {
+  // Generate meeting code for later
+  const handleCreateMeetingForLater = () => {
+    setIsNewMeetingDropdownOpen(false);
+    const code = Math.random()
+      .toString(36)
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, 8);
+    const hostLink = `${window.location.origin}/meeting/join?room=${code}`;
+    setCreatedMeetingLink(hostLink);
+    setCopiedCreatedLink(false);
+  };
 
-    setIsLoadingUpcoming(true);
-    setUpcomingError(null);
-
-    try {
-
-      const response = await fetch("/api/schedule", { cache: "no-store" });
-
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to load upcoming meetings");
-      }
-
-      if (!Array.isArray(payload?.data)) {
-        throw new Error("Invalid upcoming meetings response");
-      }
-
-      setUpcomingMeetings(payload.data.map(normalizeMeeting));
-
-    } catch (error) {
-
-      console.error(error);
-
-      setUpcomingError(
-        error instanceof Error
-          ? error.message
-          : "Unable to load upcoming meetings"
-      );
-
-    } finally {
-
-      setIsLoadingUpcoming(false);
-
+  const handleCopyCreatedLink = async (link: string) => {
+    const ok = await copyToClipboard(link);
+    if (ok) {
+      setCopiedCreatedLink(true);
+      setTimeout(() => setCopiedCreatedLink(false), 2000);
     }
+  };
 
-  }, []);
+  const slides = [
+    {
+      illustration: (
+        <svg viewBox="0 0 200 200" className="w-52 h-52 mx-auto" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="100" cy="100" r="80" fill="#E8F0FE" className="dark:fill-blue-950/40" />
+          <rect x="55" y="65" width="90" height="70" rx="10" fill="#4285F4" />
+          <circle cx="100" cy="100" r="22" fill="white" className="dark:fill-background" />
+          <path d="M92 100a8 8 0 018-8h10M108 100a8 8 0 01-8 8H90" stroke="#4285F4" strokeWidth="4" strokeLinecap="round" />
+          <circle cx="75" cy="85" r="5" fill="#34A853" />
+          <circle cx="125" cy="115" r="5" fill="#FBBC05" />
+        </svg>
+      ),
+      title: "Get a link you can share",
+      description: "Click New meeting to get a link you can send to people you want to meet with",
+    },
+    {
+      illustration: (
+        <svg viewBox="0 0 200 200" className="w-52 h-52 mx-auto" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="100" cy="100" r="80" fill="#E6F4EA" className="dark:fill-green-950/40" />
+          <rect x="55" y="55" width="90" height="90" rx="12" fill="#34A853" />
+          <rect x="55" y="55" width="90" height="26" rx="12" fill="#1E8E3E" />
+          <circle cx="100" cy="110" r="20" fill="white" className="dark:fill-background" />
+          <path d="M100 98v12h10" stroke="#34A853" strokeWidth="3" strokeLinecap="round" />
+        </svg>
+      ),
+      title: "Plan ahead",
+      description: "Click New meeting to schedule meetings and send invites to attendees",
+    },
+    {
+      illustration: (
+        <svg viewBox="0 0 200 200" className="w-52 h-52 mx-auto" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="100" cy="100" r="80" fill="#FEF7E0" className="dark:fill-yellow-950/40" />
+          <path d="M100 50L60 70v40c0 24 17 47 40 53 23-6 40-29 40-53V70l-40-20z" fill="#FBBC05" />
+          <path d="M88 102l8 8 16-16" stroke="white" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ),
+      title: "Your meeting is safe",
+      description: "No one can join a meeting unless invited or admitted by the host",
+    },
+  ];
 
-
-  const upcomingPreview = useMemo(
-    () => upcomingMeetings.slice(0, 3),
-    [upcomingMeetings]
-  );
-
+  const nextSlide = () => setCurrentSlide((prev) => (prev + 1) % slides.length);
+  const prevSlide = () => setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length);
 
   return (
+    <div className="flex flex-col lg:flex-row items-center justify-between gap-12 lg:gap-16 max-w-6xl mx-auto py-8 lg:py-16 px-4 min-h-[calc(100vh-8rem)]">
+      {/* LEFT COLUMN: Controls */}
+      <div className="flex-1 space-y-6 max-w-xl">
+        <h1 className="text-4xl md:text-5xl font-normal leading-tight tracking-tight text-foreground/90 font-sans">
+          Video calls and meetings for everyone
+        </h1>
+        <p className="text-lg md:text-xl text-muted-foreground/80 font-light leading-relaxed">
+          Connect, collaborate, and celebrate from anywhere with AIConnect.
+        </p>
 
-    <div className="space-y-8">
-
-      <header className="flex items-center justify-between">
-
-        <div>
-
-          <h1 className="text-2xl font-semibold">
-            Welcome back!
-          </h1>
-
-          <p className="text-sm text-muted-foreground">
-            Start or join a meeting in seconds
-          </p>
-
-        </div>
-
-      </header>
-
-
-
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-
-        {/* CREATE MEETING */}
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-
-          <CardHeader>
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-3 rounded-lg bg-primary/10">
-                <Video className="h-6 w-6 text-primary"/>
-              </div>
-
-              <div>
-                <CardTitle>New Meeting</CardTitle>
-                <CardDescription>
-                  Start an instant meeting
-                </CardDescription>
-              </div>
-
-            </div>
-
-          </CardHeader>
-
-
-          <CardContent className="space-y-4">
-
-            <p className="text-sm text-muted-foreground">
-              Create a new meeting room and share the link
-            </p>
-
+        {/* Action Row */}
+        <div className="flex flex-wrap items-center gap-4 pt-4">
+          {/* New Meeting Dropdown Wrapper */}
+          <div className="relative">
             <Button
-              className="w-full"
-              size="lg"
-              onClick={handleCreateMeeting}
+              className="bg-blue-600 hover:bg-blue-700 text-white rounded-full px-6 py-6 font-medium flex items-center gap-2 text-base shadow-sm"
+              onClick={() => setIsNewMeetingDropdownOpen(!isNewMeetingDropdownOpen)}
             >
-              <Plus className="mr-2 h-5 w-5"/>
-              Create Meeting
+              <Video className="h-5 w-5 fill-white" />
+              New meeting
             </Button>
 
-          </CardContent>
+            {isNewMeetingDropdownOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40 bg-transparent"
+                  onClick={() => setIsNewMeetingDropdownOpen(false)}
+                />
+                <div className="absolute top-full left-0 mt-2 bg-popover text-popover-foreground border shadow-lg rounded-xl py-2 w-64 z-50 text-sm font-normal">
+                  <button
+                    onClick={handleCreateMeetingForLater}
+                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors flex items-center gap-3"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Create a meeting for later
+                  </button>
+                  <button
+                    onClick={handleCreateMeeting}
+                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors flex items-center gap-3"
+                  >
+                    <Video className="h-4 w-4" />
+                    Start an instant meeting
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsNewMeetingDropdownOpen(false);
+                      router.push("/dashboard?tab=schedule");
+                    }}
+                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors flex items-center gap-3"
+                  >
+                    <CalendarRange className="h-4 w-4" />
+                    Schedule a meeting
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
-        </Card>
-
-
-
-        {/* JOIN MEETING */}
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-
-          <CardHeader>
-
-            <div className="flex items-center gap-3">
-
-              <div className="p-3 rounded-lg bg-blue-500/10">
-                <Users className="h-6 w-6 text-blue-600"/>
-              </div>
-
-              <div>
-                <CardTitle>Join Meeting</CardTitle>
-                <CardDescription>
-                  Enter a meeting code
-                </CardDescription>
-              </div>
-
+          {/* Join Code Input and Action Button */}
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Keyboard className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground/60 h-5 w-5" />
+              <Input
+                placeholder="Enter a code or link"
+                className="h-12 pl-12 pr-4 bg-background border border-input rounded-md text-base w-64 outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all font-sans"
+                value={meetingCode}
+                onChange={(e) => setMeetingCode(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleJoinMeeting()}
+              />
             </div>
-
-          </CardHeader>
-
-
-          <CardContent className="space-y-4">
-
-            <Input
-              className="h-11"
-              value={meetingCode}
-              onChange={(e) => setMeetingCode(e.target.value)}
-            />
-
-            <Button
-              variant="outline"
-              className="w-full"
-              size="lg"
+            <button
               onClick={handleJoinMeeting}
+              disabled={!meetingCode.trim()}
+              className={cn(
+                "h-12 px-5 font-medium rounded-md text-base transition-colors",
+                meetingCode.trim()
+                  ? "text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/20 font-semibold"
+                  : "text-muted-foreground/40 cursor-default"
+              )}
             >
               Join
-            </Button>
+            </button>
+          </div>
+        </div>
 
-          </CardContent>
+        <div className="h-[1px] bg-muted/80 my-8 w-full"></div>
 
-        </Card>
-
-      </section>
-
-      <section className="grid grid-cols-1 gap-6">
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-lg bg-sky-500/10">
-                <MessageSquareText className="h-6 w-6 text-sky-600" />
-              </div>
-              <div>
-                <CardTitle>External Chat</CardTitle>
-                <CardDescription>Manage conversations and shared files</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Jump into your external collaboration hub for direct messages, room workflows, attachments, and realtime updates.
-            </p>
+        {/* Upcoming Meetings List Section */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-md font-semibold text-muted-foreground tracking-wide uppercase">
+              Upcoming Meetings
+            </h2>
             <Button
-              variant="outline"
-              className="w-full"
-              size="lg"
-              onClick={() => router.push("/dashboard/external-chat")}
-            >
-              <MessageSquareText className="mr-2 h-5 w-5" />
-              Open External Chat
-            </Button>
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* Upcoming Meetings */}
-      <section>
-        <Card>
-          <CardHeader className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <CardTitle>Upcoming Meetings</CardTitle>
-              <CardDescription>Your scheduled sessions</CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full text-muted-foreground"
               onClick={fetchUpcomingMeetings}
               disabled={isLoadingUpcoming}
             >
-              {isLoadingUpcoming ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              Refresh
+              <RefreshCw className={cn("h-4 w-4", isLoadingUpcoming && "animate-spin")} />
             </Button>
-          </CardHeader>
-          <CardContent>
-            {upcomingError && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                <p>{upcomingError}</p>
-                <Button
-                  variant="link"
-                  className="px-0 text-destructive underline-offset-4"
-                  onClick={fetchUpcomingMeetings}
+          </div>
+
+          {upcomingError && (
+            <div className="p-4 border rounded-lg border-destructive/20 bg-destructive/5 text-sm text-destructive flex flex-col gap-2">
+              <p>Unable to load upcoming meetings.</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                onClick={fetchUpcomingMeetings}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {!upcomingError && isLoadingUpcoming && (
+            <div className="space-y-3">
+              <div className="h-16 rounded-lg bg-muted/40 animate-pulse border border-dashed" />
+              <div className="h-16 rounded-lg bg-muted/40 animate-pulse border border-dashed" />
+            </div>
+          )}
+
+          {!upcomingError && !isLoadingUpcoming && upcomingPreview.length === 0 && (
+            <p className="text-sm text-muted-foreground font-light">
+              No meetings scheduled. Use the Schedule tab to plan ahead.
+            </p>
+          )}
+
+          {!upcomingError && !isLoadingUpcoming && upcomingPreview.length > 0 && (
+            <div className="space-y-3">
+              {upcomingPreview.map((meeting) => (
+                <div
+                  key={meeting.id}
+                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/40 transition-colors"
                 >
-                  Try again
-                </Button>
-              </div>
-            )}
-
-            {!upcomingError && isLoadingUpcoming && (
-              <div className="space-y-3">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <div
-                    key={`upcoming-skeleton-${index}`}
-                    className="h-20 rounded-lg border border-dashed bg-muted/40 animate-pulse"
-                  />
-                ))}
-              </div>
-            )}
-
-            {!upcomingError &&
-              !isLoadingUpcoming &&
-              upcomingPreview.length === 0 && (
-                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  No upcoming meetings found. Schedule one to see it here.
-                </div>
-              )}
-
-            {!upcomingError &&
-              !isLoadingUpcoming &&
-              upcomingPreview.length > 0 && (
-                <div className="space-y-4">
-                  {upcomingPreview.map((meeting) => (
-                    <div
-                      key={meeting.id}
-                      className="flex items-center gap-4 rounded-lg border p-4 transition-colors hover:bg-accent/50"
-                    >
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                        <Video className="h-6 w-6 text-primary" />
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{meeting.title}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {describeMeetingTime(meeting.scheduledFor)}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Users className="h-3 w-3" />
-                            {summarizeAttendees(meeting.attendees)}
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => router.push(meeting.link)}
-                      >
-                        Join
-                      </Button>
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                      <Video className="h-5 w-5" />
                     </div>
-                  ))}
+                    <div>
+                      <h4 className="text-sm font-medium">{meeting.title}</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {describeMeetingTime(meeting.scheduledFor)} • {summarizeAttendees(meeting.attendees)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="rounded-full bg-blue-600 hover:bg-blue-700 text-white"
+                    onClick={() => router.push(meeting.link)}
+                  >
+                    Join
+                  </Button>
                 </div>
-              )}
-          </CardContent>
-        </Card>
-      </section>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* RIGHT COLUMN: Illustration Carousel */}
+      <div className="w-full lg:w-96 flex flex-col items-center justify-center p-6 text-center select-none shrink-0">
+        <div className="h-64 flex items-center justify-center">
+          {slides[currentSlide].illustration}
+        </div>
+        <div className="mt-6 space-y-2 min-h-24">
+          <h3 className="text-xl font-normal text-foreground">{slides[currentSlide].title}</h3>
+          <p className="text-sm text-muted-foreground/80 max-w-xs mx-auto leading-relaxed">
+            {slides[currentSlide].description}
+          </p>
+        </div>
+
+        {/* Controls */}
+        <div className="flex items-center justify-center gap-4 mt-6">
+          <Button
+            variant="outline"
+            size="icon"
+            className="rounded-full h-9 w-9 border border-input text-muted-foreground hover:text-foreground"
+            onClick={prevSlide}
+            aria-label="Previous slide"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+
+          <div className="flex items-center gap-1.5">
+            {slides.map((_, i) => (
+              <span
+                key={i}
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full transition-all",
+                  i === currentSlide ? "bg-blue-600 w-2.5 h-2.5" : "bg-muted-foreground/30"
+                )}
+              />
+            ))}
+          </div>
+
+          <Button
+            variant="outline"
+            size="icon"
+            className="rounded-full h-9 w-9 border border-input text-muted-foreground hover:text-foreground"
+            onClick={nextSlide}
+            aria-label="Next slide"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Copy Modal Dialog */}
+      {createdMeetingLink && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-card text-card-foreground border rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-semibold mb-2">Here's the link to your meeting</h3>
+            <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
+              Copy this link and send it to people you want to meet with. Make sure you save it so you can use it later.
+            </p>
+            <div className="flex gap-2 items-center bg-muted/50 border rounded-xl p-3">
+              <span className="text-sm select-all break-all flex-1 font-mono text-muted-foreground/90 pl-1">
+                {createdMeetingLink}
+              </span>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 hover:bg-muted shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => handleCopyCreatedLink(createdMeetingLink)}
+                title="Copy link"
+              >
+                {copiedCreatedLink ? (
+                  <Check className="h-5 w-5 text-green-600" />
+                ) : (
+                  <Copy className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <Button
+                onClick={() => setCreatedMeetingLink(null)}
+                className="rounded-full bg-blue-600 hover:bg-blue-700 text-white px-6"
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-
   );
-
 }
