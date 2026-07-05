@@ -18,7 +18,6 @@ import {
   Calendar,
   Users,
   PlayCircle,
-  ImageIcon,
   Loader2,
   MessageSquareText,
   RefreshCw,
@@ -282,35 +281,7 @@ export default function OverviewView({
 
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <Card className="border-2 hover:border-primary/50 transition-colors">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="p-3 rounded-lg bg-amber-500/10">
-                <ImageIcon className="h-6 w-6 text-amber-600" />
-              </div>
-              <div>
-                <CardTitle>3D Image Generator</CardTitle>
-                <CardDescription>Create visual assets from your dashboard</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Generate polished 3D-style concepts, product visuals, and presentation-ready imagery without leaving AIConnect.
-            </p>
-            <Button
-              variant="outline"
-              className="w-full"
-              size="lg"
-              onClick={() => router.push("/dashboard/3d-image-generator")}
-            >
-              <ImageIcon className="mr-2 h-5 w-5" />
-              Open Generator
-            </Button>
-          </CardContent>
-        </Card>
-
+      <section className="grid grid-cols-1 gap-6">
         <Card className="border-2 hover:border-primary/50 transition-colors">
           <CardHeader>
             <div className="flex items-center gap-3">

@@ -47,12 +47,6 @@ const menuItems: {
     href: "/dashboard/interview",
   },
   {
-    id: "ai-image",
-    label: "3D Image Generator",
-    icon: ImageIcon,
-    href: "/dashboard/3d-image-generator",
-  },
-  {
     id: "external-chat",
     label: "External Chat",
     icon: MessageSquareText,

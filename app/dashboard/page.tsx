@@ -11,7 +11,6 @@ export type DashboardView =
   | "recording"
   | "schedule"
   | "interview"
-  | "ai-image"
   | "external-chat";
 
 export default function DashboardPage() {
