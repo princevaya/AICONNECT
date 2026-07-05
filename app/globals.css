@@ -115,12 +115,26 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    min-width: 0;
+  }
+
+  html,
+  body {
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  img,
+  video {
+    max-width: 100%;
+    height: auto;
   }
 
   body {
     @apply bg-background text-foreground;
   }
 }
+
 
 @keyframes blob {
   0% {

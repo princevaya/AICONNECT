@@ -2097,27 +2097,29 @@ export default function MeetingRoom({
   return (
     <div className="relative h-dvh min-h-dvh flex flex-col bg-background text-foreground">
       {showLiveCode ? (
-  <div className="absolute inset-0 z-10050 bg-black/80 p-4">
-    <div className="h-full w-full bg-gray-900 rounded-xl p-3">
-      <div className="flex justify-between mb-2">
-        <span className="text-white font-semibold">Live Coding</span>
+        <div className="absolute inset-0 z-10050 bg-black/80 p-3 sm:p-4">
+          <div className="h-full w-full bg-gray-900 rounded-xl p-2 sm:p-3 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="text-white font-semibold text-sm sm:text-base">Live Coding</span>
 
-        <button
-          onClick={() => setShowLiveCode(false)}
-          className="text-white bg-red-500 px-3 py-1 rounded"
-        >
-          Close
-        </button>
-      </div>
+              <button
+                onClick={() => setShowLiveCode(false)}
+                className="text-white bg-red-500 px-3 py-1 rounded whitespace-nowrap"
+              >
+                Close
+              </button>
+            </div>
 
-      <VSCodeEditor
-        room={roomRef.current}
-        roomId={roomName}
-        participantName={displayName}
-      />
-    </div>
-  </div>
-) : null}
+            <div className="h-[calc(100%-2.2rem)] min-h-0">
+              <VSCodeEditor
+                room={roomRef.current}
+                roomId={roomName}
+                participantName={displayName}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
       {showCaption ? (
         <div className="fixed bottom-28 left-1/2 -translate-x-1/2 rounded-lg border border-border bg-card/90 px-3 py-2 text-xs text-foreground shadow-sm sm:bottom-36 sm:px-4 sm:text-sm z-9999">
           {captionText || "Listening..."}
@@ -3034,7 +3036,7 @@ export default function MeetingRoom({
           </Button>
         </div>
 
-        <div className="mx-auto flex min-h-21.5 w-full max-w-[96vw] items-center justify-start gap-2 overflow-x-auto px-1 pr-24 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:pr-28 md:max-w-[94vw] md:flex-wrap md:justify-center md:overflow-visible md:px-0 md:py-4 md:pb-4 md:gap-3">
+        <div className="mx-auto flex min-h-21.5 w-full min-w-0 max-w-[96vw] items-center justify-start gap-2 overflow-x-hidden px-1 pr-2 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:pr-2 md:max-w-[94vw] md:flex-wrap md:justify-center md:overflow-visible md:px-0 md:py-4 md:pb-4 md:gap-3">
           <button
             onClick={() => void toggleMic()}
             title={localMicOn ? "Microphone On" : "Microphone Off"}
@@ -3179,12 +3181,12 @@ export default function MeetingRoom({
         </div>
       </div>
       {activeRecordingNames.length > 0 ? (
-        <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-xs text-white">
+        <div className="pointer-events-none absolute left-1/2 top-3 z-40 -translate-x-1/2 max-w-[90vw] overflow-hidden text-ellipsis whitespace-nowrap rounded-full bg-black/70 px-3 py-1 text-xs text-white">
           🔴 Recording: {activeRecordingNames.join(", ")}
         </div>
       ) : null}
       {recordingMessage ? (
-        <div className="pointer-events-none absolute bottom-[5.8rem] left-1/2 z-40 -translate-x-1/2 rounded-md bg-black/65 px-3 py-1 text-xs text-white">
+        <div className="pointer-events-none absolute bottom-[5.8rem] left-1/2 z-40 -translate-x-1/2 max-w-[90vw] overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-black/65 px-3 py-1 text-xs text-white">
           {recordingMessage}
         </div>
       ) : null}

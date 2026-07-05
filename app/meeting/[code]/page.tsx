@@ -339,8 +339,8 @@ export default function MeetingPage() {
             onClick={() => setIsHostPanelCollapsed(true)}
             className="fixed inset-0 z-40 bg-black/35 sm:hidden"
           />
-          <div className="fixed bottom-3 left-2 right-2 z-50 max-h-[86vh] overflow-hidden rounded-xl border border-border bg-card/95 p-3 text-card-foreground shadow-xl backdrop-blur-sm sm:bottom-auto sm:left-auto sm:right-6 sm:top-6 sm:w-[25rem] sm:p-4">
-          <div className="flex items-center justify-between">
+          <div className="fixed bottom-3 left-2 right-2 z-50 max-h-[86vh] overflow-hidden rounded-xl border border-border bg-card/95 p-3 text-card-foreground shadow-xl backdrop-blur-sm sm:bottom-auto sm:top-6 sm:right-6 sm:left-auto sm:p-4 sm:w-[25rem] sm:max-w-[calc(100vw-2rem)]">
+          <div className="flex items-center justify-between gap-2 min-w-0">
             <h3 className="font-semibold text-lg">Host Panel</h3>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">
@@ -357,7 +357,7 @@ export default function MeetingPage() {
             </div>
           </div>
 
-          <Tabs defaultValue="requests" className="mt-3 flex h-[calc(86vh-4.5rem)] w-full flex-col sm:h-[min(70vh,42rem)]">
+          <Tabs defaultValue="requests" className="mt-3 flex h-[calc(86vh-4.5rem)] w-full flex-col min-w-0 sm:h-[min(70vh,42rem)]">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="requests">Requests</TabsTrigger>
               <TabsTrigger value="info">Meeting Info</TabsTrigger>
@@ -390,7 +390,7 @@ export default function MeetingPage() {
                       key={name}
                       className="flex items-center justify-between rounded-md border border-border bg-background/40 px-2 py-2"
                     >
-                      <span className="truncate pr-2">{name}</span>
+                    <span className="min-w-0 truncate pr-2">{name}</span>
                       <div className="flex gap-2">
                         <Button
                           onClick={() => moderateUser(name, "approve")}

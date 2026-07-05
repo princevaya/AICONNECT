@@ -100,8 +100,8 @@ export default function DashboardLayoutClient({ children }: Props) {
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full h-11 w-11 hover:bg-muted"
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+            className="rounded-full h-11 w-11 hover:bg-muted md:ml-0"
+            onClick={() => setIsSidebarCollapsed((prev) => !prev)}
             aria-label="Toggle menu"
           >
             <Menu className="h-5 w-5" />
@@ -145,15 +145,15 @@ export default function DashboardLayoutClient({ children }: Props) {
       </header>
 
       {/* BODY */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* SIDEBAR */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* SIDEBAR (desktop/tablet) */}
         <aside
           className={cn(
-            "border-r shrink-0 h-[calc(100vh-4rem)] bg-background flex flex-col py-3 transition-all duration-300 ease-in-out",
+            "hidden md:flex border-r shrink-0 bg-background flex-col py-3 transition-all duration-300 ease-in-out",
             isSidebarCollapsed ? "w-[72px]" : "w-64"
           )}
         >
-          <nav className="flex-1 px-2 space-y-1">
+          <nav className="flex-1 px-2 space-y-1 overflow-y-auto">
             {menuItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -178,9 +178,54 @@ export default function DashboardLayoutClient({ children }: Props) {
           </nav>
         </aside>
 
+        {/* MOBILE SIDEBAR (drawer) */}
+          {/* Mobile sidebar drawer: slide in from the left */}
+        <div className="md:hidden">
+          {/* Drawer should be open when isSidebarCollapsed === true */}
+          <div className={cn(
+            "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-background border-r shadow-lg transform transition-transform duration-300 ease-in-out",
+            isSidebarCollapsed ? "translate-x-0" : "-translate-x-full"
+          )}
+          >
+            <nav className="flex-1 px-3 py-3 overflow-y-auto">
+              {menuItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      router.push(item.href);
+                      setIsSidebarCollapsed(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center transition-all duration-200 rounded-full h-12 px-4 gap-4",
+                      item.isActive
+                        ? "bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 font-medium"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+                    title={item.label}
+                  >
+                    <Icon className="h-5 w-5 shrink-0" />
+                    <span className="text-sm font-sans tracking-wide truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+          {/* Backdrop */}
+          {isSidebarCollapsed && (
+            <button
+              type="button"
+              aria-label="Close sidebar"
+              className="fixed inset-0 z-40 bg-black/30"
+              onClick={() => setIsSidebarCollapsed(false)}
+            />
+          )}
+        </div>
+
         {/* MAIN PANEL */}
-        <main className="flex-1 h-[calc(100vh-4rem)] overflow-y-auto bg-background/50">
-          {children}
+        <main className="flex-1 min-w-0 overflow-y-auto bg-background/50">
+          <div className="w-full min-w-0 h-full">{children}</div>
         </main>
       </div>
     </div>
