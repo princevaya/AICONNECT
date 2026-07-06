@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -13,22 +14,34 @@ const TABS: Array<{ id: FilterTab; label: string }> = [
   { id: "starred", label: "Starred" },
 ];
 
-export function ChatShell({ children }: { children: React.ReactNode }) {
+export function ChatShell({
+  children,
+  className
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="chat-shell h-full min-h-full p-2 md:p-3">
-      <div className="chat-grid h-full">{children}</div>
+    <div className={`chat-shell min-h-[calc(100vh-4rem)] rounded-xl p-4 ${className || ''}`}>
+      <div className="whatsapp-chat-grid mx-auto max-w-7xl h-[calc(100vh-6rem)]">
+        {children}
+      </div>
     </div>
   );
 }
 
-export function ChatPanel({
-  className,
-  children,
-}: {
+export function ChatPanel({ 
+  children, 
+  className 
+}: { 
+  children: ReactNode;
   className?: string;
-  children: React.ReactNode;
 }) {
-  return <section className={cn("chat-panel", className)}>{children}</section>;
+  return (
+    <div className={`whatsapp-panel overflow-hidden ${className || ''}`}>
+      {children}
+    </div>
+  );
 }
 
 export function SidebarFilterTabs({
