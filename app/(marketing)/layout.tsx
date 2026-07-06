@@ -13,7 +13,7 @@ const MarketingLayout = ({ children }: Props) => {
       <Navbar />
       <div
         id="home"
-        className="absolute inset-0 h-200 w-full items-center justify-center"
+        className="absolute inset-0 w-full h-full items-center justify-center"
       >
         <div
           className={cn(

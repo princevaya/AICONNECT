@@ -23,7 +23,7 @@ import Link from "next/link";
 
 const HomePage = async () => {
   return (
-    <div className="overflow-x-hidden scrollbar-hide size-full">
+    <div className="w-full min-w-0 overflow-x-hidden scrollbar-hide">
       <MaxWidthWrapper>
         <div className="flex flex-col items-center justify-center w-full text-center bg-linear-to-t from-background">
           <AnimationContainer className="flex flex-col items-center justify-center w-full text-center">
