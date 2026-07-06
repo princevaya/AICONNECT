@@ -1,0 +1,143 @@
+/* WhatsApp-style colors for external chat only */
+.external-chat-container {
+  --whatsapp-green: #25D366;
+  --whatsapp-green-dark: #128C7E;
+  --whatsapp-teal: #075E54;
+  --whatsapp-light-bg: #ECE5DD;
+  --whatsapp-dark-bg: #0B141A;
+  --whatsapp-light-header: #F0F2F5;
+  --whatsapp-dark-header: #111B21;
+  --whatsapp-light-card: #FFFFFF;
+  --whatsapp-dark-card: #1F2C33;
+  --whatsapp-light-border: #E9EDEF;
+  --whatsapp-dark-border: #2A3942;
+  --whatsapp-sent-bubble: #DCF8C6;
+  --whatsapp-dark-sent-bubble: #005C4B;
+  --whatsapp-received-bubble: #FFFFFF;
+  --whatsapp-dark-received-bubble: #1F2C33;
+  --whatsapp-text-light: #111B21;
+  --whatsapp-text-dark: #E9EDEF;
+  --whatsapp-muted-light: #667781;
+  --whatsapp-muted-dark: #AEBAC1;
+}
+
+/* Chat Shell - WhatsApp background */
+.external-chat-shell {
+  background: var(--whatsapp-light-bg);
+}
+
+.dark .external-chat-shell {
+  background: var(--whatsapp-dark-bg);
+}
+
+/* Chat Panels */
+.external-chat-panel {
+  background-color: rgba(255, 255, 255, 0.8);
+  border-color: var(--whatsapp-light-border);
+}
+
+.dark .external-chat-panel {
+  background-color: rgba(31, 44, 51, 0.8);
+  border-color: var(--whatsapp-dark-border);
+}
+
+/* Chat rows */
+.external-chat-row-active {
+  border-color: var(--whatsapp-green);
+  background-color: rgba(37, 211, 102, 0.1);
+}
+
+.external-chat-row-hover:hover {
+  background-color: var(--whatsapp-light-header);
+}
+
+.dark .external-chat-row-hover:hover {
+  background-color: var(--whatsapp-dark-border);
+}
+
+/* Chat bubbles */
+.external-chat-bubble-sent {
+  background-color: var(--whatsapp-sent-bubble);
+  border-color: rgba(37, 211, 102, 0.25);
+  border-radius: 1.5rem 1.5rem 0.25rem 1.5rem;
+}
+
+.dark .external-chat-bubble-sent {
+  background-color: var(--whatsapp-dark-sent-bubble);
+  color: white;
+}
+
+.external-chat-bubble-received {
+  background-color: var(--whatsapp-received-bubble);
+  border-color: rgba(233, 237, 239, 0.7);
+  border-radius: 1.5rem 1.5rem 1.5rem 0.25rem;
+}
+
+.dark .external-chat-bubble-received {
+  background-color: var(--whatsapp-dark-received-bubble);
+}
+
+/* Headers and Composers */
+.external-chat-header {
+  background-color: var(--whatsapp-light-header);
+  border-bottom-color: var(--whatsapp-light-border);
+}
+
+.dark .external-chat-header {
+  background-color: var(--whatsapp-dark-header);
+  border-bottom-color: var(--whatsapp-dark-border);
+}
+
+.external-chat-composer {
+  background-color: var(--whatsapp-light-header);
+  border-top-color: var(--whatsapp-light-border);
+}
+
+.dark .external-chat-composer {
+  background-color: var(--whatsapp-dark-header);
+  border-top-color: var(--whatsapp-dark-border);
+}
+
+/* WhatsApp Green accent */
+.external-chat-green {
+  color: var(--whatsapp-green);
+}
+
+.external-chat-green-bg {
+  background-color: var(--whatsapp-green);
+}
+
+.external-chat-green-bg:hover {
+  background-color: var(--whatsapp-green-dark);
+}
+
+/* Inputs in external chat */
+.external-chat-input {
+  background-color: white;
+  border-color: var(--whatsapp-light-border);
+  color: var(--whatsapp-text-light);
+}
+
+.dark .external-chat-input {
+  background-color: var(--whatsapp-dark-card);
+  border-color: var(--whatsapp-dark-border);
+  color: var(--whatsapp-text-dark);
+}
+
+/* Scrollbar for external chat */
+.external-chat-container ::-webkit-scrollbar {
+  width: 6px;
+}
+
+.external-chat-container ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.external-chat-container ::-webkit-scrollbar-thumb {
+  background: var(--whatsapp-green);
+  border-radius: 3px;
+}
+
+.external-chat-container ::-webkit-scrollbar-thumb:hover {
+  background: var(--whatsapp-green-dark);
+}
