@@ -57,17 +57,10 @@ export default function DashboardLayoutClient({ children }: Props) {
   const menuItems = [
     {
       id: "overview",
-      label: "Meetings",
+      label: "Meeting",
       icon: Video,
       href: "/dashboard?tab=overview",
       isActive: pathname === "/dashboard" && activeTab === "overview",
-    },
-    {
-      id: "recording",
-      label: "Recordings",
-      icon: PlayCircle,
-      href: "/dashboard?tab=recording",
-      isActive: pathname === "/dashboard" && activeTab === "recording",
     },
     {
       id: "schedule",
@@ -77,6 +70,13 @@ export default function DashboardLayoutClient({ children }: Props) {
       isActive: pathname === "/dashboard" && activeTab === "schedule",
     },
     {
+      id: "external-chat",
+      label: "Chat",
+      icon: MessageSquareText,
+      href: "/dashboard/external-chat",
+      isActive: pathname.startsWith("/dashboard/external-chat"),
+    },
+    {
       id: "interview",
       label: "AI Interview",
       icon: Sparkles,
@@ -84,11 +84,11 @@ export default function DashboardLayoutClient({ children }: Props) {
       isActive: pathname.startsWith("/dashboard/interview"),
     },
     {
-      id: "external-chat",
-      label: "External Chat",
-      icon: MessageSquareText,
-      href: "/dashboard/external-chat",
-      isActive: pathname.startsWith("/dashboard/external-chat"),
+      id: "recording",
+      label: "Recording",
+      icon: PlayCircle,
+      href: "/dashboard?tab=recording",
+      isActive: pathname === "/dashboard" && activeTab === "recording",
     },
   ];
 

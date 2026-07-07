@@ -1,7 +1,7 @@
 import { success, failure } from "@/app/api/_utils/response";
 import { MeetingRecord, listMeetings, listAllMeetings, createMeeting } from "@/lib/meetings";
 import { sendMeetingInvite } from "@/lib/email";
-import { auth } from "@clerk/nextjs/server"; // ✅ ADDED
+import { auth, currentUser } from "@clerk/nextjs/server"; // ✅ ADDED
 
 export const runtime = "nodejs";
 
@@ -59,10 +59,15 @@ export async function GET(req: Request) {
       return failure("Unauthorized", 401);
     }
 
+    const user = await currentUser();
+    const userEmail = user?.emailAddresses[0]?.emailAddress ?? null;
+
     const { searchParams } = new URL(req.url);
     const showAll = searchParams.get("all") === "true";
 
-    const meetings = showAll ? await listAllMeetings(userId) : await listMeetings(userId);
+    const meetings = showAll 
+      ? await listAllMeetings(userId, userEmail) 
+      : await listMeetings(userId, userEmail);
     return success({
       meetings: meetings.map(toClientPayload),
     });

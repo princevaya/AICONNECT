@@ -39,6 +39,7 @@ type ScheduleApiMeeting = {
   attendees: string[];
   notes?: string | null;
   status: string;
+  createdBy?: string | null;
   link: string;
   createdAt: string;
   updatedAt: string;
@@ -107,11 +108,11 @@ export default function OverviewView() {
         throw new Error(payload?.error || "Failed to load upcoming meetings");
       }
 
-      if (!Array.isArray(payload?.data)) {
+      if (!Array.isArray(payload?.meetings)) {
         throw new Error("Invalid upcoming meetings response");
       }
 
-      setUpcomingMeetings(payload.data.map(normalizeMeeting));
+      setUpcomingMeetings(payload.meetings.map(normalizeMeeting));
     } catch (error) {
       console.error(error);
       setUpcomingError(
@@ -164,16 +165,10 @@ export default function OverviewView() {
     router.push(`/meeting/join?room=${encodeURIComponent(room)}`);
   };
 
-  // Generate meeting code for later
+  // Redirect to the schedule meeting route/tab
   const handleCreateMeetingForLater = () => {
     setIsNewMeetingDropdownOpen(false);
-    const code = Math.random()
-      .toString(36)
-      .replace(/[^a-z0-9]/g, "")
-      .slice(0, 8);
-    const hostLink = `${window.location.origin}/meeting/join?room=${code}`;
-    setCreatedMeetingLink(hostLink);
-    setCopiedCreatedLink(false);
+    router.push("/dashboard?tab=schedule");
   };
 
   const handleCopyCreatedLink = async (link: string) => {
@@ -362,31 +357,38 @@ export default function OverviewView() {
 
           {!upcomingError && !isLoadingUpcoming && upcomingPreview.length > 0 && (
             <div className="space-y-3">
-              {upcomingPreview.map((meeting) => (
-                <div
-                  key={meeting.id}
-                  className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/40 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                      <Video className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-medium">{meeting.title}</h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {describeMeetingTime(meeting.scheduledFor)} • {summarizeAttendees(meeting.attendees)}
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    className="rounded-full bg-blue-600 hover:bg-blue-700 text-white"
-                    onClick={() => router.push(meeting.link)}
+              {upcomingPreview.map((meeting) => {
+                const isMeetingHost = !!(user && meeting.createdBy === user.id);
+                return (
+                  <div
+                    key={meeting.id}
+                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/40 transition-colors"
                   >
-                    Join
-                  </Button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-950/40 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                        <Video className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-medium">{meeting.title}</h4>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {describeMeetingTime(meeting.scheduledFor)} • {summarizeAttendees(meeting.attendees)}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="rounded-full bg-blue-600 hover:bg-blue-700 text-white"
+                      onClick={() =>
+                        router.push(
+                          isMeetingHost ? `${meeting.link}&host=true` : meeting.link
+                        )
+                      }
+                    >
+                      {isMeetingHost ? "Join as Host" : "Join"}
+                    </Button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
