@@ -83,19 +83,33 @@ model User {
 }
 
 model Meeting {
-  id           String        @id @default(cuid())
-  code         String        @unique
-  title        String
-  date         DateTime
+  id                     String        @id @default(cuid())
+  code                   String        @unique
+  title                  String
+  date                   DateTime
   // Mapping this to ensure Postgres finds the column regardless of casing
-  scheduledFor DateTime      @map("scheduled_for") @db.Timestamptz(6)
-  startTime    DateTime      @map("start_time")
-  endTime      DateTime      @map("end_time")
-  durationMins Int           @map("duration_mins")
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  MeetingNote  MeetingNote[]
-  recordings   Recording[]
+  scheduledFor           DateTime      @map("scheduled_for") @db.Timestamptz(6)
+  startTime              DateTime      @map("start_time")
+  endTime                DateTime      @map("end_time")
+  durationMins           Int           @map("duration_mins")
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
+  MeetingNote            MeetingNote[]
+  recordings             Recording[]
+  status                 String        @default("Scheduled")
+  timezone               String        @default("UTC")
+  duration               String        @default("30 Minutes")
+  host_joined_at         DateTime?     @map("host_joined_at") @db.Timestamptz(6)
+  host_left_at           DateTime?     @map("host_left_at") @db.Timestamptz(6)
+  ended_at               DateTime?     @map("ended_at") @db.Timestamptz(6)
+  allow_join_before_host Boolean       @default(false) @map("allow_join_before_host")
+  waiting_room           Boolean       @default(false) @map("waiting_room")
+  mute_on_join           Boolean       @default(false) @map("mute_on_join")
+  enable_chat            Boolean       @default(true) @map("enable_chat")
+  allow_screen_sharing   Boolean       @default(true) @map("allow_screen_sharing")
+  meeting_password       String?       @map("meeting_password")
+  meeting_started_by     String?       @map("meeting_started_by")
+  meeting_ended_by       String?       @map("meeting_ended_by")
 
   @@map("meetings")
 }
@@ -126,17 +140,32 @@ model MeetingNote {
 }
 
 model meeting_rooms {
-  id           String   @id @db.Uuid
-  meeting_code String   @unique
-  title        String
+  id                     String    @id @db.Uuid
+  meeting_code           String    @unique
+  title                  String
   // This matches your error: mapping the code's scheduledFor to DB's scheduled_for
-  scheduledFor DateTime @map("scheduled_for") @db.Timestamptz(6)
-  attendees    Json     @default("[]")
-  notes        String?
-  status       String   @default("scheduled")
-  is_active    Boolean  @default(true)
-  created_at   DateTime @default(now()) @db.Timestamptz(6)
-  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+  scheduledFor           DateTime  @map("scheduled_for") @db.Timestamptz(6)
+  attendees              Json      @default("[]")
+  notes                  String?
+  status                 String    @default("Scheduled")
+  is_active              Boolean   @default(true)
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime  @default(now()) @db.Timestamptz(6)
+  timezone               String    @default("UTC")
+  duration               String    @default("30 Minutes")
+  host_joined_at         DateTime? @map("host_joined_at") @db.Timestamptz(6)
+  host_left_at           DateTime? @map("host_left_at") @db.Timestamptz(6)
+  ended_at               DateTime? @map("ended_at") @db.Timestamptz(6)
+  allow_join_before_host Boolean   @default(false) @map("allow_join_before_host")
+  waiting_room           Boolean   @default(false) @map("waiting_room")
+  mute_on_join           Boolean   @default(false) @map("mute_on_join")
+  enable_chat            Boolean   @default(true) @map("enable_chat")
+  allow_screen_sharing   Boolean   @default(true) @map("allow_screen_sharing")
+  meeting_password       String?   @map("meeting_password")
+  meeting_started_by     String?   @map("meeting_started_by")
+  meeting_ended_by       String?   @map("meeting_ended_by")
+  end_time               DateTime? @map("end_time") @db.Timestamptz(6)
+  created_by             String?   @map("created_by")
 
   @@index([scheduledFor], map: "idx_meeting_rooms_schedule")
 }

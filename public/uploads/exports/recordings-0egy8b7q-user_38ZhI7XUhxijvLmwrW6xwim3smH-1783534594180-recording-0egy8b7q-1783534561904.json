@@ -1,0 +1,10 @@
+{
+  "room": "0egy8b7q",
+  "exportedAt": "2026-07-08T18:16:01.897Z",
+  "recording": {
+    "egressId": "mock-egress-1783534505647",
+    "status": "EGRESS_COMPLETE",
+    "statusCode": 3
+  },
+  "uiRecordingUrl": null
+}

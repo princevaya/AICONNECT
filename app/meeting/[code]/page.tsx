@@ -9,6 +9,8 @@ import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { PhoneOff, Loader2 } from "lucide-react";
 
 export default function MeetingPage() {
   const params = useParams();
@@ -44,10 +46,13 @@ export default function MeetingPage() {
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
+  // Time-based lifecycle states
+  const [meetingStatus, setMeetingStatus] = useState<string>("Scheduled");
+  const [isEnding, setIsEnding] = useState(false);
+
   // ✅ AUTO-DETECT HOST: check if logged-in user created this meeting
   const launchGuardRef = useRef<ReturnType<typeof createLaunchOnceGuard> | null>(null);
   if (!launchGuardRef.current) launchGuardRef.current = createLaunchOnceGuard();
-
 
   useEffect(() => {
     if (!isLoaded || !meetingCode) return;
@@ -70,9 +75,17 @@ export default function MeetingPage() {
         if (meeting && user?.id && meeting.createdBy === user.id) {
           // ✅ You created this meeting → auto host
           setIsHost(true);
+          await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/start`, {
+            method: "POST",
+            cache: "no-store",
+          }).catch((e) => console.error("Start meeting API failed:", e));
         } else if (searchParams.get("host") === "true") {
           // ✅ Fallback: manual host param
           setIsHost(true);
+          await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/start`, {
+            method: "POST",
+            cache: "no-store",
+          }).catch((e) => console.error("Start meeting API failed:", e));
         } else {
           // ✅ Attendee check: verify approval
           const approvalRes = await fetch(
@@ -107,6 +120,42 @@ export default function MeetingPage() {
 
     void checkIfHost();
   }, [isLoaded, meetingCode, user?.id, searchParams, participantName, router]);
+
+  // Poll status endpoint every 5 seconds to know when the meeting ends
+  useEffect(() => {
+    if (!meetingCode) return;
+    const checkStatus = async () => {
+      try {
+        const res = await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/status`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.success) {
+          setMeetingStatus(data.status);
+        }
+      } catch (e) {
+        console.warn("Failed to check status:", e);
+      }
+    };
+    
+    checkStatus();
+    const interval = setInterval(checkStatus, 5000);
+    return () => clearInterval(interval);
+  }, [meetingCode]);
+
+  const handleEndMeeting = async () => {
+    setIsEnding(true);
+    try {
+      await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/end`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      router.push("/dashboard");
+    } catch (e) {
+      console.error("Failed to end meeting:", e);
+    } finally {
+      setIsEnding(false);
+    }
+  };
 
   useEffect(() => {
     if (!meetingCode || !isHost) return;
@@ -294,6 +343,30 @@ export default function MeetingPage() {
 
   if (!meetingCode) return null;
 
+  if (meetingStatus === "Completed") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="w-full max-w-md shadow-2xl border-border/80 text-center p-6">
+          <div className="flex flex-col items-center gap-4">
+            <div className="h-12 w-12 rounded-full bg-zinc-500/10 flex items-center justify-center text-zinc-500">
+              <PhoneOff className="h-6 w-6" />
+            </div>
+            <h2 className="text-xl font-extrabold tracking-tight">This meeting has ended</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-xs text-center">
+              The host has ended the meeting. You have been disconnected.
+            </p>
+            <Button
+              onClick={() => router.push("/dashboard")}
+              className="mt-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold w-full"
+            >
+              Return to Dashboard
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (!isLoaded || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -346,6 +419,15 @@ export default function MeetingPage() {
               <span className="text-xs text-muted-foreground">
                 {isLoadingPending ? "Refreshing..." : `${pendingUsers.length} pending`}
               </span>
+              <Button
+                onClick={handleEndMeeting}
+                disabled={isEnding}
+                variant="destructive"
+                size="sm"
+                className="h-7 px-2 text-xs font-semibold"
+              >
+                {isEnding ? "Ending..." : "End Meeting"}
+              </Button>
               <Button
                 onClick={() => setIsHostPanelCollapsed(true)}
                 variant="outline"

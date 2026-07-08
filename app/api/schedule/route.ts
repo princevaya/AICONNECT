@@ -40,11 +40,25 @@ function toClientPayload(meeting: MeetingRecord) {
     code: meeting.code,
     title: meeting.title,
     scheduledFor: meeting.scheduledFor.toISOString(),
+    endTime: meeting.endTime ? meeting.endTime.toISOString() : null,
     attendees: meeting.attendees,
     notes: meeting.notes ?? null,
     status: meeting.status,
     isActive: meeting.isActive,
-    createdBy: meeting.createdBy ?? null, // ✅ ADDED
+    createdBy: meeting.createdBy ?? null,
+    timezone: meeting.timezone,
+    duration: meeting.duration,
+    hostJoinedAt: meeting.hostJoinedAt ? meeting.hostJoinedAt.toISOString() : null,
+    hostLeftAt: meeting.hostLeftAt ? meeting.hostLeftAt.toISOString() : null,
+    endedAt: meeting.endedAt ? meeting.endedAt.toISOString() : null,
+    allowJoinBeforeHost: meeting.allowJoinBeforeHost,
+    waitingRoom: meeting.waitingRoom,
+    muteOnJoin: meeting.muteOnJoin ?? false,
+    enableChat: meeting.enableChat ?? true,
+    allowScreenSharing: meeting.allowScreenSharing ?? true,
+    meetingPassword: meeting.meetingPassword ?? null,
+    meetingStartedBy: meeting.meetingStartedBy ?? null,
+    meetingEndedBy: meeting.meetingEndedBy ?? null,
     link: `/meeting/join?room=${meeting.code}`,
     createdAt: meeting.createdAt.toISOString(),
     updatedAt: meeting.updatedAt.toISOString(),
@@ -81,7 +95,7 @@ export async function GET(req: Request) {
 /* ---------- POST /api/schedule ---------- */
 export async function POST(req: Request) {
   try {
-    const { userId } = await auth(); // ✅ ADDED — get logged in user
+    const { userId } = await auth();
 
     const body = await req.json();
 
@@ -107,13 +121,27 @@ export async function POST(req: Request) {
       ? body.attendees
       : [];
 
+    const timezone = typeof body.timezone === "string" ? body.timezone.trim() : "UTC";
+    const duration = typeof body.duration === "string" ? body.duration.trim() : "30 Minutes";
+
     const meeting = await createMeeting({
       title,
       scheduledFor: scheduledDate,
       attendees,
       notes: body.notes ?? null,
-      createdBy: userId ?? null, // ✅ ADDED — store who created it
+      createdBy: userId ?? null,
+      timezone,
+      duration,
+      allowJoinBeforeHost: Boolean(body.allowJoinBeforeHost),
+      waitingRoom: Boolean(body.waitingRoom),
+      muteOnJoin: Boolean(body.muteOnJoin),
+      enableChat: body.enableChat !== false,
+      allowScreenSharing: body.allowScreenSharing !== false,
+      meetingPassword: typeof body.meetingPassword === "string" && body.meetingPassword.trim() ? body.meetingPassword.trim() : null,
     });
+
+    const user = await currentUser();
+    const organizerName = user?.fullName || user?.firstName || user?.emailAddresses[0]?.emailAddress || "Organizer";
 
     // Send email invites to all attendees
     const emailResults = await Promise.allSettled(
@@ -126,6 +154,9 @@ export async function POST(req: Request) {
             scheduledFor: meeting.scheduledFor,
             meetingCode: meeting.code,
             notes: meeting.notes,
+            timezone,
+            duration,
+            organizerName,
           })
         )
     );
