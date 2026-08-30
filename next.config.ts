@@ -21,8 +21,10 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     serverActions: {
-      bodySizeLimit: "10mb",
+      bodySizeLimit: "500mb",
     },
+    middlewareClientMaxBodySize: "500mb",
+    proxyClientMaxBodySize: "500mb",
   },
   webpack: (config) => {
     // Required for pnpm symlink resolution
