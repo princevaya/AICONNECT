@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useUser } from "@clerk/nextjs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,8 +25,22 @@ export default function PreJoinScreen({
   meetingCode,
   isHost = false,
 }: PreJoinScreenProps) {
-  const [participantName, setParticipantName] = useState("");
+  const { user } = useUser();
+  const [participantName, setParticipantName] = useState(user?.fullName || user?.firstName || "");
   const [roomName, setRoomName] = useState(meetingCode || "");
+
+  useEffect(() => {
+    if (meetingCode && meetingCode !== roomName) {
+      setRoomName(meetingCode);
+    }
+  }, [meetingCode]);
+
+  useEffect(() => {
+    if (user && !participantName) {
+      setParticipantName(user.fullName || user.firstName || "");
+    }
+  }, [user]);
+
   const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinMessage, setJoinMessage] = useState<string | null>(null);

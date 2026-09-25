@@ -50,75 +50,84 @@ export default function MeetingPage() {
   const [meetingStatus, setMeetingStatus] = useState<string>("Scheduled");
   const [isEnding, setIsEnding] = useState(false);
 
-  // ✅ AUTO-DETECT HOST: check if logged-in user created this meeting
+  // ✅ AUTO-DETECT HOST: check if logged-in user created this meeting or joined as host
   const launchGuardRef = useRef<ReturnType<typeof createLaunchOnceGuard> | null>(null);
   if (!launchGuardRef.current) launchGuardRef.current = createLaunchOnceGuard();
 
   useEffect(() => {
     if (!isLoaded || !meetingCode) return;
 
-    const checkIfHost = async () => {
-      launchGuardRef.current?.runOnce(() => {
-        // no-op: guard prevents duplicate side-effects via replace/router
-      });
+    const checkMeetingAndRole = async () => {
       try {
-        const res = await fetch(`/api/schedule?all=true`, { cache: "no-store" });
-        const text = await res.text();
-        if (!text.trim().startsWith("{")) return;
-        const payload = JSON.parse(text);
-        if (!payload.success) return;
+        const isExplicitHost = searchParams.get("host") === "true";
 
-        const meeting = payload.meetings.find(
-          (m: any) => m.code === meetingCode
+        // Fetch meeting status to verify host identity and room settings
+        const statusRes = await fetch(
+          `/api/meetings/${encodeURIComponent(meetingCode)}/status`,
+          { cache: "no-store" }
+        ).catch(() => null);
+
+        let statusData: any = null;
+        if (statusRes && statusRes.ok) {
+          const json = await statusRes.json().catch(() => null);
+          if (json?.success) {
+            statusData = json;
+          }
+        }
+
+        const isMeetingCreator = Boolean(
+          statusData?.createdBy && user?.id && statusData.createdBy === user.id
         );
 
-        if (meeting && user?.id && meeting.createdBy === user.id) {
-          // ✅ You created this meeting → auto host
-          setIsHost(true);
-          await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/start`, {
-            method: "POST",
-            cache: "no-store",
-          }).catch((e) => console.error("Start meeting API failed:", e));
-        } else if (searchParams.get("host") === "true") {
-          // ✅ Fallback: manual host param
+        if (isMeetingCreator || isExplicitHost) {
+          // ✅ User is Host
           setIsHost(true);
           await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/start`, {
             method: "POST",
             cache: "no-store",
           }).catch((e) => console.error("Start meeting API failed:", e));
         } else {
-          // ✅ Attendee check: verify approval
-          const approvalRes = await fetch(
-            `/api/check-approval?roomId=${encodeURIComponent(meetingCode)}&name=${encodeURIComponent(
-              participantName
-            )}`,
-            { cache: "no-store" }
-          );
-          if (approvalRes.ok) {
-            const approvalData = await approvalRes.json();
-            if (!approvalData.approved) {
+          // ✅ User is Attendee
+          setIsHost(false);
+
+          // Only verify lobby approval if waiting room is explicitly enabled
+          if (statusData?.waitingRoom) {
+            const approvalRes = await fetch(
+              `/api/check-approval?roomId=${encodeURIComponent(meetingCode)}&name=${encodeURIComponent(
+                participantName
+              )}`,
+              { cache: "no-store" }
+            ).catch(() => null);
+
+            if (approvalRes && approvalRes.ok) {
+              const approvalData = await approvalRes.json().catch(() => null);
+              if (approvalData?.rejected) {
+                router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}&rejected=true`);
+                return;
+              }
+              if (!approvalData?.approved) {
+                router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
+                return;
+              }
+            } else {
               router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
               return;
             }
-          } else {
-            router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
-            return;
           }
         }
-      } catch {
-        // fallback to URL param if API fails
+      } catch (err) {
+        console.warn("Role check error:", err);
         if (searchParams.get("host") === "true") {
           setIsHost(true);
         } else {
-          router.replace(`/meeting/join?room=${encodeURIComponent(meetingCode)}`);
-          return;
+          setIsHost(false);
         }
       } finally {
         setIsCheckingHost(false);
       }
     };
 
-    void checkIfHost();
+    void checkMeetingAndRole();
   }, [isLoaded, meetingCode, user?.id, searchParams, participantName, router]);
 
   // Poll status endpoint every 5 seconds to know when the meeting ends

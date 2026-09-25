@@ -221,6 +221,7 @@ export async function findActiveByCode(
 }
 
 export interface CreateMeetingPayload {
+  code?: string;
   title: string;
   scheduledFor: Date;
   endTime?: Date | null;
@@ -250,14 +251,16 @@ export async function createMeeting(
 ): Promise<MeetingRecord> {
   await ensureTable();
 
-  let code = "";
+  let code = payload.code?.trim() || "";
   let attempts = 0;
 
-  while (attempts < 5) {
-    code = generateMeetingCode();
-    const existing = await findByCode(code);
-    if (!existing) break;
-    attempts++;
+  if (!code) {
+    while (attempts < 5) {
+      code = generateMeetingCode();
+      const existing = await findByCode(code);
+      if (!existing) break;
+      attempts++;
+    }
   }
 
   if (!code) {
@@ -300,14 +303,18 @@ export async function createMeeting(
     endTime = new Date(payload.scheduledFor.getTime() + mins * 60 * 1000);
   }
 
+  const isLive = status === "Live";
+  const hostJoinedAt = isLive ? new Date() : null;
+  const meetingStartedBy = isLive ? (payload.createdBy ?? null) : null;
+
   const result = await pool.query(
     `INSERT INTO meeting_rooms (
       id, meeting_code, title, scheduled_for, end_time,
       attendees, notes, status, is_active,
       created_by, timezone, duration, allow_join_before_host,
       waiting_room, mute_on_join, enable_chat, allow_screen_sharing,
-      meeting_password, created_at, updated_at
-    ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,true,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW(),NOW())
+      meeting_password, host_joined_at, meeting_started_by, created_at, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,true,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,NOW(),NOW())
     RETURNING *`,
     [
       randomUUID(),
@@ -327,6 +334,8 @@ export async function createMeeting(
       enableChat,
       allowScreenSharing,
       meetingPassword,
+      hostJoinedAt,
+      meetingStartedBy,
     ]
   );
 

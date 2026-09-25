@@ -18,6 +18,7 @@ function toClientPayload(meeting: MeetingRecord) {
     notes: meeting.notes ?? null,
     status: meeting.status,
     isActive: meeting.isActive,
+    createdBy: meeting.createdBy ?? null,
     timezone: meeting.timezone,
     duration: meeting.duration,
     hostJoinedAt: meeting.hostJoinedAt ? meeting.hostJoinedAt.toISOString() : null,

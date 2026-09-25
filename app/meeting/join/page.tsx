@@ -42,6 +42,10 @@ function JoinMeetingContent() {
       audio: audio === false ? "0" : "1",
     });
 
+    if (isHost) {
+      params.set("host", "true");
+    }
+
     router.push(`/meeting/${encodeURIComponent(roomName)}?${params.toString()}`);
   };
 
