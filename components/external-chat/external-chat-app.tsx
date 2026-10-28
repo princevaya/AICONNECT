@@ -46,6 +46,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { copyToClipboard } from "@/lib/utils";
 import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
+import CallSelectorModal from "@/components/external-chat/call-selector-modal";
+import DirectCallModal from "@/components/external-chat/direct-call-modal";
 
 type Room = {
   id: string;
@@ -415,6 +417,8 @@ export default function ExternalChatApp() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [selfUser, setSelfUser] = useState<UserRow | null>(null);
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
+  const [callSelectorOpen, setCallSelectorOpen] = useState(false);
+  const [activeCall, setActiveCall] = useState<{ type: "audio" | "video"; targetUser: any } | null>(null);
   const [meetingCodeInput, setMeetingCodeInput] = useState("");
   const [notificationSoundOn, setNotificationSoundOn] = useState(true);
   const [privacyModeOn, setPrivacyModeOn] = useState(false);
@@ -1961,7 +1965,7 @@ export default function ExternalChatApp() {
       return;
     }
     if (cmd === "/call") {
-      setCallOverlayOpen(true);
+      setCallSelectorOpen(true);
       setText("");
       setMentionOpen(false);
       return;
@@ -2602,7 +2606,7 @@ export default function ExternalChatApp() {
                     </span>
                   ) : null}
                 </div>
-                <Button size="sm" variant="outline" onClick={() => setCallOverlayOpen(true)} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
+                <Button size="sm" variant="outline" onClick={() => setCallSelectorOpen(true)} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
                   <Phone className="h-4 w-4" />
                 </Button>
                 {activeRoom ? (
@@ -2615,7 +2619,7 @@ export default function ExternalChatApp() {
                         <button
                           className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]"
                           onClick={() => {
-                            setCallOverlayOpen(true);
+                            setCallSelectorOpen(true);
                             setMenuOpenForRoomCode(null);
                           }}
                         >
@@ -4137,6 +4141,27 @@ export default function ExternalChatApp() {
             </div>
           </div>
         </div>
+        {callSelectorOpen && (
+          <CallSelectorModal
+            onClose={() => setCallSelectorOpen(false)}
+            onStartCall={(targetUser, type) => {
+              setActiveCall({ type, targetUser });
+              setCallSelectorOpen(false);
+            }}
+            currentRoomType={(activeRoom?.type as "direct" | "group" | "channel") || "group"}
+            currentRoomPeer={activeRoomPeer as any}
+          />
+        )}
+
+        {activeCall && (
+          <DirectCallModal
+            roomCode={activeRoom?.code || ""}
+            callType={activeCall.type}
+            targetUser={activeCall.targetUser}
+            onClose={() => setActiveCall(null)}
+            onCallEnded={() => setActiveCall(null)}
+          />
+        )}
       </ChatShell>
     </div>
   );
