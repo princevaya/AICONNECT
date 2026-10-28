@@ -382,6 +382,7 @@ export default function ExternalChatApp() {
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
   const [starredPanelOpen, setStarredPanelOpen] = useState(false);
+  const [mobileChatSearch, setMobileChatSearch] = useState("");
   const [incomingPanelOpen, setIncomingPanelOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(true);
   const [hiddenRoomCodes, setHiddenRoomCodes] = useState<string[]>([]);
@@ -3858,14 +3859,23 @@ export default function ExternalChatApp() {
             onClick={() => setMobileSidebarOpen(false)}
             className={`absolute inset-0 bg-black/35 transition-opacity ${mobileSidebarOpen ? "opacity-100" : "opacity-0"}`}
           />
-          <aside className={`absolute left-0 top-0 h-full w-[86vw] max-w-sm border-r border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+          <aside className={`flex flex-col absolute left-0 top-0 h-full w-[86vw] max-w-sm border-r border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-semibold">Conversations</p>
               <Button size="sm" variant="ghost" onClick={() => setMobileSidebarOpen(false)}><X className="h-4 w-4" /></Button>
             </div>
+            <div className="mb-3 relative">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+              <Input
+                className="pl-8 bg-muted/50 border-border/70"
+                value={mobileChatSearch}
+                onChange={(e) => setMobileChatSearch(e.target.value)}
+                placeholder="Search chats..."
+              />
+            </div>
             <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
-            <div className="space-y-1 overflow-y-auto">
-              {filteredRooms.map((room) => {
+            <div className="flex-1 space-y-1 overflow-y-auto pb-2">
+              {filteredRooms.filter((r) => r.name?.toLowerCase().includes(mobileChatSearch.toLowerCase())).map((room) => {
                 const starred = starredRoomCodes.includes(room.code);
                 return (
                   <button
@@ -3942,6 +3952,26 @@ export default function ExternalChatApp() {
                   </div> : null}
                 </div>
               ) : null}
+            </div>
+            <div className="mt-auto rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 items-center gap-2 cursor-pointer" onClick={() => { setProfileSettingsOpen(true); setMobileSidebarOpen(false); }}>
+                  <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
+                    <UserAvatar
+                      user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
+                      className="h-full w-full object-cover"
+                      fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">My Profile</p>
+                    <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">Account & preferences</p>
+                  </div>
+                </div>
+                <Button size="sm" variant="outline" onClick={() => { setProfileSettingsOpen(true); setMobileSidebarOpen(false); }} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                  <Settings2 className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                </Button>
+              </div>
             </div>
           </aside>
         </div>
