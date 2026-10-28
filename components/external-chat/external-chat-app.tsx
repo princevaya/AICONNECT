@@ -1593,17 +1593,53 @@ export default function ExternalChatApp() {
     }
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("roomId", activeRoom.id);
-      fd.append("roomCode", activeRoom.code);
-      const res = await fetch("/api/external-chat/upload", { method: "POST", body: fd });
-      const body = (await res.json().catch(() => ({}))) as { attachment?: { id: string; fileName: string; downloadUrl: string }; error?: string };
-      if (!res.ok || !body.attachment) throw new Error(body.error || "Upload failed");
-      setAttachment(body.attachment);
+      // If file > 10MB, use chunking
+      if (file.size > 10 * 1024 * 1024) {
+        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        const fileId = crypto.randomUUID();
+
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+
+          const fd = new FormData();
+          fd.append("chunk", chunk);
+          fd.append("fileId", fileId);
+          fd.append("chunkIndex", i.toString());
+          fd.append("totalChunks", totalChunks.toString());
+          fd.append("fileName", file.name);
+          fd.append("roomId", activeRoom.id);
+          fd.append("roomCode", activeRoom.code);
+
+          const res = await fetch("/api/external-chat/upload/chunk", { method: "POST", body: fd });
+          const body = await res.json().catch(() => ({}));
+          
+          if (!res.ok) throw new Error(body.error || `Upload failed at chunk ${i}`);
+          
+          // If this was the last chunk, the server returns the attachment
+          if (body.attachment) {
+             setAttachment(body.attachment);
+          }
+        }
+      } else {
+        // Fallback to normal upload for small files
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("roomId", activeRoom.id);
+        fd.append("roomCode", activeRoom.code);
+        const res = await fetch("/api/external-chat/upload", { method: "POST", body: fd });
+        const body = (await res.json().catch(() => ({}))) as { attachment?: { id: string; fileName: string; downloadUrl: string }; error?: string };
+        if (!res.ok || !body.attachment) throw new Error(body.error || "Upload failed");
+        setAttachment(body.attachment);
+      }
     } catch (err) {
       handleApiError(err, "Upload failed");
     } finally {
+      setUploading(false);
+    }
+  };
       setUploading(false);
     }
   };

@@ -1,6 +1,10 @@
-// Fallback config for environments that resolve next.config.js first.
-module.exports = {
-	turbopack: {
-		root: __dirname,
-	},
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '10mb',
+    },
+  },
 };
+
+module.exports = nextConfig;

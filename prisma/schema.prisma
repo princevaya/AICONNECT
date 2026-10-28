@@ -243,6 +243,8 @@ model ChatMessage {
   @@index([senderId], map: "idx_chat_messages_sender_id")
   @@index([deletedAt], map: "idx_chat_messages_deleted_at")
   @@map("chat_messages")
+
+  @([roomId, createdAt])
 }
 
 model Participant {
@@ -282,6 +284,7 @@ model ExternalChatWorkspace {
 }
 
 model ExternalChatRoom {
+  isSuperGroup Boolean (false)
   id          String               @id @default(cuid())
   workspaceId String               @map("workspace_id")
   code        String               @unique
@@ -337,6 +340,8 @@ model ExternalChatRoomMember {
   @@index([userId], map: "idx_external_chat_members_user")
   @@index([roomId, leftAt], map: "idx_external_chat_members_room_left")
   @@map("external_chat_room_members")
+
+  @([roomId, userId])
 }
 
 model ExternalChatAttachment {
