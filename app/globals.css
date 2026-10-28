@@ -180,6 +180,7 @@
   }
 
   .whatsapp-panel {
+
     border-radius: 0.75rem;
     border: 1px solid rgba(233, 237, 239, 0.6);
     backdrop-filter: blur(20px);
@@ -188,6 +189,19 @@
 
   .dark .whatsapp-panel {
     border-color: rgba(42, 57, 66, 0.6);
+  }
+
+  .chat-doodle-bg {
+    background-color: #efeae2;
+    background-image: url("/chat-doodle.svg");
+    background-repeat: repeat;
+    background-size: 400px 400px;
+  }
+  .dark .chat-doodle-bg {
+    background-color: #0b141a;
+    background-image: url("/chat-doodle-dark.svg");
+    background-repeat: repeat;
+    background-size: 400px 400px;
   }
 
   .whatsapp-row-active {

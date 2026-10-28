@@ -2834,7 +2834,7 @@ export default function ExternalChatApp() {
 
           <div
             ref={messageListRef}
-            className={`min-h-0 flex-1 overflow-y-auto p-3 ${dropActive ? "bg-[#25D366]/5" : ""}`}
+            className={`min-h-0 flex-1 overflow-y-auto chat-doodle-bg p-3 ${dropActive ? "bg-[#25D366]/5" : ""}`}
             onScroll={(e) => {
               const el = e.currentTarget;
               const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
