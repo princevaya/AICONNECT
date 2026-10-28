@@ -23,7 +23,7 @@ export function ChatShell({
 }) {
   return (
     <div className={`chat-shell min-h-[calc(100vh-4rem)] rounded-xl p-4 ${className || ''}`}>
-      <div className="whatsapp-chat-grid mx-auto max-w-7xl h-[calc(100vh-6rem)]">
+      <div className="whatsapp-chat-grid mx-auto max-w-[1800px] h-[calc(100vh-6rem)]">
         {children}
       </div>
     </div>
