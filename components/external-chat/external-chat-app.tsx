@@ -2312,7 +2312,7 @@ export default function ExternalChatApp() {
   return (
     <div className="whatsapp-scrollbar">
       <ChatShell className="whatsapp-shell">
-        <ChatPanel className="hidden p-3 xl:block whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80">
+        <ChatPanel className="hidden p-3 xl:flex flex-col h-full whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-[#25D366]" />
@@ -2321,26 +2321,6 @@ export default function ExternalChatApp() {
             <ThemeToggle />
           </div>
 
-          <div className="mb-3 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
-                  <UserAvatar
-                    user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
-                    className="h-full w-full object-cover"
-                    fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">My Profile</p>
-                  <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">Account & preferences</p>
-                </div>
-              </div>
-              <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                <Settings2 className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-              </Button>
-            </div>
-          </div>
 
           <div className="mb-3 space-y-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/35 dark:bg-[#2A3942]/35 p-2">
             <div className="flex gap-2">
@@ -2390,7 +2370,7 @@ export default function ExternalChatApp() {
 
           <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
 
-          <div className="max-h-[calc(100%-330px)] space-y-1 overflow-y-auto pr-1">
+          <div className="flex-1 space-y-1 overflow-y-auto pr-1">
             {loadingRooms ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading chats...</div> : null}
             {filteredRooms.map((room) => {
               const starred = starredRoomCodes.includes(room.code);
@@ -2490,6 +2470,24 @@ export default function ExternalChatApp() {
               </div>
             ) : null}
           </div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
+                  <UserAvatar
+                    user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
+                    className="h-full w-full object-cover"
+                    fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">My Profile</p>
+                  <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">Account & preferences</p>
+                </div>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                <Settings2 className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+              </Button>
+            </div>
         </ChatPanel>
 
         <ChatPanel className={`flex min-h-0 flex-col ${infoPanelCollapsed ? "xl:col-span-2" : ""} whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80`}>
@@ -3456,7 +3454,7 @@ export default function ExternalChatApp() {
             onClick={() => setProfileSettingsOpen(false)}
             className={`absolute inset-0 bg-black/35 transition-opacity ${profileSettingsOpen ? "opacity-100" : "opacity-0"}`}
           />
-          <aside className={`absolute right-0 top-0 h-full w-full max-w-sm border-l border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/95 dark:bg-[#1F2C33]/95 p-4 backdrop-blur-xl transition-transform duration-300 ${profileSettingsOpen ? "translate-x-0" : "translate-x-full"}`}>
+          <aside className={`absolute left-0 top-0 h-full w-full max-w-sm border-r border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/95 dark:bg-[#1F2C33]/95 p-4 backdrop-blur-xl transition-transform duration-300 ${profileSettingsOpen ? "translate-x-0" : "-translate-x-full"}`}>
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Profile & Settings</p>
