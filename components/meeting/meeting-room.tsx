@@ -2138,7 +2138,7 @@ export default function MeetingRoom({
 
       {showAppsHub ? (
         <div
-          className={`fixed right-3 top-16 z-10020 rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur-md ${
+          className={`fixed right-3 top-16 z-[10020] rounded-2xl border border-border bg-card/95 shadow-2xl backdrop-blur-md ${
             minimizedAppsHub ? "w-56 p-2" : "w-[min(92vw,28rem)] p-3"
           }`}
         >
