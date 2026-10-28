@@ -1,6 +1,7 @@
-import { EgressClient, EgressStatus } from "livekit-server-sdk";
+import { EgressClient, EgressStatus, RoomServiceClient } from "livekit-server-sdk";
 
 let cachedEgressClient: EgressClient | null = null;
+let cachedRoomServiceClient: RoomServiceClient | null = null;
 
 function normalizeLivekitHost(rawHost?: string | null): string {
   if (!rawHost) {
@@ -121,4 +122,28 @@ export function mapStatusToLegacyCode(
     default:
       return undefined;
   }
+}
+
+export function getRoomServiceClient() {
+  if (cachedRoomServiceClient) {
+    return cachedRoomServiceClient;
+  }
+
+  const apiKey = process.env.LIVEKIT_API_KEY;
+  const apiSecret = process.env.LIVEKIT_API_SECRET;
+
+  if (!apiKey || !apiSecret) {
+    throw new Error("LiveKit API credentials are missing");
+  }
+
+  cachedRoomServiceClient = new RoomServiceClient(
+    getLivekitRestUrl(),
+    apiKey,
+    apiSecret
+  );
+  return cachedRoomServiceClient;
+}
+
+export function resetRoomServiceClient() {
+  cachedRoomServiceClient = null;
 }
