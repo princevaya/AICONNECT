@@ -2334,7 +2334,7 @@ export default function ExternalChatApp() {
                 Group
               </Button>
             </div>
-            <div className="max-h-36 space-y-1 overflow-y-auto">
+            <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#E9EDEF] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
               {searching ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Searching...</p> : null}
               {results.map((u) => (
                 <div key={u.id} className="flex items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/65 dark:bg-[#1F2C33]/65 px-2 py-1.5">
@@ -2532,7 +2532,7 @@ export default function ExternalChatApp() {
                   {infoPanelCollapsed ? "Show Info" : "Hide Info"}
                 </Button>
                 <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="hidden md:inline-flex border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
                     <UserPlus className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
                   </Button>
                   {incoming.length > 0 ? (
@@ -2541,8 +2541,11 @@ export default function ExternalChatApp() {
                     </span>
                   ) : null}
                   {incomingPanelOpen ? (
-                    <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
-                      <p className="mb-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Requests</p>
+                    <div className="fixed left-1/2 top-1/2 z-[100] w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-md border md:absolute md:right-0 md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:mt-1 md:w-72 border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
+                      <div className="mb-2 flex items-center justify-between">
+<p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Requests</p>
+<button type="button" onClick={() => setIncomingPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
+</div>
                       <div className="max-h-64 space-y-1 overflow-y-auto">
                         {incoming.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No pending requests</p> : null}
                         {incoming.map((r) => (
@@ -2568,8 +2571,11 @@ export default function ExternalChatApp() {
                     </span>
                   ) : null}
                   {starredPanelOpen ? (
-                    <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
-                      <p className="mb-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
+                    <div className="fixed left-1/2 top-1/2 z-[100] w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-md border md:absolute md:right-0 md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:mt-1 md:w-72 border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
+                      <div className="mb-2 flex items-center justify-between">
+<p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
+<button type="button" onClick={() => setStarredPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
+</div>
                       <div className="max-h-64 space-y-1 overflow-y-auto">
                         {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No starred messages</p> : null}
                         {bookmarkedMessages.slice(-10).reverse().map((m) => (
@@ -3864,14 +3870,27 @@ export default function ExternalChatApp() {
               <p className="text-sm font-semibold">Conversations</p>
               <Button size="sm" variant="ghost" onClick={() => setMobileSidebarOpen(false)}><X className="h-4 w-4" /></Button>
             </div>
-            <div className="mb-3 relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-              <Input
-                className="pl-8 bg-muted/50 border-border/70"
-                value={mobileChatSearch}
-                onChange={(e) => setMobileChatSearch(e.target.value)}
-                placeholder="Search chats..."
-              />
+            <div className="mb-3 flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                <Input
+                  className="pl-8 bg-muted/50 border-border/70"
+                  value={mobileChatSearch}
+                  onChange={(e) => setMobileChatSearch(e.target.value)}
+                  placeholder="Search chats..."
+                />
+              </div>
+              <Button type="button" variant="outline" size="icon" onClick={() => { setIncomingPanelOpen(true); setMobileSidebarOpen(false); }} className="shrink-0 relative border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                <UserPlus className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                {incoming.length > 0 ? (
+                  <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
+                    {incoming.length > 9 ? "9+" : incoming.length}
+                  </span>
+                ) : null}
+              </Button>
+              <Button type="button" variant="outline" size="icon" onClick={() => { setCreateGroupOpen(true); setMobileSidebarOpen(false); }} className="shrink-0 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
+                <PlusCircle className="h-4 w-4" />
+              </Button>
             </div>
             <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
             <div className="flex-1 space-y-1 overflow-y-auto pb-2">
