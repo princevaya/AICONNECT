@@ -381,6 +381,8 @@ export default function ExternalChatApp() {
   const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
+  const [starredPanelOpen, setStarredPanelOpen] = useState(false);
+  const [incomingPanelOpen, setIncomingPanelOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(true);
   const [hiddenRoomCodes, setHiddenRoomCodes] = useState<string[]>([]);
   const [threadParentId, setThreadParentId] = useState<string | null>(null);
@@ -2321,7 +2323,7 @@ export default function ExternalChatApp() {
 
           <div className="mb-3 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2.5">
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
                   <UserAvatar
                     user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
@@ -2342,7 +2344,7 @@ export default function ExternalChatApp() {
 
           <div className="mb-3 space-y-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/35 dark:bg-[#2A3942]/35 p-2">
             <div className="flex gap-2">
-              <div className="relative flex-1">
+              <div className="relative min-w-[180px] flex-1">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
                 <Input className="pl-8 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
               </div>
@@ -2387,41 +2389,6 @@ export default function ExternalChatApp() {
           </div>
 
           <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
-
-          <div className="mb-3 rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2">
-            <p className="mb-1 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Requests</p>
-            <div className="max-h-28 space-y-1 overflow-y-auto">
-              {incoming.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No pending requests</p> : null}
-              {incoming.map((r) => (
-                <div key={r.id} className="flex items-center justify-between rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1">
-                  <p className="truncate text-xs text-[#111B21] dark:text-[#E9EDEF]">{userLabel(r.sender)}</p>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "accept")}><Check className="h-4 w-4 text-[#25D366]" /></Button>
-                    <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "decline")}><X className="h-4 w-4 text-[#EF4444]" /></Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="mb-3 rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2">
-            <p className="mb-1 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
-            <div className="max-h-28 space-y-1 overflow-y-auto">
-              {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No starred messages</p> : null}
-              {bookmarkedMessages.slice(-3).reverse().map((m) => (
-                <button
-                  key={`sidebar-starred-${m.id}`}
-                  type="button"
-                  onClick={() => {
-                    scrollToMessageById(m.id);
-                  }}
-                  className="w-full rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1 text-left hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]/60"
-                >
-                  <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
-                </button>
-              ))}
-            </div>
-          </div>
 
           <div className="max-h-[calc(100%-330px)] space-y-1 overflow-y-auto pr-1">
             {loadingRooms ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading chats...</div> : null}
@@ -2527,8 +2494,8 @@ export default function ExternalChatApp() {
 
         <ChatPanel className={`flex min-h-0 flex-col ${infoPanelCollapsed ? "xl:col-span-2" : ""} whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80`}>
           <div className="sticky top-0 z-10 border-b border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-3 backdrop-blur chat-header">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button
                   type="button"
                   size="icon"
@@ -2548,14 +2515,14 @@ export default function ExternalChatApp() {
                   </div>
                   <OnlineDot />
                 </div>
-                <div>
-                  <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">{activeRoom?.name || "Select a conversation"}</p>
-                  <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">{activeRoomSubtitle}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">{activeRoom?.name || "Select a conversation"}</p>
+                  <p className="truncate text-xs text-[#667781] dark:text-[#AEBAC1]">{activeRoomSubtitle}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                  <LayoutDashboard className="mr-1 h-4 w-4 text-[#25D366]" /> Dashboard
+              <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1 md:gap-2">
+                <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")} className="hidden border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] md:inline-flex">
+                  <LayoutDashboard className="h-4 w-4 text-[#25D366] xl:mr-1" /><span className="hidden xl:inline">Dashboard</span>
                 </Button>
                 <Button
                   size="sm"
@@ -2565,6 +2532,61 @@ export default function ExternalChatApp() {
                 >
                   {infoPanelCollapsed ? "Show Info" : "Hide Info"}
                 </Button>
+                <div className="relative">
+                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                    <UserPlus className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                  </Button>
+                  {incoming.length > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
+                      {incoming.length > 9 ? "9+" : incoming.length}
+                    </span>
+                  ) : null}
+                  {incomingPanelOpen ? (
+                    <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
+                      <p className="mb-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Requests</p>
+                      <div className="max-h-64 space-y-1 overflow-y-auto">
+                        {incoming.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No pending requests</p> : null}
+                        {incoming.map((r) => (
+                          <div key={r.id} className="flex items-center justify-between rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1">
+                            <p className="truncate text-xs text-[#111B21] dark:text-[#E9EDEF]">{userLabel(r.sender)}</p>
+                            <div className="flex gap-1">
+                              <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "accept")}><Check className="h-4 w-4 text-[#25D366]" /></Button>
+                              <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "decline")}><X className="h-4 w-4 text-[#EF4444]" /></Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="relative">
+                  <Button size="sm" variant="outline" onClick={() => { setStarredPanelOpen((v) => !v); setIncomingPanelOpen(false); }} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                    <Pin className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                  </Button>
+                  {bookmarkedMessages.length > 0 ? (
+                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
+                      {bookmarkedMessages.length > 9 ? "9+" : bookmarkedMessages.length}
+                    </span>
+                  ) : null}
+                  {starredPanelOpen ? (
+                    <div className="absolute right-0 z-20 mt-1 w-72 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
+                      <p className="mb-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
+                      <div className="max-h-64 space-y-1 overflow-y-auto">
+                        {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No starred messages</p> : null}
+                        {bookmarkedMessages.slice(-10).reverse().map((m) => (
+                          <button
+                            key={`header-starred-${m.id}`}
+                            type="button"
+                            onClick={() => { scrollToMessageById(m.id); setStarredPanelOpen(false); }}
+                            className="w-full rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1 text-left hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]/60"
+                          >
+                            <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="relative">
                   <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
                     <Bell className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
@@ -3180,7 +3202,7 @@ export default function ExternalChatApp() {
               </div>
               <span className="hidden text-[10px] text-[#667781] dark:text-[#AEBAC1] sm:inline">{activeRoomCode && draftByRoom[activeRoomCode] ? "Draft saved" : "Use /poll /note /text /call"}</span>
             </div>
-            <div className="flex items-end gap-1.5">
+            <div className="flex flex-wrap items-end gap-1.5">
               <select
                 value={messageType}
                 onChange={(e) => setMessageType(e.target.value as "text" | "note" | "poll")}
@@ -3213,7 +3235,7 @@ export default function ExternalChatApp() {
               >
                 <Mic className="h-4 w-4" />
               </Button>
-              <div className="relative flex-1">
+              <div className="relative min-w-[180px] flex-1">
                 <Textarea
                   ref={textareaRef}
                   value={text}
