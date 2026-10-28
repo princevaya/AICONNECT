@@ -3114,41 +3114,30 @@ export default function ExternalChatApp() {
                   : "This conversation is read-only for your account."}
             </div>
           ) : null}
-          <form ref={composerFormRef} onSubmit={sendMessage} className="chat-composer border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-3 backdrop-blur">
+          <form ref={composerFormRef} onSubmit={sendMessage} className="chat-composer border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-2 backdrop-blur">
             {undoSend ? (
-              <div className="mb-2 flex items-center justify-between rounded-md border border-[#25D366]/30 bg-[#25D366]/10 px-2 py-1.5 text-xs">
+              <div className="mb-1.5 flex items-center justify-between rounded-md border border-[#25D366]/30 bg-[#25D366]/10 px-2 py-1 text-xs">
                 <span className="text-[#111B21] dark:text-[#E9EDEF]">Message sent. Undo?</span>
-                <Button type="button" size="sm" variant="outline" onClick={undoLastSend} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">Undo</Button>
+                <Button type="button" size="sm" variant="outline" onClick={undoLastSend} className="h-6 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">Undo</Button>
               </div>
             ) : null}
             {replying ? (
-              <div className="mb-2 flex items-start justify-between gap-2 rounded-md border border-[#25D366]/25 bg-[#25D366]/8 px-2 py-1.5">
+              <div className="mb-1.5 flex items-start justify-between gap-2 rounded-md border border-[#25D366]/25 bg-[#25D366]/8 px-2 py-1">
                 <div className="flex min-w-0 flex-1 items-start gap-2">
-                  <span className="mt-0.5 h-8 w-1 rounded bg-[#25D366]" />
+                  <span className="mt-0.5 h-6 w-1 rounded bg-[#25D366]" />
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-[#25D366]">{userLabel(replying.sender)}</p>
-                    <p className="truncate text-xs text-[#667781] dark:text-[#AEBAC1]">{replying.content.slice(0, 90)}</p>
+                    <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">{replying.content.slice(0, 90)}</p>
                   </div>
                 </div>
                 <button type="button" onClick={() => setReplyToId(null)} className="text-xs underline text-[#25D366]">Cancel</button>
               </div>
             ) : null}
-            <div className="mb-2 grid gap-2 md:grid-cols-2">
-              <select value={messageType} onChange={(e) => setMessageType(e.target.value as "text" | "note" | "poll")} className="h-9 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] px-3 text-sm text-[#111B21] dark:text-[#E9EDEF]">
-                <option value="text">Text</option>
-                <option value="note">Note</option>
-                <option value="poll">Poll</option>
-              </select>
-              <div className="flex items-center gap-2">
-                <input ref={fileInputRef} type="file" className="hidden" onChange={onFile} />
-                <Button type="button" variant="outline" className="w-full border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => fileInputRef.current?.click()} disabled={uploading || !canSendInActiveRoom}>
-                  {uploading ? <Loader2 className="h-4 w-4 animate-spin text-[#25D366]" /> : <Paperclip className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />}<span className="ml-1">Attach</span>
-                </Button>
-              </div>
-            </div>
-            {attachment ? <div className="mb-2 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] px-2 py-1 text-xs text-[#111B21] dark:text-[#E9EDEF]">Attached: {attachment.fileName}<button type="button" onClick={() => setAttachment(null)} className="ml-2 underline text-[#25D366]">Remove</button></div> : null}
+            {attachment ? (
+              <div className="mb-1.5 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] px-2 py-1 text-xs text-[#111B21] dark:text-[#E9EDEF]">Attached: {attachment.fileName}<button type="button" onClick={() => setAttachment(null)} className="ml-2 underline text-[#25D366]">Remove</button></div>
+            ) : null}
             {messageType === "poll" ? (
-              <div className="mb-2 space-y-2 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-[#F0F2F5]/30 dark:bg-[#2A3942]/30 p-2">
+              <div className="mb-1.5 space-y-1.5 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-[#F0F2F5]/30 dark:bg-[#2A3942]/30 p-2">
                 <div className="flex items-center gap-2 text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]"><Vote className="h-4 w-4 text-[#25D366]" />Poll builder</div>
                 <Input value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} placeholder="Poll question" className="bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" />
                 {pollOptions.map((opt, i) => (
@@ -3158,7 +3147,7 @@ export default function ExternalChatApp() {
               </div>
             ) : null}
             {messageType === "note" ? (
-              <div className="mb-2 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-[#F0F2F5]/30 dark:bg-[#2A3942]/30 p-2">
+              <div className="mb-1.5 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-[#F0F2F5]/30 dark:bg-[#2A3942]/30 p-2">
                 <p className="mb-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Note Bubble Color</p>
                 <div className="flex flex-wrap gap-2">
                   {NOTE_COLORS.map((entry) => (
@@ -3175,30 +3164,52 @@ export default function ExternalChatApp() {
                 </div>
               </div>
             ) : null}
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-0.5">
                 {["👍", "❤️", "😂", "🔥", "🙏"].map((emoji) => (
                   <button
                     key={`quick-${emoji}`}
                     type="button"
                     onClick={() => setText((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
                     disabled={!canSendInActiveRoom}
-                    className="rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-0.5 text-xs hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]"
+                    className="rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-1.5 py-0.5 text-xs hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]"
                   >
                     {emoji}
                   </button>
                 ))}
               </div>
-              <span className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">{activeRoomCode && draftByRoom[activeRoomCode] ? "Draft saved" : "Use /poll /note /text /call"}</span>
+              <span className="hidden text-[10px] text-[#667781] dark:text-[#AEBAC1] sm:inline">{activeRoomCode && draftByRoom[activeRoomCode] ? "Draft saved" : "Use /poll /note /text /call"}</span>
             </div>
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-1.5">
+              <select
+                value={messageType}
+                onChange={(e) => setMessageType(e.target.value as "text" | "note" | "poll")}
+                className="h-9 w-[68px] shrink-0 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] px-1 text-xs text-[#111B21] dark:text-[#E9EDEF]"
+              >
+                <option value="text">Text</option>
+                <option value="note">Note</option>
+                <option value="poll">Poll</option>
+              </select>
+              <input ref={fileInputRef} type="file" className="hidden" onChange={onFile} />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || !canSendInActiveRoom}
+                title="Attach file"
+              >
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin text-[#25D366]" /> : <Paperclip className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />}
+              </Button>
               <Button
                 type="button"
                 variant={recording ? "destructive" : "ghost"}
                 size="icon"
-                className={`shrink-0 transition ${recording ? "animate-pulse" : ""}`}
+                className={`h-9 w-9 shrink-0 transition ${recording ? "animate-pulse" : ""}`}
                 onClick={() => void toggleRecording()}
                 disabled={!canSendInActiveRoom}
+                title="Voice note"
               >
                 <Mic className="h-4 w-4" />
               </Button>
@@ -3208,7 +3219,7 @@ export default function ExternalChatApp() {
                   value={text}
                   onChange={(e) => onTextChange(e.target.value)}
                   onKeyDown={onTextKeyDown}
-                  className="min-h-[54px] max-h-40 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]"
+                  className="min-h-[38px] max-h-32 resize-none bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF] py-2"
                   placeholder="Type message. Use @username for mentions."
                   disabled={!canSendInActiveRoom}
                 />
@@ -3231,12 +3242,12 @@ export default function ExternalChatApp() {
                   </div>
                 ) : null}
               </div>
-              <Button type="submit" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="transition-transform duration-150 active:scale-95 bg-[#25D366] hover:bg-[#128C7E] text-white">
+              <Button type="submit" size="icon" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="h-9 w-9 shrink-0 transition-transform duration-150 active:scale-95 bg-[#25D366] hover:bg-[#128C7E] text-white">
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
             {recording ? (
-              <div className="mt-2 flex items-center justify-between rounded-md border border-[#EF4444]/35 bg-[#EF4444]/10 px-2 py-1.5">
+              <div className="mt-1.5 flex items-center justify-between rounded-md border border-[#EF4444]/35 bg-[#EF4444]/10 px-2 py-1">
                 <div className="flex items-center gap-1.5">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <span
@@ -3247,7 +3258,7 @@ export default function ExternalChatApp() {
                   ))}
                   <span className="text-xs text-[#EF4444]">Recording {formatDuration(recordingMs)}</span>
                 </div>
-                <Button type="button" size="sm" variant="outline" onClick={() => mediaRecorderRef.current?.stop()} className="border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                <Button type="button" size="sm" variant="outline" onClick={() => mediaRecorderRef.current?.stop()} className="h-6 border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
                   Stop
                 </Button>
               </div>
