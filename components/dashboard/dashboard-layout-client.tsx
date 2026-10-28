@@ -95,7 +95,7 @@ export default function DashboardLayoutClient({ children }: Props) {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
       {/* HEADER */}
-      <header className="h-16 px-4 shrink-0 flex items-center justify-between border-b bg-background/95 backdrop-blur sticky top-0 z-40">
+      <header className="h-16 px-4 shrink-0 flex items-center justify-between border-b bg-background/95 text-foreground backdrop-blur sticky top-0 z-40">
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
@@ -120,27 +120,19 @@ export default function DashboardLayoutClient({ children }: Props) {
 
         <div className="flex items-center gap-2">
           {/* Real-time Time & Date */}
-          <div className="hidden sm:block text-sm text-muted-foreground/80 font-medium mr-4">
-            {timeString}
-          </div>
-
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/help")} title="Help">
             <HelpCircle className="h-5 w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/external-chat")} title="Chat">
             <MessageSquare className="h-5 w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground">
+          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/settings")} title="Settings">
             <Settings className="h-5 w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground mr-2">
+          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground mr-2" onClick={() => router.push("/dashboard")} title="Dashboard">
             <LayoutGrid className="h-5 w-5" />
           </Button>
 
-          {/* User Button */}
-          <div className="h-8 w-8 flex items-center justify-center">
-            <UserButton afterSignOutUrl="/" />
-          </div>
         </div>
       </header>
 
@@ -163,7 +155,7 @@ export default function DashboardLayoutClient({ children }: Props) {
                   className={cn(
                     "w-full flex items-center transition-all duration-200 rounded-full h-12 px-4 gap-4",
                     item.isActive
-                      ? "bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 font-medium"
+                      ? "bg-primary/10 text-primary font-medium"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   )}
                   title={isSidebarCollapsed ? item.label : undefined}
@@ -176,6 +168,9 @@ export default function DashboardLayoutClient({ children }: Props) {
               );
             })}
           </nav>
+          <div className="mt-auto px-2 pb-2 pt-4 flex justify-center w-full">
+            <UserButton afterSignOutUrl="/" />
+          </div>
         </aside>
 
         {/* MOBILE SIDEBAR (drawer) */}
@@ -200,7 +195,7 @@ export default function DashboardLayoutClient({ children }: Props) {
                     className={cn(
                       "w-full flex items-center transition-all duration-200 rounded-full h-12 px-4 gap-4",
                       item.isActive
-                        ? "bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 font-medium"
+                        ? "bg-primary/10 text-primary font-medium"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                     title={item.label}
