@@ -78,16 +78,33 @@ export async function GET(req: NextRequest) {
 
     if (rooms.length === 0) {
       // First joiner: create the room WITH the hard cap.
-      // LiveKit SFU will atomically reject participant #(MAX+1).
+      // Handle concurrent createRoom races by checking listParticipants if createRoom collides.
       try {
         await roomService.createRoom({
           name: room,
           maxParticipants: MAX_PARTICIPANTS,
-          emptyTimeout: 300, // auto-delete 5 min after empty
+          emptyTimeout: 300,
         });
       } catch (e) {
-        console.error("createRoom failed:", e);
-        return failCapacity("Unable to create room with capacity limit.");
+        try {
+          const retryRooms = await roomService.listRooms([room]);
+          if (retryRooms.length === 0) throw e;
+          const participants = await roomService.listParticipants(room);
+          const alreadyInRoom = participants.some((p) => p.identity === sessionIdentity);
+          if (!alreadyInRoom && participants.length >= MAX_PARTICIPANTS) {
+            return NextResponse.json(
+              {
+                error: `Conference is full (max ${MAX_PARTICIPANTS} participants)`,
+                code: "ROOM_FULL",
+                maxParticipants: MAX_PARTICIPANTS,
+              },
+              { status: 403 }
+            );
+          }
+        } catch (innerErr) {
+          console.error("createRoom failed:", innerErr);
+          return failCapacity("Unable to create room with capacity limit.");
+        }
       }
     } else {
       // Room already exists. Pre-check count so we can return a clean

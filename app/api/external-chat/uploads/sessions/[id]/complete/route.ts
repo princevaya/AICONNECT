@@ -34,7 +34,18 @@ export async function POST(
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : "";
-    const status = message.includes("not found") ? 404 : message.includes("not allowed") ? 403 : 500;
+    const status = message.includes("not found")
+      ? 404
+      : message.includes("not allowed")
+        ? 403
+        : message.includes("missing") ||
+            message.includes("mismatch") ||
+            message.includes("duplicate") ||
+            message.includes("out-of-range") ||
+            message.includes("aborted") ||
+            message.includes("required")
+          ? 400
+          : 500;
     return toError(error, "Failed to complete upload session", status);
   }
 }

@@ -37,6 +37,19 @@ import {
   X,
   Type,
   Trash2,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Languages,
+  CircleDot,
+  PhoneIncoming,
+  PhoneOutgoing,
+  PhoneMissed,
+  Palette,
+  Pause,
+  Play,
+  XCircle,
+  History,
 } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
@@ -48,6 +61,21 @@ import ThemeToggle from "@/components/navigation/theme-toggle";
 import { ChatPanel, ChatShell, OnlineDot, SidebarFilterTabs, type FilterTab } from "@/components/external-chat/chat-system";
 import CallSelectorModal from "@/components/external-chat/call-selector-modal";
 import DirectCallModal from "@/components/external-chat/direct-call-modal";
+import IncomingCallModal from "@/components/external-chat/incoming-call-modal";
+import StatusTabContent from "@/components/external-chat/status-tab-content";
+import StatusViewer from "@/components/external-chat/status-viewer";
+import {
+  computeKeyFingerprint,
+  decryptMessageText,
+  derivePairwiseAesKey,
+  encryptMessageText,
+  ensureIdentityKeyPair,
+  generateGroupAesKey,
+  isWebCryptoSupported,
+  unwrapGroupKey,
+  wrapGroupKeyForMember,
+  type E2EEEnvelope,
+} from "@/lib/e2ee-crypto";
 
 type Room = {
   id: string;
@@ -57,6 +85,7 @@ type Room = {
   unreadCount: number;
   description?: string | null;
   isPrivate?: boolean;
+  e2eeEnabled?: boolean;
   avatarUrl?: string | null;
   archivedAt?: string | null;
   hiddenAt?: string | null;
@@ -64,7 +93,70 @@ type Room = {
   viewerMembership?: { role: string; leftAt?: string | null; removedAt?: string | null } | null;
   members?: Array<{ id: string; userId: string; role: string; user: UserRow }>;
 };
-type UserRow = { id: string; clerkId: string; name: string | null; email: string | null; imageUrl?: string | null };
+type UserRow = {
+  id: string;
+  clerkId: string;
+  name: string | null;
+  email: string | null;
+  imageUrl?: string | null;
+  e2eePublicKey?: string | null;
+};
+type OutgoingPending = { id: string; receiver: UserRow };
+type CallHistoryItem = {
+  id: string;
+  roomId: string;
+  type: "audio" | "video";
+  status: string;
+  livekitRoomName: string;
+  startedBy: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationSec: number | null;
+  room?: { id: string; code: string; name: string; type: string };
+  starter?: UserRow;
+  participants?: Array<{ userId: string; state: string; user: UserRow }>;
+};
+type IncomingCallData = {
+  id: string;
+  type: "audio" | "video";
+  livekitRoomName: string;
+  starter: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    imageUrl?: string | null;
+  };
+  roomCode: string;
+};
+type ServerStarredItem = {
+  id: string;
+  starredAt: string;
+  roomCode: string;
+  roomName: string;
+  content: string;
+  createdAt: string;
+  sender: UserRow;
+  attachment: { id: string; fileName: string; downloadUrl: string } | null;
+};
+type WallpaperPresetId = "doodle" | "minimal" | "emerald" | "ocean" | "sunset" | "custom";
+type MultipartUploadProgress = {
+  active: boolean;
+  paused: boolean;
+  fileName: string;
+  fileSize: number;
+  uploadedBytes: number;
+  completedParts: number;
+  totalParts: number;
+  sessionId: string | null;
+  roomCode: string;
+};
+type TranslatedState = {
+  translatedText: string;
+  detectedSourceLanguage?: string;
+  targetLanguage: string;
+  loading?: boolean;
+  showOriginal?: boolean;
+};
 type Pending = { id: string; sender: UserRow; receiver: UserRow };
 type Connection = {
   id: string;
@@ -129,6 +221,33 @@ const NOTE_COLORS = [
   { id: "violet", label: "Violet", className: "border-violet-500/40 bg-violet-500/16" },
 ] as const;
 type NoteColorId = (typeof NOTE_COLORS)[number]["id"];
+
+const WALLPAPER_PRESETS: Array<{ id: WallpaperPresetId; label: string; preview: string }> = [
+  { id: "doodle", label: "Classic Doodle", preview: "#efeae2" },
+  { id: "minimal", label: "Minimal Slate", preview: "#111b21" },
+  { id: "emerald", label: "Emerald Mist", preview: "linear-gradient(135deg, #064e3b, #0f172a)" },
+  { id: "ocean", label: "Deep Ocean", preview: "linear-gradient(135deg, #0f172a, #164e63)" },
+  { id: "sunset", label: "Warm Horizon", preview: "linear-gradient(135deg, #3b0764, #7c2d12)" },
+  { id: "custom", label: "Custom", preview: "#1f2937" },
+];
+
+const TRANSLATION_LANGUAGES = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "hi", label: "Hindi" },
+  { code: "pt", label: "Portuguese" },
+  { code: "ar", label: "Arabic" },
+  { code: "ja", label: "Japanese" },
+  { code: "zh", label: "Chinese" },
+];
+
+function isE2EEEnvelope(value: unknown): value is { e2ee: E2EEEnvelope } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = (value as { e2ee?: E2EEEnvelope }).e2ee;
+  return Boolean(candidate && candidate.alg === "AES-GCM" && candidate.iv && candidate.ciphertext);
+}
 
 async function api<T>(url: string, init?: RequestInit) {
   const method = (init?.method || "GET").toUpperCase();
@@ -300,6 +419,14 @@ function formatDuration(ms: number) {
   return `${m}:${s}`;
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const idx = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / Math.pow(1024, idx);
+  return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
 function preferredAudioMimeType() {
   if (typeof MediaRecorder === "undefined") return "";
   const supported = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
@@ -370,7 +497,36 @@ export default function ExternalChatApp() {
   const [authCooldownUntil, setAuthCooldownUntil] = useState(0);
 
   const [incoming, setIncoming] = useState<Pending[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = useState<OutgoingPending[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [navSection, setNavSection] = useState<"chats" | "calls" | "status">("chats");
+  const [desktopChatSearch, setDesktopChatSearch] = useState("");
+  const [callHistory, setCallHistory] = useState<CallHistoryItem[]>([]);
+  const [loadingCalls, setLoadingCalls] = useState(false);
+  const [callHistoryFilter, setCallHistoryFilter] = useState<"all" | "missed" | "incoming" | "outgoing" | "audio" | "video">("all");
+  const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
+  const [statusViewer, setStatusViewer] = useState<{
+    statuses: Parameters<typeof StatusViewer>[0]["statuses"];
+    initialIndex: number;
+  } | null>(null);
+  const [remoteTypingByRoom, setRemoteTypingByRoom] = useState<Record<string, Record<string, { name: string; expiresAt: number }>>>({});
+  const [wallpaperPreset, setWallpaperPreset] = useState<WallpaperPresetId>("doodle");
+  const [customWallpaperColor, setCustomWallpaperColor] = useState("#0f172a");
+  const [customWallpaperImage, setCustomWallpaperImage] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState("en");
+  const [autoTranslate, setAutoTranslate] = useState(false);
+  const [browserNotifications, setBrowserNotifications] = useState(false);
+  const [pushPermission, setPushPermission] = useState<string>("default");
+  const [e2eeFingerprint, setE2eeFingerprint] = useState<string | null>(null);
+  const [serverStarred, setServerStarred] = useState<ServerStarredItem[]>([]);
+  const [translatedByMsgId, setTranslatedByMsgId] = useState<Record<string, TranslatedState>>({});
+  const [uploadLimits, setUploadLimits] = useState({
+    directUploadLimitBytes: 25 * 1024 * 1024,
+    maxMultipartUploadBytes: 10 * 1024 * 1024 * 1024,
+    recommendedChunkSizeBytes: 16 * 1024 * 1024,
+    supportsMultipartUploads: true,
+  });
+  const [multipartProgress, setMultipartProgress] = useState<MultipartUploadProgress | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<UserRow[]>([]);
   const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
@@ -418,7 +574,7 @@ export default function ExternalChatApp() {
   const [selfUser, setSelfUser] = useState<UserRow | null>(null);
   const [callOverlayOpen, setCallOverlayOpen] = useState(false);
   const [callSelectorOpen, setCallSelectorOpen] = useState(false);
-  const [activeCall, setActiveCall] = useState<{ type: "audio" | "video"; targetUser: any } | null>(null);
+  const [activeCall, setActiveCall] = useState<{ type: "audio" | "video"; targetUser: UserRow | null } | null>(null);
   const [meetingCodeInput, setMeetingCodeInput] = useState("");
   const [notificationSoundOn, setNotificationSoundOn] = useState(true);
   const [privacyModeOn, setPrivacyModeOn] = useState(false);
@@ -471,6 +627,8 @@ export default function ExternalChatApp() {
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingEmitRef = useRef<number>(0);
   const lastSeenMessageIdRef = useRef<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const eventRef = useRef<EventSource | null>(null);
@@ -479,9 +637,27 @@ export default function ExternalChatApp() {
   const swipeStartXRef = useRef<number | null>(null);
   const lastGroupSettingsRoomRef = useRef<string | null>(null);
   const inviteParamHandledRef = useRef(false);
+  const e2eeIdentityRef = useRef<{ publicKeyJwkString: string; privateKey: CryptoKey } | null>(null);
+  const e2eeRoomKeysRef = useRef<Map<string, CryptoKey>>(new Map());
+  const multipartPauseRef = useRef(false);
+  const multipartAbortRef = useRef(false);
+  const dismissedCallIdsRef = useRef<Set<string>>(new Set());
+  const notifiedCallIdsRef = useRef<Set<string>>(new Set());
 
   const activeRoom = useMemo(() => rooms.find((r) => r.code === activeRoomCode) || null, [rooms, activeRoomCode]);
   const selfUserId = selfUser?.id || null;
+  const connectedPeerUsers = useMemo(() => {
+    if (!selfUserId) return [] as UserRow[];
+    return connections.map((c) => (c.userA.id === selfUserId ? c.userB : c.userA));
+  }, [connections, selfUserId]);
+  const activeRoomTypingUsers = useMemo(() => {
+    if (!activeRoomCode) return [] as string[];
+    const now = Date.now();
+    const roomMap = remoteTypingByRoom[activeRoomCode] || {};
+    return Object.entries(roomMap)
+      .filter(([, entry]) => entry.expiresAt > now)
+      .map(([, entry]) => entry.name);
+  }, [activeRoomCode, remoteTypingByRoom]);
   const pushNotification = useCallback((entry: Omit<InAppNotification, "id" | "createdAt">) => {
     const id = `n-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     setInAppNotifications((prev) => [{ ...entry, id, createdAt: Date.now() }, ...prev].slice(0, 30));
@@ -496,15 +672,22 @@ export default function ExternalChatApp() {
   const replying = useMemo(() => (replyToId ? messages.find((m) => m.id === replyToId) || null : null), [messages, replyToId]);
   const visibleRooms = useMemo(() => rooms.filter((room) => !hiddenRoomCodes.includes(room.code)), [rooms, hiddenRoomCodes]);
   const archivedRooms = useMemo(() => visibleRooms.filter((room) => Boolean(room.archivedAt)), [visibleRooms]);
+  const starredRoomCodeSet = useMemo(() => {
+    const codes = new Set(starredRoomCodes);
+    for (const s of serverStarred) codes.add(s.roomCode);
+    return codes;
+  }, [starredRoomCodes, serverStarred]);
   const filteredRooms = useMemo(() => {
+    const term = desktopChatSearch.trim().toLowerCase();
     return visibleRooms.filter((room) => {
       if (room.archivedAt) return false;
+      if (term && !room.name?.toLowerCase().includes(term)) return false;
       if (filterTab === "unread") return room.unreadCount > 0;
       if (filterTab === "groups") return room.type === "group";
-      if (filterTab === "starred") return starredRoomCodes.includes(room.code);
+      if (filterTab === "starred") return starredRoomCodeSet.has(room.code);
       return true;
     });
-  }, [visibleRooms, filterTab, starredRoomCodes]);
+  }, [visibleRooms, desktopChatSearch, filterTab, starredRoomCodeSet]);
   const sharedMedia = useMemo(
     () => messages.filter((m) => Boolean(m.attachment)).slice(-6),
     [messages]
@@ -636,15 +819,251 @@ export default function ExternalChatApp() {
     }
   }, [pushNotification]);
 
+  const showBrowserNotification = useCallback(
+    async (title: string, body: string, tag?: string, url = "/dashboard/external-chat") => {
+      if (typeof window === "undefined" || !("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+      try {
+        if ("serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg) {
+            await reg.showNotification(title, {
+              body,
+              tag,
+              icon: "/favicon.ico",
+              data: { url },
+            });
+            return;
+          }
+        }
+        new Notification(title, { body, tag, icon: "/favicon.ico" });
+      } catch {
+        // Ignore notification errors in restricted browser contexts
+      }
+    },
+    []
+  );
+
+  const requestBrowserPushPermission = useCallback(async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      pushNotification({ level: "error", title: "Not supported", message: "Browser notifications are unavailable here." });
+      return;
+    }
+    try {
+      const perm = await Notification.requestPermission();
+      setPushPermission(perm);
+      if (perm !== "granted") {
+        setBrowserNotifications(false);
+        return;
+      }
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.register("/sw.js");
+        let endpoint = `browser://${selfUserId || "web"}`;
+        let keys: { p256dh?: string; auth?: string } | undefined;
+        try {
+          const meta = await api<{ vapidPublicKey?: string | null }>("/api/external-chat/notifications/subscribe");
+          if (meta.vapidPublicKey && reg.pushManager) {
+            const sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: meta.vapidPublicKey,
+            });
+            const json = sub.toJSON();
+            if (json.endpoint) endpoint = json.endpoint;
+            keys = { p256dh: json.keys?.p256dh, auth: json.keys?.auth };
+          }
+        } catch {
+          // VAPID optional; browser Notification + ServiceWorker still works
+        }
+        await api("/api/external-chat/notifications/subscribe", {
+          method: "POST",
+          body: JSON.stringify({ endpoint, keys }),
+        }).catch(() => undefined);
+        await reg.showNotification("AIConnect Alerts Active", {
+          body: "You will be notified of incoming messages and calls.",
+          icon: "/favicon.ico",
+        });
+      }
+      setBrowserNotifications(true);
+      await api("/api/external-chat/profile", {
+        method: "PATCH",
+        body: JSON.stringify({ chatPreferences: { browserNotifications: true } }),
+      }).catch(() => undefined);
+    } catch (err) {
+      handleApiError(err, "Failed to enable browser alerts");
+    }
+  }, [handleApiError, pushNotification, selfUserId]);
+
+  const resolveRoomAesKey = useCallback(async (roomCode: string): Promise<CryptoKey | null> => {
+    if (!isWebCryptoSupported()) return null;
+    const cached = e2eeRoomKeysRef.current.get(roomCode);
+    if (cached) return cached;
+
+    let identity = e2eeIdentityRef.current;
+    if (!identity && selfUserId) {
+      try {
+        const generated = await ensureIdentityKeyPair(selfUserId);
+        identity = { publicKeyJwkString: generated.publicKeyJwkString, privateKey: generated.privateKey };
+        e2eeIdentityRef.current = identity;
+      } catch {
+        return null;
+      }
+    }
+    if (!identity) return null;
+
+    const room = roomsRef.current.find((r) => r.code === roomCode) || null;
+    if (room?.type === "direct" && selfUserId) {
+      const peer = room.members?.find((m) => m.user.id !== selfUserId)?.user;
+      if (peer?.e2eePublicKey) {
+        try {
+          const derived = await derivePairwiseAesKey(identity.privateKey, peer.e2eePublicKey, `dm:${room.code}`);
+          e2eeRoomKeysRef.current.set(roomCode, derived);
+          return derived;
+        } catch {
+          // Fall through to wrapped room keys lookup
+        }
+      }
+    }
+
+    try {
+      const res = await api<{
+        room: { id: string; code: string; type: string; e2eeEnabled: boolean };
+        myKeys: Array<{ wrappedKey: string; senderPublicKey: string; keyVersion: number }>;
+        memberKeys: Array<{ id: string; e2eePublicKey: string | null }>;
+      }>(`/api/external-chat/rooms/${encodeURIComponent(roomCode)}/keys`);
+
+      const latestKey = res.myKeys?.[0];
+      if (latestKey) {
+        const unwrapped = await unwrapGroupKey({
+          wrappedKeyJson: latestKey.wrappedKey,
+          myPrivateKey: identity.privateKey,
+          senderPublicKeyJwkString: latestKey.senderPublicKey,
+          roomCode,
+        });
+        e2eeRoomKeysRef.current.set(roomCode, unwrapped);
+        return unwrapped;
+      }
+
+      if (res.room?.e2eeEnabled) {
+        const newKey = await generateGroupAesKey();
+        const entries: Array<{ userId: string; wrappedKey: string }> = [];
+        const targets = (res.memberKeys || []).filter((m) => Boolean(m.e2eePublicKey));
+        for (const target of targets) {
+          if (!target.e2eePublicKey) continue;
+          const wrappedKey = await wrapGroupKeyForMember({
+            groupKey: newKey,
+            myPrivateKey: identity.privateKey,
+            memberPublicKeyJwkString: target.e2eePublicKey,
+            roomCode,
+          });
+          entries.push({ userId: target.id, wrappedKey });
+        }
+        if (entries.length > 0) {
+          await api(`/api/external-chat/rooms/${encodeURIComponent(roomCode)}/keys`, {
+            method: "POST",
+            body: JSON.stringify({
+              e2eeEnabled: true,
+              senderPublicKey: identity.publicKeyJwkString,
+              keyVersion: 1,
+              entries,
+            }),
+          });
+        }
+        e2eeRoomKeysRef.current.set(roomCode, newKey);
+        return newKey;
+      }
+    } catch {
+      // Ignore unavailable key exchange
+    }
+    return null;
+  }, [selfUserId]);
+
+  const decryptMessagesForRoom = useCallback(async (items: Message[], roomCode: string): Promise<Message[]> => {
+    if (!items.some((m) => isE2EEEnvelope(m.metadata))) return items;
+    const roomKey = await resolveRoomAesKey(roomCode);
+    const identity = e2eeIdentityRef.current;
+
+    return Promise.all(
+      items.map(async (m) => {
+        if (!isE2EEEnvelope(m.metadata)) return m;
+        const envelope = m.metadata.e2ee;
+        try {
+          if (roomKey) {
+            const decrypted = await decryptMessageText(envelope, roomKey);
+            return { ...m, content: decrypted };
+          }
+          if (identity && envelope.senderPublicKey) {
+            const fallbackKey = await derivePairwiseAesKey(identity.privateKey, envelope.senderPublicKey, `dm:${roomCode}`);
+            const decrypted = await decryptMessageText(envelope, fallbackKey);
+            return { ...m, content: decrypted };
+          }
+        } catch {
+          // Try pairwise senderPublicKey if room key rotated
+          if (identity && envelope.senderPublicKey) {
+            try {
+              const fallbackKey = await derivePairwiseAesKey(identity.privateKey, envelope.senderPublicKey, `dm:${roomCode}`);
+              const decrypted = await decryptMessageText(envelope, fallbackKey);
+              return { ...m, content: decrypted };
+            } catch {
+              return { ...m, content: "[Encrypted message — key unavailable on this device]" };
+            }
+          }
+        }
+        return { ...m, content: "[Encrypted message — waiting for key]" };
+      })
+    );
+  }, [resolveRoomAesKey]);
+
   const loadProfile = useCallback(async () => {
     if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return false;
     try {
-      const data = await api<{ user: UserRow }>("/api/external-chat/profile");
+      const data = await api<{
+        user: UserRow & { preferredLanguage?: string | null; chatPreferences?: Record<string, unknown> | null };
+      }>("/api/external-chat/profile");
       setSelfUser(data.user);
       setProfileImageUrl((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return data.user.imageUrl || null;
       });
+      if (data.user.preferredLanguage) {
+        setPreferredLanguage(data.user.preferredLanguage);
+      }
+      const prefs = data.user.chatPreferences;
+      if (prefs && typeof prefs === "object") {
+        if (typeof prefs.wallpaperPreset === "string") {
+          setWallpaperPreset(prefs.wallpaperPreset as WallpaperPresetId);
+        }
+        if (typeof prefs.customWallpaperColor === "string") {
+          setCustomWallpaperColor(prefs.customWallpaperColor);
+        }
+        if (typeof prefs.customWallpaperImage === "string") {
+          setCustomWallpaperImage(prefs.customWallpaperImage);
+        }
+        if (typeof prefs.browserNotifications === "boolean") {
+          setBrowserNotifications(prefs.browserNotifications);
+        }
+        if (typeof prefs.compactMode === "boolean") {
+          setCompactMode(prefs.compactMode);
+        }
+      }
+      if (isWebCryptoSupported()) {
+        try {
+          const identity = await ensureIdentityKeyPair(data.user.id);
+          e2eeIdentityRef.current = {
+            publicKeyJwkString: identity.publicKeyJwkString,
+            privateKey: identity.privateKey,
+          };
+          const fp = await computeKeyFingerprint(identity.publicKeyJwkString);
+          setE2eeFingerprint(fp);
+          if (data.user.e2eePublicKey !== identity.publicKeyJwkString) {
+            await api("/api/external-chat/keys", {
+              method: "PUT",
+              body: JSON.stringify({ e2eePublicKey: identity.publicKeyJwkString }),
+            }).catch(() => undefined);
+          }
+        } catch {
+          // Web Crypto unavailable in non-secure context
+        }
+      }
       return true;
     } catch (err) {
       handleApiError(err, "Failed to load profile");
@@ -655,13 +1074,50 @@ export default function ExternalChatApp() {
   const loadConnections = useCallback(async () => {
     if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
     try {
-      const data = await api<{ incoming: Pending[]; outgoing: Array<{ id: string; receiver: UserRow }>; connections: Connection[] }>("/api/external-chat/connections");
+      const data = await api<{ incoming: Pending[]; outgoing: OutgoingPending[]; connections: Connection[] }>("/api/external-chat/connections");
       setIncoming(data.incoming || []);
+      setOutgoingRequests(data.outgoing || []);
       setConnections(data.connections || []);
     } catch (err) {
       handleApiError(err, "Failed to load connections");
     }
   }, [authCooldownUntil, authLoaded, authUserId, handleApiError]);
+
+  const loadCallHistory = useCallback(async () => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
+    setLoadingCalls(true);
+    try {
+      const data = await api<{ sessions: CallHistoryItem[] }>("/api/external-chat/calls?scope=all");
+      setCallHistory(data.sessions || []);
+    } catch {
+      // Ignore background call history load errors
+    } finally {
+      setLoadingCalls(false);
+    }
+  }, [authCooldownUntil, authLoaded, authUserId]);
+
+  const loadStarredMessages = useCallback(async () => {
+    if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
+    try {
+      const data = await api<{ starred: ServerStarredItem[] }>("/api/external-chat/starred");
+      const items = data.starred || [];
+      setServerStarred(items);
+      setBookmarkedMessageIds(items.map((item) => item.id));
+    } catch {
+      // Fall back to local bookmarks if offline
+    }
+  }, [authCooldownUntil, authLoaded, authUserId]);
+
+  const loadUploadHints = useCallback(async () => {
+    try {
+      const data = await api<typeof uploadLimits>("/api/external-chat/uploads/sessions");
+      if (data?.maxMultipartUploadBytes) {
+        setUploadLimits(data);
+      }
+    } catch {
+      // Default upload limits already initialized
+    }
+  }, []);
 
   const loadRooms = useCallback(async (options?: { silent?: boolean }) => {
     if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
@@ -724,7 +1180,8 @@ export default function ExternalChatApp() {
       const data = await api<{ messages: Message[]; hasMore?: boolean; nextCursor?: string | null }>(
         `/api/external-chat/rooms/${encodeURIComponent(roomCode)}/messages?${q.toString()}`
       );
-      const nextMessages = data.messages || [];
+      const rawMessages = data.messages || [];
+      const nextMessages = await decryptMessagesForRoom(rawMessages, roomCode);
       if (appendOlder) {
         setMessages((prev) => [...nextMessages, ...prev]);
       } else {
@@ -767,7 +1224,7 @@ export default function ExternalChatApp() {
         setLoadingMessages(false);
       }
     }
-  }, [authCooldownUntil, authLoaded, authUserId, emit, handleApiError, pinnedOnly, search, selfUserId]);
+  }, [authCooldownUntil, authLoaded, authUserId, decryptMessagesForRoom, emit, handleApiError, pinnedOnly, search, selfUserId]);
 
   const scheduleRealtimeRefresh = useCallback(() => {
     if (!authLoaded || !authUserId || authCooldownUntil > Date.now()) return;
@@ -782,18 +1239,93 @@ export default function ExternalChatApp() {
   }, [activeRoomCode, authCooldownUntil, authLoaded, authUserId, loadConnections, loadMessages, loadRooms]);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setPushPermission(Notification.permission);
+    }
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!authReady || setupRequired || authCoolingDown) return;
     let cancelled = false;
     const bootstrap = async () => {
       const profileLoaded = await loadProfile();
       if (!profileLoaded || cancelled) return;
-      await Promise.all([loadConnections(), loadRooms()]);
+      await Promise.all([
+        loadConnections(),
+        loadRooms(),
+        loadStarredMessages(),
+        loadUploadHints(),
+        loadCallHistory(),
+      ]);
     };
     void bootstrap();
     return () => {
       cancelled = true;
     };
-  }, [authCoolingDown, authReady, loadConnections, loadProfile, loadRooms, setupRequired]);
+  }, [authCoolingDown, authReady, loadCallHistory, loadConnections, loadProfile, loadRooms, loadStarredMessages, loadUploadHints, setupRequired]);
+
+  useEffect(() => {
+    if (!authReady || setupRequired || authCoolingDown) return;
+    let cancelled = false;
+    const checkIncoming = async () => {
+      try {
+        const res = await fetch("/api/external-chat/calls/receiver", { credentials: "same-origin", cache: "no-store" });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { activeCall: IncomingCallData | null };
+        if (cancelled) return;
+        const next = data.activeCall;
+        if (next && !dismissedCallIdsRef.current.has(next.id)) {
+          setIncomingCall((cur) => (cur?.id === next.id ? cur : next));
+          if (!notifiedCallIdsRef.current.has(next.id)) {
+            notifiedCallIdsRef.current.add(next.id);
+            const callerName = next.starter?.name || next.starter?.email || "Someone";
+            void showBrowserNotification(
+              `Incoming ${next.type === "video" ? "Video" : "Audio"} Call`,
+              `${callerName} is calling you`,
+              `call-${next.id}`,
+              `/external-chat/calls/${next.id}?video=${next.type === "video" ? "1" : "0"}&audio=1`
+            );
+          }
+        } else if (!next) {
+          setIncomingCall(null);
+        }
+      } catch {
+        // Ignore transient poll failures
+      }
+    };
+    void checkIncoming();
+    const timer = setInterval(() => void checkIncoming(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [authCoolingDown, authReady, setupRequired, showBrowserNotification]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setRemoteTypingByRoom((prev) => {
+        let changed = false;
+        const next: typeof prev = {};
+        for (const [rc, users] of Object.entries(prev)) {
+          const active: Record<string, { name: string; expiresAt: number }> = {};
+          for (const [uid, entry] of Object.entries(users)) {
+            if (entry.expiresAt > now) {
+              active[uid] = entry;
+            } else {
+              changed = true;
+            }
+          }
+          if (Object.keys(active).length > 0) next[rc] = active;
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!authReady || !activeRoomCode || setupRequired || authCoolingDown) return;
@@ -835,8 +1367,51 @@ export default function ExternalChatApp() {
     s.onmessage = (event) => {
       let eventType = "";
       try {
-        const body = JSON.parse(event.data) as { senderId?: string; payload?: { type?: string; user?: UserRow } };
+        const body = JSON.parse(event.data) as {
+          senderId?: string;
+          payload?: {
+            type?: string;
+            user?: UserRow;
+            isTyping?: boolean;
+            callId?: string;
+          };
+        };
         eventType = body.payload?.type || "";
+
+        if (eventType === "typing" && body.senderId && selfUserId && body.senderId !== selfUserId) {
+          const typingName = body.payload?.user ? userLabel(body.payload.user) : "Someone";
+          const isTyping = body.payload?.isTyping !== false;
+          setRemoteTypingByRoom((prev) => {
+            const roomEntry = { ...(prev[activeRoomCode] || {}) };
+            if (!isTyping) {
+              delete roomEntry[body.senderId!];
+            } else {
+              roomEntry[body.senderId!] = { name: typingName, expiresAt: Date.now() + 3500 };
+            }
+            return { ...prev, [activeRoomCode]: roomEntry };
+          });
+          return;
+        }
+
+        if (eventType === "call_ringing" && body.senderId !== selfUserId) {
+          fetch("/api/external-chat/calls/receiver", { credentials: "same-origin", cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d: { activeCall?: IncomingCallData | null } | null) => {
+              if (d?.activeCall && !dismissedCallIdsRef.current.has(d.activeCall.id)) {
+                setIncomingCall(d.activeCall);
+              }
+            })
+            .catch(() => undefined);
+          return;
+        }
+
+        if ((eventType === "call_ended" || eventType === "call_declined") && body.payload?.callId) {
+          const endedCallId = body.payload.callId;
+          setIncomingCall((cur) => (cur?.id === endedCallId ? null : cur));
+          void loadCallHistory();
+          return;
+        }
+
         if (body.senderId && selfUserId && body.senderId !== selfUserId && body.payload?.type) {
           const titleMap: Record<string, string> = {
             message: "New message",
@@ -849,6 +1424,13 @@ export default function ExternalChatApp() {
               title,
               message: activeRoom?.name || "Current room",
             });
+            if (body.payload.type === "message" && typeof document !== "undefined" && document.hidden && browserNotifications) {
+              void showBrowserNotification(
+                activeRoom?.name || "New message",
+                "You received a new message in AIConnect",
+                `msg-${activeRoomCode}`
+              );
+            }
           }
         }
         if (body.payload?.type === "profile" && body.payload.user) {
@@ -902,7 +1484,7 @@ export default function ExternalChatApp() {
       s.close();
       eventRef.current = null;
     };
-  }, [activeRoom?.name, activeRoomCode, authCoolingDown, authReady, loadMessages, pushNotification, scheduleRealtimeRefresh, selfUserId, setupRequired]);
+  }, [activeRoom?.name, activeRoomCode, authCoolingDown, authReady, browserNotifications, loadCallHistory, loadMessages, pushNotification, rooms, scheduleRealtimeRefresh, selfUserId, setupRequired, showBrowserNotification]);
 
   useEffect(() => {
     const q = query.trim();
@@ -949,6 +1531,12 @@ export default function ExternalChatApp() {
         privacyModeOn?: boolean;
         bookmarkedMessageIds?: string[];
         fontScale?: "sm" | "md" | "lg";
+        wallpaperPreset?: WallpaperPresetId;
+        customWallpaperColor?: string;
+        customWallpaperImage?: string;
+        preferredLanguage?: string;
+        autoTranslate?: boolean;
+        browserNotifications?: boolean;
       };
       if (Array.isArray(prefs.starred)) setStarredRoomCodes(prefs.starred);
       if (Array.isArray(prefs.hiddenRoomCodes)) setHiddenRoomCodes(prefs.hiddenRoomCodes);
@@ -958,6 +1546,12 @@ export default function ExternalChatApp() {
       if (typeof prefs.privacyModeOn === "boolean") setPrivacyModeOn(prefs.privacyModeOn);
       if (Array.isArray(prefs.bookmarkedMessageIds)) setBookmarkedMessageIds(prefs.bookmarkedMessageIds);
       if (prefs.fontScale) setFontScale(prefs.fontScale);
+      if (prefs.wallpaperPreset) setWallpaperPreset(prefs.wallpaperPreset);
+      if (typeof prefs.customWallpaperColor === "string") setCustomWallpaperColor(prefs.customWallpaperColor);
+      if (typeof prefs.customWallpaperImage === "string") setCustomWallpaperImage(prefs.customWallpaperImage);
+      if (typeof prefs.preferredLanguage === "string") setPreferredLanguage(prefs.preferredLanguage);
+      if (typeof prefs.autoTranslate === "boolean") setAutoTranslate(prefs.autoTranslate);
+      if (typeof prefs.browserNotifications === "boolean") setBrowserNotifications(prefs.browserNotifications);
     } catch {
       // ignore bad local prefs
     } finally {
@@ -979,12 +1573,18 @@ export default function ExternalChatApp() {
           privacyModeOn,
           bookmarkedMessageIds,
           fontScale,
+          wallpaperPreset,
+          customWallpaperColor,
+          customWallpaperImage,
+          preferredLanguage,
+          autoTranslate,
+          browserNotifications,
         })
       );
     } catch {
       // ignore localStorage failures
     }
-  }, [prefsLoaded, starredRoomCodes, hiddenRoomCodes, filterTab, compactMode, notificationSoundOn, privacyModeOn, bookmarkedMessageIds, fontScale]);
+  }, [prefsLoaded, starredRoomCodes, hiddenRoomCodes, filterTab, compactMode, notificationSoundOn, privacyModeOn, bookmarkedMessageIds, fontScale, wallpaperPreset, customWallpaperColor, customWallpaperImage, preferredLanguage, autoTranslate, browserNotifications]);
 
   useEffect(() => {
     draftByRoomRef.current = draftByRoom;
@@ -1585,24 +2185,207 @@ export default function ExternalChatApp() {
     }
   };
 
+  const abortMultipartUpload = async () => {
+    multipartAbortRef.current = true;
+    multipartPauseRef.current = false;
+    const sessionId = multipartProgress?.sessionId;
+    if (sessionId) {
+      await fetch(`/api/external-chat/uploads/sessions/${encodeURIComponent(sessionId)}/abort`, {
+        method: "POST",
+        credentials: "same-origin",
+      }).catch(() => undefined);
+    }
+    setMultipartProgress(null);
+    setUploading(false);
+  };
+
   const uploadFileAttachment = async (file: File) => {
     if (!file || !activeRoom) return;
     if (!canSendInActiveRoom) {
       setError("This conversation is read-only for you.");
       return;
     }
+    if (file.size > uploadLimits.maxMultipartUploadBytes) {
+      setError("File exceeds maximum allowed limit of 10 GB.");
+      return;
+    }
+
+    if (file.size <= uploadLimits.directUploadLimitBytes) {
+      setUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("roomId", activeRoom.id);
+        fd.append("roomCode", activeRoom.code);
+        const res = await fetch("/api/external-chat/upload", { method: "POST", body: fd });
+        const body = (await res.json().catch(() => ({}))) as { attachment?: { id: string; fileName: string; downloadUrl: string }; error?: string };
+        if (!res.ok || !body.attachment) throw new Error(body.error || "Upload failed");
+        setAttachment(body.attachment);
+      } catch (err) {
+        handleApiError(err, "Upload failed");
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    // Large file (up to 10 GB): Resumable chunked streaming multipart upload
+    const resumeStorageKey = `aiconnect-upload:${activeRoom.code}:${file.name}:${file.size}:${file.lastModified}`;
+    multipartAbortRef.current = false;
+    multipartPauseRef.current = false;
     setUploading(true);
+
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("roomId", activeRoom.id);
-      fd.append("roomCode", activeRoom.code);
-      const res = await fetch("/api/external-chat/upload", { method: "POST", body: fd });
-      const body = (await res.json().catch(() => ({}))) as { attachment?: { id: string; fileName: string; downloadUrl: string }; error?: string };
-      if (!res.ok || !body.attachment) throw new Error(body.error || "Upload failed");
-      setAttachment(body.attachment);
+      let sessionId: string | null = null;
+      let chunkSizeBytes = uploadLimits.recommendedChunkSizeBytes || 16 * 1024 * 1024;
+      let totalChunks = Math.ceil(file.size / chunkSizeBytes);
+      const uploadedPartNumbers = new Set<number>();
+
+      try {
+        const savedId = localStorage.getItem(resumeStorageKey);
+        if (savedId) {
+          const progressRes = await fetch(`/api/external-chat/uploads/sessions/${encodeURIComponent(savedId)}`, {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          if (progressRes.ok) {
+            const pData = (await progressRes.json()) as {
+              sessionId: string;
+              status: string;
+              chunkSizeBytes: number;
+              totalChunks: number;
+              uploadedParts?: Array<{ partNumber: number }>;
+            };
+            if (pData.status === "initiated" || pData.status === "uploading") {
+              sessionId = pData.sessionId;
+              chunkSizeBytes = pData.chunkSizeBytes;
+              totalChunks = pData.totalChunks;
+              for (const part of pData.uploadedParts || []) {
+                uploadedPartNumbers.add(part.partNumber);
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore stale resume lookup and start fresh session
+      }
+
+      if (!sessionId) {
+        const startRes = await api<{
+          session: { id: string; chunkSizeBytes: number; totalChunks: number };
+        }>("/api/external-chat/uploads/sessions", {
+          method: "POST",
+          body: JSON.stringify({
+            roomCode: activeRoom.code,
+            fileName: file.name,
+            mimeType: file.type || "application/octet-stream",
+            totalSizeBytes: file.size,
+            chunkSizeBytes,
+          }),
+        });
+        sessionId = startRes.session.id;
+        chunkSizeBytes = startRes.session.chunkSizeBytes;
+        totalChunks = startRes.session.totalChunks;
+        try {
+          localStorage.setItem(resumeStorageKey, sessionId);
+        } catch {
+          // ignore quota error
+        }
+      }
+
+      let completedParts = uploadedPartNumbers.size;
+      let uploadedBytes = Math.min(file.size, completedParts * chunkSizeBytes);
+      setMultipartProgress({
+        active: true,
+        paused: false,
+        fileName: file.name,
+        fileSize: file.size,
+        uploadedBytes,
+        completedParts,
+        totalParts: totalChunks,
+        sessionId,
+        roomCode: activeRoom.code,
+      });
+
+      const missingParts: number[] = [];
+      for (let p = 1; p <= totalChunks; p += 1) {
+        if (!uploadedPartNumbers.has(p)) missingParts.push(p);
+      }
+
+      const uploadOnePart = async (partNumber: number) => {
+        const start = (partNumber - 1) * chunkSizeBytes;
+        const end = Math.min(file.size, start + chunkSizeBytes);
+        const slice = file.slice(start, end);
+
+        let attempts = 0;
+        while (attempts < 3) {
+          if (multipartAbortRef.current) throw new Error("Upload canceled");
+          while (multipartPauseRef.current) {
+            if (multipartAbortRef.current) throw new Error("Upload canceled");
+            await new Promise((r) => setTimeout(r, 300));
+          }
+          try {
+            const partRes = await fetch(
+              `/api/external-chat/uploads/sessions/${encodeURIComponent(sessionId!)}/parts/${partNumber}`,
+              {
+                method: "PUT",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: slice,
+                credentials: "same-origin",
+              }
+            );
+            if (!partRes.ok) {
+              const errData = (await partRes.json().catch(() => ({}))) as { error?: string };
+              throw new Error(errData.error || `Chunk ${partNumber} failed`);
+            }
+            completedParts += 1;
+            uploadedBytes = Math.min(file.size, uploadedBytes + slice.size);
+            setMultipartProgress((cur) =>
+              cur ? { ...cur, completedParts, uploadedBytes } : cur
+            );
+            return;
+          } catch (chunkErr) {
+            attempts += 1;
+            if (attempts >= 3 || multipartAbortRef.current) throw chunkErr;
+            await new Promise((r) => setTimeout(r, 700 * attempts));
+          }
+        }
+      };
+
+      const concurrency = 2;
+      let cursor = 0;
+      const workers = Array.from({ length: Math.min(concurrency, missingParts.length) }, async () => {
+        while (cursor < missingParts.length) {
+          if (multipartAbortRef.current) return;
+          const idx = cursor;
+          cursor += 1;
+          await uploadOnePart(missingParts[idx]);
+        }
+      });
+      await Promise.all(workers);
+
+      if (multipartAbortRef.current) return;
+
+      const completeData = await api<{ attachment: { id: string; fileName: string; downloadUrl: string } }>(
+        `/api/external-chat/uploads/sessions/${encodeURIComponent(sessionId)}/complete`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        }
+      );
+      try {
+        localStorage.removeItem(resumeStorageKey);
+      } catch {
+        // ignore
+      }
+      setAttachment(completeData.attachment);
+      setMultipartProgress(null);
+      pushNotification({ level: "success", title: "Large upload ready", message: file.name });
     } catch (err) {
-      handleApiError(err, "Upload failed");
+      if (!multipartAbortRef.current) {
+        handleApiError(err, "Resumable upload failed (you can re-select the file to resume)");
+      }
+      setMultipartProgress(null);
     } finally {
       setUploading(false);
     }
@@ -1623,6 +2406,7 @@ export default function ExternalChatApp() {
     }
     if (undoSend && undoTimerRef.current) {
       clearTimeout(undoTimerRef.current);
+      if (undoBannerTimerRef.current) clearTimeout(undoBannerTimerRef.current);
       const pending = messages.find((m) => m.id === undoSend.tempId);
       if (pending) {
         const queuedPoll = pending.type === "poll" ? (pollMeta(pending.metadata) as { question: string; options: string[] } | null) : null;
@@ -1668,8 +2452,9 @@ export default function ExternalChatApp() {
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     setUndoSend({ tempId, until: Date.now() + 4000 });
+    if (undoBannerTimerRef.current) clearTimeout(undoBannerTimerRef.current);
+    undoBannerTimerRef.current = setTimeout(() => setUndoSend((cur) => (cur?.tempId === tempId ? null : cur)), 4000);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    undoTimerRef.current = setTimeout(() => setUndoSend((cur) => (cur?.tempId === tempId ? null : cur)), 4000);
     undoTimerRef.current = setTimeout(() => {
       void submitQueuedMessage({
         tempId,
@@ -1722,15 +2507,27 @@ export default function ExternalChatApp() {
       setMessages((prev) =>
         prev.map((m) => (m.id === tempId ? { ...m, failed: false, optimistic: true } : m))
       );
+      let outgoingContent = msg.content;
+      let e2eeEnvelope: E2EEEnvelope | null = null;
+      if (activeRoom?.e2eeEnabled && msg.content && msg.type !== "poll") {
+        const roomKey = await resolveRoomAesKey(activeRoomCode);
+        if (roomKey) {
+          e2eeEnvelope = await encryptMessageText(msg.content, roomKey, {
+            senderPublicKey: e2eeIdentityRef.current?.publicKeyJwkString,
+          });
+          outgoingContent = "[Encrypted message]";
+        }
+      }
       await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoomCode)}/messages`, {
         method: "POST",
         body: JSON.stringify({
-          content: msg.content,
+          content: outgoingContent,
           type: msg.type,
           replyToId: msg.replyToId,
           attachmentId: msg.attachment?.id || null,
           noteColor: msg.type === "note" ? noteColorFromMetadata(msg.metadata) : undefined,
           poll: msg.type === "poll" ? pollMeta(msg.metadata) : null,
+          e2ee: e2eeEnvelope,
         }),
       });
       await emit({ type: "message" });
@@ -1802,34 +2599,54 @@ export default function ExternalChatApp() {
     }
   };
 
+  const getPeerRelation = useCallback(
+    (targetUser: UserRow) => {
+      const conn = connections.find(
+        (c) => c.userA.id === targetUser.id || c.userB.id === targetUser.id
+      );
+      if (conn) {
+        return { kind: "connected" as const, roomCode: conn.directRoom.code, connectionId: conn.id };
+      }
+      const inc = incoming.find((r) => r.sender.id === targetUser.id);
+      if (inc) {
+        return { kind: "incoming" as const, requestId: inc.id };
+      }
+      const out = outgoingRequests.find((r) => r.receiver.id === targetUser.id);
+      if (out) {
+        return { kind: "outgoing" as const, requestId: out.id };
+      }
+      return { kind: "none" as const };
+    },
+    [connections, incoming, outgoingRequests]
+  );
+
   const startDirectMessageWithUser = async (targetUser: UserRow) => {
     if (!targetUser || !targetUser.clerkId) {
       setError("Invalid user");
       return;
     }
-
-    try {
-      const roomName = targetUser.name || targetUser.email?.split("@")[0] || "Chat";
-
-      const data = await api<{ room: Room }>("/api/external-chat/rooms", {
-        method: "POST",
-        body: JSON.stringify({
-          name: roomName,
-          type: "direct",
-          memberClerkIds: [targetUser.clerkId],
-        }),
-      });
-
-      await loadRooms();
-      setActiveRoomCode(data.room.code);
-      pushNotification({
-        level: "success",
-        title: "Chat Started",
-        message: `Conversation with ${roomName}`
-      });
-    } catch (err) {
-      handleApiError(err, "Failed to start direct message");
+    const rel = getPeerRelation(targetUser);
+    if (rel.kind === "connected") {
+      setActiveRoomCode(rel.roomCode);
+      setQuery("");
+      setNavSection("chats");
+      setMobileSidebarOpen(false);
+      return;
     }
+    if (rel.kind === "incoming") {
+      await actRequest(rel.requestId, "accept");
+      setQuery("");
+      return;
+    }
+    if (rel.kind === "outgoing") {
+      pushNotification({
+        level: "info",
+        title: "Request already sent",
+        message: `Waiting for ${userLabel(targetUser)} to accept your message request.`,
+      });
+      return;
+    }
+    await sendRequest(targetUser.clerkId);
   };
 
   const createMeeting = () => {
@@ -1971,6 +2788,16 @@ export default function ExternalChatApp() {
       return;
     }
     setText(value);
+    if (activeRoomCode && canSendInActiveRoom) {
+      const now = Date.now();
+      if (!value.trim()) {
+        lastTypingEmitRef.current = 0;
+        void emit({ type: "typing", isTyping: false, user: selfUser });
+      } else if (now - lastTypingEmitRef.current > 1400) {
+        lastTypingEmitRef.current = now;
+        void emit({ type: "typing", isTyping: true, user: selfUser });
+      }
+    }
     const ta = textareaRef.current;
     if (!ta) {
       setMentionOpen(false);
@@ -2078,6 +2905,7 @@ export default function ExternalChatApp() {
     setMessages((prev) => prev.filter((m) => m.id !== undoSend.tempId));
     setUndoSend(null);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    if (undoBannerTimerRef.current) clearTimeout(undoBannerTimerRef.current);
   };
 
   const submitQueuedMessage = useCallback(
@@ -2097,19 +2925,36 @@ export default function ExternalChatApp() {
       }
       try {
         setSending(true);
+        const targetRoom = roomsRef.current.find((r) => r.code === payload.roomCode);
+        let outgoingContent = payload.content;
+        let e2eeEnvelope: E2EEEnvelope | null = null;
+
+        if (targetRoom?.e2eeEnabled && payload.content && payload.type !== "poll") {
+          const roomKey = await resolveRoomAesKey(payload.roomCode);
+          if (roomKey) {
+            e2eeEnvelope = await encryptMessageText(payload.content, roomKey, {
+              senderPublicKey: e2eeIdentityRef.current?.publicKeyJwkString,
+            });
+            outgoingContent = "[Encrypted message]";
+          }
+        }
+
         await api(`/api/external-chat/rooms/${encodeURIComponent(payload.roomCode)}/messages`, {
           method: "POST",
           body: JSON.stringify({
-            content: payload.content,
+            content: outgoingContent,
             type: payload.type,
             replyToId: payload.replyToId,
             attachmentId: payload.attachment?.id || null,
             noteColor: payload.type === "note" ? payload.noteColor || "amber" : undefined,
             poll: payload.poll,
+            e2ee: e2eeEnvelope,
           }),
         });
         setMessages((prev) => prev.filter((m) => m.id !== payload.tempId));
         setText("");
+        lastTypingEmitRef.current = 0;
+        void emit({ type: "typing", isTyping: false, user: selfUser });
         setDraftByRoom((prev) => {
           const next = { ...prev, [payload.roomCode]: "" };
           try {
@@ -2138,7 +2983,121 @@ export default function ExternalChatApp() {
         setUndoSend((cur) => (cur?.tempId === payload.tempId ? null : cur));
       }
     },
-    [canSendInActiveRoom, emit, handleApiError, loadMessages, loadRooms]
+    [canSendInActiveRoom, emit, handleApiError, loadMessages, loadRooms, resolveRoomAesKey, selfUser]
+  );
+
+  const toggleRoomE2ee = async () => {
+    if (!activeRoom) return;
+    const nextEnabled = !Boolean(activeRoom.e2eeEnabled);
+    try {
+      const entries: Array<{ userId: string; wrappedKey: string }> = [];
+      let senderPublicKey = e2eeIdentityRef.current?.publicKeyJwkString;
+      if (nextEnabled && isWebCryptoSupported() && selfUserId) {
+        let identity = e2eeIdentityRef.current;
+        if (!identity) {
+          const generated = await ensureIdentityKeyPair(selfUserId);
+          identity = { publicKeyJwkString: generated.publicKeyJwkString, privateKey: generated.privateKey };
+          e2eeIdentityRef.current = identity;
+        }
+        senderPublicKey = identity.publicKeyJwkString;
+        const roomKey = await generateGroupAesKey();
+        e2eeRoomKeysRef.current.set(activeRoom.code, roomKey);
+
+        const keysRes = await api<{ memberKeys: Array<{ id: string; e2eePublicKey: string | null }> }>(
+          `/api/external-chat/rooms/${encodeURIComponent(activeRoom.code)}/keys`
+        );
+        for (const member of keysRes.memberKeys || []) {
+          if (!member.e2eePublicKey) continue;
+          const wrappedKey = await wrapGroupKeyForMember({
+            groupKey: roomKey,
+            myPrivateKey: identity.privateKey,
+            memberPublicKeyJwkString: member.e2eePublicKey,
+            roomCode: activeRoom.code,
+          });
+          entries.push({ userId: member.id, wrappedKey });
+        }
+      }
+
+      await api(`/api/external-chat/rooms/${encodeURIComponent(activeRoom.code)}/keys`, {
+        method: "POST",
+        body: JSON.stringify({
+          e2eeEnabled: nextEnabled,
+          senderPublicKey,
+          keyVersion: 1,
+          entries,
+        }),
+      });
+      await loadRooms({ silent: true });
+      pushNotification({
+        level: "success",
+        title: nextEnabled ? "End-to-End Encryption Enabled" : "End-to-End Encryption Disabled",
+        message: nextEnabled ? "Messages are encrypted locally in your browser." : "Standard transport encryption active.",
+      });
+    } catch (err) {
+      handleApiError(err, "Failed to update encryption setting");
+    }
+  };
+
+  const translateMessageById = async (m: Message) => {
+    const existing = translatedByMsgId[m.id];
+    if (existing && existing.targetLanguage === preferredLanguage && !existing.loading) {
+      setTranslatedByMsgId((prev) => ({
+        ...prev,
+        [m.id]: { ...existing, showOriginal: !existing.showOriginal },
+      }));
+      return;
+    }
+    setTranslatedByMsgId((prev) => ({
+      ...prev,
+      [m.id]: { translatedText: "", targetLanguage: preferredLanguage, loading: true, showOriginal: false },
+    }));
+    try {
+      const res = await api<{ translatedText: string; detectedSourceLanguage?: string; targetLanguage: string }>(
+        "/api/external-chat/messages/translate",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            messageId: m.id.startsWith("temp-") ? undefined : m.id,
+            text: m.content,
+            targetLanguage: preferredLanguage,
+          }),
+        }
+      );
+      setTranslatedByMsgId((prev) => ({
+        ...prev,
+        [m.id]: {
+          translatedText: res.translatedText,
+          detectedSourceLanguage: res.detectedSourceLanguage,
+          targetLanguage: res.targetLanguage,
+          loading: false,
+          showOriginal: false,
+        },
+      }));
+    } catch (err) {
+      setTranslatedByMsgId((prev) => {
+        const next = { ...prev };
+        delete next[m.id];
+        return next;
+      });
+      handleApiError(err, "Translation failed");
+    }
+  };
+
+  const persistProfilePreferences = useCallback(
+    async (patch: Record<string, unknown>, lang?: string) => {
+      try {
+        await api("/api/external-chat/profile", {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...(lang ? { preferredLanguage: lang } : {}),
+            chatPreferences: patch,
+          }),
+        });
+      } catch {
+        // Ignore transient profile save issues; local cache still holds prefs
+      }
+    },
+    []
   );
 
   const markRoomRead = async () => {
@@ -2163,6 +3122,14 @@ export default function ExternalChatApp() {
     setBookmarkedMessageIds((prev) =>
       prev.includes(messageId) ? prev.filter((id) => id !== messageId) : [...prev, messageId]
     );
+    if (!messageId.startsWith("temp-")) {
+      void api("/api/external-chat/starred", {
+        method: "POST",
+        body: JSON.stringify({ messageId }),
+      })
+        .then(() => loadStarredMessages())
+        .catch(() => undefined);
+    }
   };
 
   const openMessageActions = (messageId: string) => {
@@ -2317,85 +3284,256 @@ export default function ExternalChatApp() {
   return (
     <div className="whatsapp-scrollbar">
       <ChatShell className="whatsapp-shell">
-        <ChatPanel className="hidden p-3 xl:flex flex-col h-full whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80">
-          <div className="mb-3 flex items-center justify-between gap-2">
+        <ChatPanel className="hidden p-3 xl:flex flex-col h-full min-h-0 whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80">
+          <div className="mb-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-[#25D366]" />
-              <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Conversations</p>
+              <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">AI Connect</p>
             </div>
             <ThemeToggle />
           </div>
 
-
-          <div className="mb-3 space-y-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/35 dark:bg-[#2A3942]/35 p-2">
-            <div className="flex gap-2">
-              <div className="relative min-w-[180px] flex-1">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                <Input className="pl-8 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search users..." />
-              </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
-                <PlusCircle className="mr-1 h-4 w-4" />
-                Group
-              </Button>
-            </div>
-            <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#E9EDEF] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
-              {searching ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Searching...</p> : null}
-              {results.map((u) => (
-                <div key={u.id} className="flex items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/65 dark:bg-[#1F2C33]/65 px-2 py-1.5">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]">{userLabel(u)}</p>
-                    <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">{u.email || "No email provided"}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "outline"}
-                      onClick={() => toggleGroupMember(u.clerkId)}
-                      className={selectedGroupMemberIds.includes(u.clerkId) ? "bg-[#25D366] hover:bg-[#128C7E]" : "border-[#E9EDEF] dark:border-[#2A3942]"}
-                    >
-                      <PlusCircle className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void startDirectMessageWithUser(u)}
-                      className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]"
-                      title="Start 1:1 Conversation"
-                    >
-                      <MessageSquare className="h-4 w-4 text-[#25D366]" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {selectedGroupMemberIds.length > 0 ? (
-              <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">{selectedGroupMemberIds.length} selected for group creation</p>
-            ) : null}
+          <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/50 dark:bg-[#2A3942]/40 p-1">
+            {[
+              { id: "chats" as const, label: "Chats", icon: MessageSquare },
+              { id: "calls" as const, label: "Calls", icon: History },
+              { id: "status" as const, label: "Status", icon: CircleDot },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = navSection === tab.id;
+              return (
+                <button
+                  key={`desktop-nav-${tab.id}`}
+                  type="button"
+                  onClick={() => {
+                    setNavSection(tab.id);
+                    if (tab.id === "calls") void loadCallHistory();
+                  }}
+                  className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                    active
+                      ? "bg-[#25D366] text-white shadow-sm"
+                      : "text-[#667781] dark:text-[#AEBAC1] hover:bg-white/70 dark:hover:bg-[#1F2C33]"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
 
-          <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
+          {navSection === "calls" ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="mb-2 flex flex-wrap gap-1">
+                {(["all", "missed", "incoming", "outgoing", "audio", "video"] as const).map((f) => (
+                  <button
+                    key={`call-filter-${f}`}
+                    type="button"
+                    onClick={() => setCallHistoryFilter(f)}
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] capitalize border transition ${
+                      callHistoryFilter === f
+                        ? "border-[#25D366] bg-[#25D366] text-white"
+                        : "border-[#E9EDEF] dark:border-[#2A3942] text-[#667781] dark:text-[#AEBAC1]"
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
+                {loadingCalls ? (
+                  <div className="flex items-center text-xs text-[#667781] dark:text-[#AEBAC1] py-4 justify-center">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" /> Loading call log...
+                  </div>
+                ) : null}
+                {callHistory
+                  .filter((c) => {
+                    const isOutgoing = c.startedBy === selfUserId;
+                    if (callHistoryFilter === "missed") return c.status === "missed";
+                    if (callHistoryFilter === "incoming") return !isOutgoing;
+                    if (callHistoryFilter === "outgoing") return isOutgoing;
+                    if (callHistoryFilter === "audio") return c.type === "audio";
+                    if (callHistoryFilter === "video") return c.type === "video";
+                    return true;
+                  })
+                  .map((c) => {
+                    const isOutgoing = c.startedBy === selfUserId;
+                    const peerMember = c.participants?.find((p) => p.userId !== selfUserId)?.user || c.starter;
+                    const title = c.room?.name || (peerMember ? userLabel(peerMember) : "Direct Call");
+                    const dur = c.durationSec ? formatDuration(c.durationSec * 1000) : null;
+                    return (
+                      <div
+                        key={`call-hist-${c.id}`}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 p-2.5 hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/40"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${c.status === "missed" ? "bg-red-500/15 text-red-500" : "bg-[#25D366]/15 text-[#25D366]"}`}>
+                            {c.status === "missed" ? (
+                              <PhoneMissed className="h-4 w-4" />
+                            ) : isOutgoing ? (
+                              <PhoneOutgoing className="h-4 w-4" />
+                            ) : (
+                              <PhoneIncoming className="h-4 w-4" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">{title}</p>
+                            <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">
+                              {c.type === "video" ? "Video" : "Audio"} · {c.status}
+                              {dur ? ` · ${dur}` : ""}
+                            </p>
+                            <p className="text-[10px] text-[#667781]/80 dark:text-[#AEBAC1]/80">
+                              {new Date(c.startedAt).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        {peerMember ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (c.room?.code) setActiveRoomCode(c.room.code);
+                              setActiveCall({ type: c.type, targetUser: peerMember });
+                            }}
+                            title={`Call back (${c.type})`}
+                            className="h-8 w-8 p-0 shrink-0 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                          >
+                            {c.type === "video" ? <Video className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                {!loadingCalls && callHistory.length === 0 ? (
+                  <p className="py-6 text-center text-xs text-[#667781] dark:text-[#AEBAC1]">No calls recorded yet.</p>
+                ) : null}
+              </div>
+            </div>
+          ) : navSection === "status" ? (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <StatusTabContent
+                userId={selfUserId || ""}
+                onViewStatus={(_status, index, allStatuses) => setStatusViewer({ statuses: allStatuses, initialIndex: index })}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="relative mb-3 space-y-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/35 dark:bg-[#2A3942]/35 p-2">
+                <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                    <Input className="pl-8 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find people or send request..." />
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)} className="shrink-0 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
+                    <PlusCircle className="mr-1 h-4 w-4" />
+                    Group
+                  </Button>
+                </div>
+                {query.trim() ? (
+                  <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg space-y-1">
+                    {searching ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Searching...</p> : null}
+                    {!searching && results.length === 0 ? (
+                      <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No users found matching &quot;{query.trim()}&quot;</p>
+                    ) : null}
+                    {results.map((u) => {
+                      const rel = getPeerRelation(u);
+                      return (
+                        <div key={u.id} className="flex items-center justify-between gap-2 rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/65 dark:bg-[#1F2C33]/65 px-2 py-1.5">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]">{userLabel(u)}</p>
+                            <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">{u.email || "No email provided"}</p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button
+                              size="sm"
+                              variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "outline"}
+                              onClick={() => toggleGroupMember(u.clerkId)}
+                              title="Add to new group selection"
+                              className={selectedGroupMemberIds.includes(u.clerkId) ? "bg-[#25D366] hover:bg-[#128C7E]" : "border-[#E9EDEF] dark:border-[#2A3942]"}
+                            >
+                              <PlusCircle className="h-3.5 w-3.5" />
+                            </Button>
+                            {rel.kind === "connected" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void startDirectMessageWithUser(u)}
+                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                                title="Open chat"
+                              >
+                                <MessageSquare className="h-3.5 w-3.5 mr-1" /> Chat
+                              </Button>
+                            ) : rel.kind === "incoming" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void actRequest(rel.requestId, "accept")}
+                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                              >
+                                Accept
+                              </Button>
+                            ) : rel.kind === "outgoing" ? (
+                              <Button size="sm" variant="outline" disabled className="text-[11px]">
+                                Pending
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => void sendRequest(u.clerkId)}
+                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                                title="Send message request"
+                              >
+                                <UserPlus className="h-3.5 w-3.5 mr-1" /> Request
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {selectedGroupMemberIds.length > 0 ? (
+                  <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">{selectedGroupMemberIds.length} selected for group creation</p>
+                ) : null}
+              </div>
 
-          <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-            {loadingRooms ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading chats...</div> : null}
-            {filteredRooms.map((room) => {
-              const starred = starredRoomCodes.includes(room.code);
-              return (
-                <div
-                  key={room.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setActiveRoomCode(room.code)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setActiveRoomCode(room.code);
-                    }
-                  }}
-                  onTouchStart={(e) => onConversationTouchStart(e.changedTouches[0]?.clientX ?? 0)}
-                  onTouchEnd={(e) => onConversationTouchEnd(e.changedTouches[0]?.clientX ?? 0, room.code)}
-                  className={`chat-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "chat-row-active" : "border-[#E9EDEF]/70 dark:border-[#2A3942]/70"
-                    } cursor-pointer`}
-                >
+              <div className="mb-2 relative">
+                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[#667781] dark:text-[#AEBAC1]" />
+                <Input
+                  className="h-8 pl-8 text-xs bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942]"
+                  value={desktopChatSearch}
+                  onChange={(e) => setDesktopChatSearch(e.target.value)}
+                  placeholder="Filter conversations..."
+                />
+              </div>
+
+              <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
+
+              <div className="flex-1 space-y-1 overflow-y-auto pr-1">
+                {loadingRooms ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading chats...</div> : null}
+                {!loadingRooms && filteredRooms.length === 0 ? (
+                  <p className="py-4 text-center text-xs text-[#667781] dark:text-[#AEBAC1]">No conversations match this view.</p>
+                ) : null}
+                {filteredRooms.map((room) => {
+                  const starred = starredRoomCodeSet.has(room.code);
+                  return (
+                    <div
+                      key={room.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setActiveRoomCode(room.code)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setActiveRoomCode(room.code);
+                        }
+                      }}
+                      onTouchStart={(e) => onConversationTouchStart(e.changedTouches[0]?.clientX ?? 0)}
+                      onTouchEnd={(e) => onConversationTouchEnd(e.changedTouches[0]?.clientX ?? 0, room.code)}
+                      className={`whatsapp-row-hover w-full rounded-lg border ${compactMode ? "px-2.5 py-1.5" : "px-3 py-2"} text-left transition-all ${activeRoomCode === room.code ? "whatsapp-row-active" : "border-[#E9EDEF]/70 dark:border-[#2A3942]/70"
+                        } cursor-pointer`}
+                    >
                   <div className="flex items-start gap-2">
                     <div className="relative">
                       <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-[#25D366]/15 text-xs font-semibold text-[#25D366]">
@@ -2475,7 +3613,9 @@ export default function ExternalChatApp() {
               </div>
             ) : null}
           </div>
-            <div className="flex items-center justify-between gap-2">
+          </>
+          )}
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 pt-2">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
                   <UserAvatar
@@ -2484,19 +3624,19 @@ export default function ExternalChatApp() {
                     fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]"
                   />
                 </div>
-                <div>
-                  <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">My Profile</p>
-                  <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">Account & preferences</p>
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">{selfUser?.name || "My Profile"}</p>
+                  <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">Settings, Wallpaper &amp; E2EE</p>
                 </div>
               </div>
-              <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+              <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Open Profile & Settings">
                 <Settings2 className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
               </Button>
             </div>
         </ChatPanel>
 
         <ChatPanel className={`flex min-h-0 flex-col ${infoPanelCollapsed ? "xl:col-span-2" : ""} whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80`}>
-          <div className="sticky top-0 z-10 border-b border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-3 backdrop-blur chat-header">
+          <div className="sticky top-0 z-10 border-b border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/85 dark:bg-[#1F2C33]/85 p-2.5 sm:p-3 backdrop-blur whatsapp-header">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <Button
@@ -2519,85 +3659,66 @@ export default function ExternalChatApp() {
                   <OnlineDot />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">{activeRoom?.name || "Select a conversation"}</p>
-                  <p className="truncate text-xs text-[#667781] dark:text-[#AEBAC1]">{activeRoomSubtitle}</p>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <p className="truncate text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">{activeRoom?.name || "Select a conversation"}</p>
+                    {activeRoom?.e2eeEnabled ? (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500" title="End-to-End Encrypted">
+                        <Lock className="h-2.5 w-2.5" /> E2EE
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="truncate text-xs text-[#667781] dark:text-[#AEBAC1]">
+                    {activeRoomTypingUsers.length > 0
+                      ? `${activeRoomTypingUsers.join(", ")} typing...`
+                      : activeRoomSubtitle}
+                  </p>
                 </div>
               </div>
-              <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1 md:gap-2">
-                <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")} className="hidden border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] md:inline-flex">
+              <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1 md:gap-1.5">
+                {activeRoom ? (
+                  <Button
+                    size="sm"
+                    variant={activeRoom.e2eeEnabled ? "default" : "outline"}
+                    onClick={() => void toggleRoomE2ee()}
+                    title={activeRoom.e2eeEnabled ? "Disable End-to-End Encryption" : "Enable End-to-End Encryption"}
+                    className={`h-8 px-2 ${activeRoom.e2eeEnabled ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "border-[#E9EDEF] dark:border-[#2A3942]"}`}
+                  >
+                    {activeRoom.e2eeEnabled ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5 text-[#667781] dark:text-[#AEBAC1]" />}
+                  </Button>
+                ) : null}
+                <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")} className="hidden h-8 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] md:inline-flex">
                   <LayoutDashboard className="h-4 w-4 text-[#25D366] xl:mr-1" /><span className="hidden xl:inline">Dashboard</span>
                 </Button>
                 <Button
                   size="sm"
                   variant={infoPanelCollapsed ? "outline" : "default"}
-                  className={`hidden xl:inline-flex ${infoPanelCollapsed ? "border-[#E9EDEF] dark:border-[#2A3942]" : "bg-[#25D366] hover:bg-[#128C7E] text-white"}`}
+                  className={`hidden h-8 xl:inline-flex ${infoPanelCollapsed ? "border-[#E9EDEF] dark:border-[#2A3942]" : "bg-[#25D366] hover:bg-[#128C7E] text-white"}`}
                   onClick={() => setInfoPanelCollapsed((v) => !v)}
                 >
                   {infoPanelCollapsed ? "Show Info" : "Hide Info"}
                 </Button>
-                <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="hidden md:inline-flex border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                <div className="relative">
+                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Incoming Requests">
                     <UserPlus className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
                   </Button>
                   {incoming.length > 0 ? (
-                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
+                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
                       {incoming.length > 9 ? "9+" : incoming.length}
                     </span>
                   ) : null}
-                  {incomingPanelOpen ? (
-                    <div className="fixed left-1/2 top-1/2 z-[100] w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-md border md:absolute md:right-0 md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:mt-1 md:w-72 border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
-                      <div className="mb-2 flex items-center justify-between">
-<p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Requests</p>
-<button type="button" onClick={() => setIncomingPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
-</div>
-                      <div className="max-h-64 space-y-1 overflow-y-auto">
-                        {incoming.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No pending requests</p> : null}
-                        {incoming.map((r) => (
-                          <div key={r.id} className="flex items-center justify-between rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1">
-                            <p className="truncate text-xs text-[#111B21] dark:text-[#E9EDEF]">{userLabel(r.sender)}</p>
-                            <div className="flex gap-1">
-                              <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "accept")}><Check className="h-4 w-4 text-[#25D366]" /></Button>
-                              <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "decline")}><X className="h-4 w-4 text-[#EF4444]" /></Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                </div>
+                <div className="relative">
+                  <Button size="sm" variant="outline" onClick={() => { setStarredPanelOpen((v) => !v); setIncomingPanelOpen(false); }} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Starred Messages">
+                    <Star className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                  </Button>
+                  {(serverStarred.length > 0 || bookmarkedMessages.length > 0) ? (
+                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
+                      {(serverStarred.length || bookmarkedMessages.length) > 9 ? "9+" : (serverStarred.length || bookmarkedMessages.length)}
+                    </span>
                   ) : null}
                 </div>
                 <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => { setStarredPanelOpen((v) => !v); setIncomingPanelOpen(false); }} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                    <Pin className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                  </Button>
-                  {bookmarkedMessages.length > 0 ? (
-                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
-                      {bookmarkedMessages.length > 9 ? "9+" : bookmarkedMessages.length}
-                    </span>
-                  ) : null}
-                  {starredPanelOpen ? (
-                    <div className="fixed left-1/2 top-1/2 z-[100] w-[90vw] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-md border md:absolute md:right-0 md:top-auto md:left-auto md:translate-x-0 md:translate-y-0 md:mt-1 md:w-72 border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg">
-                      <div className="mb-2 flex items-center justify-between">
-<p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
-<button type="button" onClick={() => setStarredPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
-</div>
-                      <div className="max-h-64 space-y-1 overflow-y-auto">
-                        {bookmarkedMessages.length === 0 ? <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">No starred messages</p> : null}
-                        {bookmarkedMessages.slice(-10).reverse().map((m) => (
-                          <button
-                            key={`header-starred-${m.id}`}
-                            type="button"
-                            onClick={() => { scrollToMessageById(m.id); setStarredPanelOpen(false); }}
-                            className="w-full rounded border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1 text-left hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]/60"
-                          >
-                            <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-                <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
+                  <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Notifications">
                     <Bell className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
                   </Button>
                   {inAppNotifications.length > 0 ? (
@@ -2843,7 +3964,27 @@ export default function ExternalChatApp() {
 
           <div
             ref={messageListRef}
-            className={`min-h-0 flex-1 overflow-y-auto chat-doodle-bg p-3 ${dropActive ? "bg-[#25D366]/5" : ""}`}
+            className={`min-h-0 flex-1 overflow-y-auto ${wallpaperPreset === "doodle" ? "chat-doodle-bg" : ""} p-3 ${dropActive ? "bg-[#25D366]/5" : ""}`}
+            style={
+              wallpaperPreset === "minimal"
+                ? undefined
+                : wallpaperPreset === "emerald"
+                  ? { backgroundImage: "linear-gradient(135deg, rgba(6,78,59,0.22), rgba(15,23,42,0.28))" }
+                  : wallpaperPreset === "ocean"
+                    ? { backgroundImage: "linear-gradient(135deg, rgba(15,23,42,0.28), rgba(22,78,99,0.28))" }
+                    : wallpaperPreset === "sunset"
+                      ? { backgroundImage: "linear-gradient(135deg, rgba(59,7,100,0.22), rgba(124,45,18,0.22))" }
+                      : wallpaperPreset === "custom"
+                        ? customWallpaperImage.trim()
+                          ? {
+                              backgroundColor: customWallpaperColor,
+                              backgroundImage: `url(${JSON.stringify(customWallpaperImage.trim())})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "center",
+                            }
+                          : { backgroundColor: customWallpaperColor }
+                        : undefined
+            }
             onScroll={(e) => {
               const el = e.currentTarget;
               const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -2917,11 +4058,11 @@ export default function ExternalChatApp() {
                       ref={(node) => {
                         messageNodeRefs.current[m.id] = node;
                       }}
-                      className={`group inline-flex h-auto w-auto max-w-[82%] flex-col items-start rounded-2xl border ${compactMode ? "p-2.5" : "p-3"} transition ${m.type === "note"
+                      className={`group inline-flex h-auto w-auto max-w-[88%] sm:max-w-[82%] flex-col items-start rounded-2xl border ${compactMode ? "px-2.5 py-1.5 text-[13px]" : "p-3"} transition ${m.type === "note"
                         ? noteColorClass
                         : own
-                          ? "chat-bubble-sent"
-                          : "chat-bubble-received"
+                          ? "whatsapp-bubble-sent"
+                          : "whatsapp-bubble-received"
                         } ${messageMatches[messageSearchIndex] === m.id ? "ring-2 ring-[#25D366]/70" : ""}`}
                       onTouchStart={() => startLongPress(m.id)}
                       onTouchEnd={clearLongPress}
@@ -2957,7 +4098,34 @@ export default function ExternalChatApp() {
                           </div>
                         </div>
                       ) : null}
-                      <p className={`${messageTextClass} whitespace-pre-wrap break-words text-[#111B21] dark:text-[#E9EDEF]`}>{renderMessageContent(m.content, search)}</p>
+                      <p className={`${messageTextClass} whitespace-pre-wrap break-words text-[#111B21] dark:text-[#E9EDEF]`}>
+                        {translatedByMsgId[m.id] && !translatedByMsgId[m.id].showOriginal && !translatedByMsgId[m.id].loading
+                          ? renderMessageContent(translatedByMsgId[m.id].translatedText, search)
+                          : renderMessageContent(m.content, search)}
+                      </p>
+                      {translatedByMsgId[m.id] ? (
+                        <div className="mt-1 flex items-center gap-2 text-[11px] text-[#667781] dark:text-[#AEBAC1]">
+                          {translatedByMsgId[m.id].loading ? (
+                            <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Translating...</span>
+                          ) : (
+                            <>
+                              <span>Translated to {translatedByMsgId[m.id].targetLanguage.toUpperCase()}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setTranslatedByMsgId((prev) => ({
+                                    ...prev,
+                                    [m.id]: { ...prev[m.id], showOriginal: !prev[m.id]?.showOriginal },
+                                  }))
+                                }
+                                className="underline text-[#25D366]"
+                              >
+                                {translatedByMsgId[m.id].showOriginal ? "Show translation" : "Show original"}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
                       {m.attachment ? (
                         isImageAttachment(m.attachment) ? (
                           <button
@@ -3082,6 +4250,7 @@ export default function ExternalChatApp() {
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { setReplyToId(m.id); setMessageMenuOpenId(null); }}><Reply className="h-4 w-4" /> Reply</button>
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { openThread(m); setMessageMenuOpenId(null); }}><ChevronRight className="h-4 w-4" /> Thread</button>
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { toggleBookmark(m.id); setMessageMenuOpenId(null); }}>{bookmarkedMessageIds.includes(m.id) ? <StarOff className="h-4 w-4 text-[#25D366]" /> : <Star className="h-4 w-4" />} {bookmarkedMessageIds.includes(m.id) ? "Unstar" : "Star"}</button>
+                                <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { void translateMessageById(m); setMessageMenuOpenId(null); }}><Languages className="h-4 w-4 text-[#25D366]" /> Translate ({preferredLanguage.toUpperCase()})</button>
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { void copyMessageContent(m); setMessageMenuOpenId(null); }}>Copy Message</button>
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { void mutateMessage(m.id, { pinned: !Boolean(m.pinnedAt) }); setMessageMenuOpenId(null); }}>{m.pinnedAt ? "Unpin" : "Pin"}</button>
                                 <button className="flex w-full items-center gap-2 rounded px-2 py-1 text-sm text-[#111B21] dark:text-[#E9EDEF] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" onClick={() => { const next = window.prompt("Edit message", m.content); if (next !== null) void mutateMessage(m.id, { content: next }); setMessageMenuOpenId(null); }}>Edit</button>
@@ -3124,14 +4293,16 @@ export default function ExternalChatApp() {
                 </Button>
               </div>
             ) : null}
-            {text.trim() ? (
+            {activeRoomTypingUsers.length > 0 ? (
               <div className="mt-2 flex items-center gap-2 text-xs text-[#667781] dark:text-[#AEBAC1]">
                 <span className="inline-flex items-center gap-1">
                   <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#25D366] [animation-delay:-0.2s]" />
                   <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#25D366] [animation-delay:-0.1s]" />
                   <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#25D366]" />
                 </span>
-                <span>You are typing...</span>
+                <span>
+                  {activeRoomTypingUsers.join(", ")} {activeRoomTypingUsers.length === 1 ? "is" : "are"} typing...
+                </span>
               </div>
             ) : null}
           </div>
@@ -3145,7 +4316,46 @@ export default function ExternalChatApp() {
                   : "This conversation is read-only for your account."}
             </div>
           ) : null}
-          <form ref={composerFormRef} onSubmit={sendMessage} className="chat-composer border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-2 backdrop-blur">
+          {multipartProgress?.active ? (
+            <div className="border-t border-[#25D366]/30 bg-[#25D366]/10 px-3 py-2 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                <span className="truncate font-medium text-[#111B21] dark:text-[#E9EDEF]">
+                  Uploading {multipartProgress.fileName} ({multipartProgress.completedParts}/{multipartProgress.totalParts} parts · {formatBytes(multipartProgress.uploadedBytes)} / {formatBytes(multipartProgress.fileSize)})
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => {
+                      const nextPaused = !multipartPauseRef.current;
+                      multipartPauseRef.current = nextPaused;
+                      setMultipartProgress((cur) => (cur ? { ...cur, paused: nextPaused } : cur));
+                    }}
+                  >
+                    {multipartProgress.paused ? <><Play className="h-3 w-3 mr-1" /> Resume</> : <><Pause className="h-3 w-3 mr-1" /> Pause</>}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px] text-red-500"
+                    onClick={() => void abortMultipartUpload()}
+                  >
+                    <XCircle className="h-3 w-3 mr-1" /> Cancel
+                  </Button>
+                </div>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/15 dark:bg-white/15">
+                <div
+                  className="h-full bg-[#25D366] transition-all"
+                  style={{ width: `${Math.min(100, Math.round((multipartProgress.completedParts / Math.max(1, multipartProgress.totalParts)) * 100))}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+          <form ref={composerFormRef} onSubmit={sendMessage} className="whatsapp-composer border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-2 backdrop-blur">
             {undoSend ? (
               <div className="mb-1.5 flex items-center justify-between rounded-md border border-[#25D366]/30 bg-[#25D366]/10 px-2 py-1 text-xs">
                 <span className="text-[#111B21] dark:text-[#E9EDEF]">Message sent. Undo?</span>
@@ -3244,7 +4454,7 @@ export default function ExternalChatApp() {
               >
                 <Mic className="h-4 w-4" />
               </Button>
-              <div className="relative min-w-[180px] flex-1">
+              <div className="relative min-w-0 flex-1">
                 <Textarea
                   ref={textareaRef}
                   value={text}
@@ -3404,21 +4614,62 @@ export default function ExternalChatApp() {
             </div>
           </div>
 
+          <div className="mb-4 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/30 dark:bg-[#2A3942]/30 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className={`h-4 w-4 ${activeRoom?.e2eeEnabled ? "text-emerald-500" : "text-[#667781]"}`} />
+                <span className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">
+                  {activeRoom?.e2eeEnabled ? "E2EE Enabled" : "Standard Encryption"}
+                </span>
+              </div>
+              {activeRoom ? (
+                <button
+                  type="button"
+                  onClick={() => void toggleRoomE2ee()}
+                  className="text-[11px] font-medium text-[#25D366] hover:underline"
+                >
+                  {activeRoom.e2eeEnabled ? "Disable" : "Enable"}
+                </button>
+              ) : null}
+            </div>
+            {e2eeFingerprint ? (
+              <p className="mt-1.5 font-mono text-[10px] text-[#667781] dark:text-[#AEBAC1] break-all">
+                Key Fingerprint: {e2eeFingerprint}
+              </p>
+            ) : null}
+          </div>
+
           <div className="mb-4">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#667781] dark:text-[#AEBAC1]">Starred Messages</p>
             <div className="space-y-2">
-              {bookmarkedMessages.length === 0 ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No starred messages yet</p> : null}
-              {bookmarkedMessages.slice(-6).map((m) => (
-                <button
-                  key={`starred-${m.id}`}
-                  type="button"
-                  onClick={() => scrollToMessageById(m.id)}
-                  className="w-full rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/20 dark:bg-[#2A3942]/20 px-2 py-1.5 text-left hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60"
-                >
-                  <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
-                  <p className="mt-1 text-[10px] text-[#667781] dark:text-[#AEBAC1]">{new Date(m.createdAt).toLocaleString()}</p>
-                </button>
-              ))}
+              {serverStarred.length === 0 && bookmarkedMessages.length === 0 ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No starred messages yet</p> : null}
+              {serverStarred.length > 0
+                ? serverStarred.slice(0, 6).map((item) => (
+                  <button
+                    key={`starred-srv-${item.id}`}
+                    type="button"
+                    onClick={() => {
+                      if (item.roomCode !== activeRoomCode) setActiveRoomCode(item.roomCode);
+                      setTimeout(() => scrollToMessageById(item.id), 250);
+                    }}
+                    className="w-full rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/20 dark:bg-[#2A3942]/20 px-2 py-1.5 text-left hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60"
+                  >
+                    <p className="text-[10px] font-semibold text-[#25D366]">{item.roomName}</p>
+                    <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{item.content || item.attachment?.fileName || "Attachment"}</p>
+                    <p className="mt-1 text-[10px] text-[#667781] dark:text-[#AEBAC1]">{new Date(item.createdAt).toLocaleString()}</p>
+                  </button>
+                ))
+                : bookmarkedMessages.slice(-6).map((m) => (
+                  <button
+                    key={`starred-${m.id}`}
+                    type="button"
+                    onClick={() => scrollToMessageById(m.id)}
+                    className="w-full rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/20 dark:bg-[#2A3942]/20 px-2 py-1.5 text-left hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60"
+                  >
+                    <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
+                    <p className="mt-1 text-[10px] text-[#667781] dark:text-[#AEBAC1]">{new Date(m.createdAt).toLocaleString()}</p>
+                  </button>
+                ))}
             </div>
           </div>
 
@@ -3465,16 +4716,16 @@ export default function ExternalChatApp() {
             onClick={() => setProfileSettingsOpen(false)}
             className={`absolute inset-0 bg-black/35 transition-opacity ${profileSettingsOpen ? "opacity-100" : "opacity-0"}`}
           />
-          <aside className={`absolute left-0 top-0 h-full w-full max-w-sm border-r border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/95 dark:bg-[#1F2C33]/95 p-4 backdrop-blur-xl transition-transform duration-300 ${profileSettingsOpen ? "translate-x-0" : "-translate-x-full"}`}>
+          <aside className={`absolute left-0 top-0 h-full w-full max-w-sm overflow-y-auto border-r border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/95 dark:bg-[#1F2C33]/95 p-4 backdrop-blur-xl transition-transform duration-300 ${profileSettingsOpen ? "translate-x-0" : "-translate-x-full"}`}>
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Profile & Settings</p>
-                <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Personalize your chat experience</p>
+                <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Wallpaper, encryption, translation & alerts</p>
               </div>
               <Button size="sm" variant="ghost" onClick={() => setProfileSettingsOpen(false)} className="hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]"><X className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" /></Button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 pb-6">
               <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3">
                 <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Profile Photo</p>
                 <div className="mt-2 flex items-center gap-3">
@@ -3523,19 +4774,119 @@ export default function ExternalChatApp() {
                   </div>
                 </div>
               </div>
-              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3">
+
+              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF] inline-flex items-center gap-1.5">
+                    <Palette className="h-3.5 w-3.5 text-[#25D366]" /> Chat Wallpaper &amp; UI
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !compactMode;
+                      setCompactMode(next);
+                      void persistProfilePreferences({ compactMode: next });
+                    }}
+                    className="text-[11px] font-medium text-[#25D366] hover:underline"
+                  >
+                    {compactMode ? "Compact: On" : "Compact: Off"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {WALLPAPER_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => {
+                        setWallpaperPreset(preset.id);
+                        void persistProfilePreferences({ wallpaperPreset: preset.id });
+                      }}
+                      className={`rounded-md border p-1.5 text-left transition ${
+                        wallpaperPreset === preset.id
+                          ? "border-[#25D366] ring-1 ring-[#25D366]/60 bg-[#25D366]/10"
+                          : "border-[#E9EDEF] dark:border-[#2A3942]"
+                      }`}
+                    >
+                      <span
+                        className="block h-5 w-full rounded-sm border border-black/10 mb-1"
+                        style={{ background: preset.preview }}
+                      />
+                      <span className="block truncate text-[10px] font-medium text-[#111B21] dark:text-[#E9EDEF]">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+                {wallpaperPreset === "custom" ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center gap-2">
+                      <label className="text-[11px] text-[#667781] dark:text-[#AEBAC1]" htmlFor="custom-bg-color">Color</label>
+                      <input
+                        id="custom-bg-color"
+                        type="color"
+                        value={customWallpaperColor}
+                        onChange={(e) => {
+                          setCustomWallpaperColor(e.target.value);
+                          void persistProfilePreferences({ customWallpaperColor: e.target.value, wallpaperPreset: "custom" });
+                        }}
+                        className="h-7 w-10 cursor-pointer rounded border border-[#E9EDEF] dark:border-[#2A3942]"
+                      />
+                    </div>
+                    <Input
+                      value={customWallpaperImage}
+                      onChange={(e) => setCustomWallpaperImage(e.target.value)}
+                      onBlur={() => void persistProfilePreferences({ customWallpaperImage, wallpaperPreset: "custom" })}
+                      placeholder="Optional wallpaper image URL..."
+                      className="h-8 text-xs bg-white dark:bg-[#1F2C33]"
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3 space-y-2">
+                <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF] inline-flex items-center gap-1.5">
+                  <Languages className="h-3.5 w-3.5 text-[#25D366]" /> Translation Language
+                </p>
+                <select
+                  value={preferredLanguage}
+                  onChange={(e) => {
+                    const lang = e.target.value;
+                    setPreferredLanguage(lang);
+                    void persistProfilePreferences({}, lang);
+                  }}
+                  className="w-full h-9 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] px-2 text-xs text-[#111B21] dark:text-[#E9EDEF]"
+                >
+                  {TRANSLATION_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>{l.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3 space-y-2">
                 <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Notifications</p>
-                <button className="mt-2 flex w-full items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1.5 text-sm hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60" onClick={() => setNotificationSoundOn((v) => !v)}>
+                <button className="flex w-full items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1.5 text-sm hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60" onClick={() => setNotificationSoundOn((v) => !v)}>
                   <span className="inline-flex items-center gap-2 text-[#111B21] dark:text-[#E9EDEF]"><Bell className="h-4 w-4 text-[#25D366]" /> Sound Alerts</span>
                   <span className="text-xs text-[#667781] dark:text-[#AEBAC1]">{notificationSoundOn ? "On" : "Off"}</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void requestBrowserPushPermission()}
+                  className="flex w-full items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1.5 text-sm hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60"
+                >
+                  <span className="inline-flex items-center gap-2 text-[#111B21] dark:text-[#E9EDEF]"><Bell className="h-4 w-4 text-[#25D366]" /> Browser &amp; Mobile Alerts</span>
+                  <span className="text-xs text-[#25D366] capitalize">{pushPermission === "granted" ? "Active" : "Enable"}</span>
+                </button>
               </div>
-              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3">
-                <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Privacy</p>
-                <button className="mt-2 flex w-full items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1.5 text-sm hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60" onClick={() => setPrivacyModeOn((v) => !v)}>
+
+              <div className="rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-3 space-y-2">
+                <p className="text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">Privacy &amp; E2EE</p>
+                <button className="flex w-full items-center justify-between rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-2 py-1.5 text-sm hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/60" onClick={() => setPrivacyModeOn((v) => !v)}>
                   <span className="inline-flex items-center gap-2 text-[#111B21] dark:text-[#E9EDEF]"><Shield className="h-4 w-4 text-[#25D366]" /> Privacy Mode</span>
                   <span className="text-xs text-[#667781] dark:text-[#AEBAC1]">{privacyModeOn ? "Enabled" : "Disabled"}</span>
                 </button>
+                {e2eeFingerprint ? (
+                  <p className="font-mono text-[10px] text-[#667781] dark:text-[#AEBAC1] break-all">
+                    Identity Key: {e2eeFingerprint}
+                  </p>
+                ) : null}
               </div>
             </div>
           </aside>
@@ -3869,19 +5220,92 @@ export default function ExternalChatApp() {
             onClick={() => setMobileSidebarOpen(false)}
             className={`absolute inset-0 bg-black/35 transition-opacity ${mobileSidebarOpen ? "opacity-100" : "opacity-0"}`}
           />
-          <aside className={`flex flex-col absolute left-0 top-0 h-full w-[86vw] max-w-sm border-r border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-            <div className="mb-3 flex items-center justify-between">
-              <p className="text-sm font-semibold">Conversations</p>
+          <aside className={`flex flex-col absolute left-0 top-0 h-full w-[88vw] max-w-sm border-r border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-sm font-semibold">AI Connect</p>
               <Button size="sm" variant="ghost" onClick={() => setMobileSidebarOpen(false)}><X className="h-4 w-4" /></Button>
             </div>
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/40 p-1">
+              {[
+                { id: "chats" as const, label: "Chats", icon: MessageSquare },
+                { id: "calls" as const, label: "Calls", icon: History },
+                { id: "status" as const, label: "Status", icon: CircleDot },
+              ].map((tab) => {
+                const Icon = tab.icon;
+                const active = navSection === tab.id;
+                return (
+                  <button
+                    key={`mobile-nav-${tab.id}`}
+                    type="button"
+                    onClick={() => {
+                      setNavSection(tab.id);
+                      if (tab.id === "calls") void loadCallHistory();
+                    }}
+                    className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium ${
+                      active ? "bg-[#25D366] text-white" : "text-muted-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {navSection === "calls" ? (
+              <div className="flex-1 overflow-y-auto space-y-1.5 pb-2">
+                {loadingCalls ? <p className="text-xs text-muted-foreground py-4 text-center">Loading call log...</p> : null}
+                {callHistory.map((c) => {
+                  const isOutgoing = c.startedBy === selfUserId;
+                  const peerMember = c.participants?.find((p) => p.userId !== selfUserId)?.user || c.starter;
+                  const title = c.room?.name || (peerMember ? userLabel(peerMember) : "Direct Call");
+                  return (
+                    <div key={`m-call-${c.id}`} className="flex items-center justify-between gap-2 rounded-lg border border-border/70 p-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-semibold">{title}</p>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {isOutgoing ? "Outgoing" : "Incoming"} · {c.type} · {c.status}
+                          {c.durationSec ? ` · ${formatDuration(c.durationSec * 1000)}` : ""}
+                        </p>
+                      </div>
+                      {peerMember ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (c.room?.code) setActiveRoomCode(c.room.code);
+                            setActiveCall({ type: c.type, targetUser: peerMember });
+                            setMobileSidebarOpen(false);
+                          }}
+                          className="h-8 w-8 p-0 border-[#25D366] text-[#25D366]"
+                        >
+                          {c.type === "video" ? <Video className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}
+                        </Button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {!loadingCalls && callHistory.length === 0 ? <p className="py-6 text-center text-xs text-muted-foreground">No calls yet.</p> : null}
+              </div>
+            ) : navSection === "status" ? (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <StatusTabContent
+                  userId={selfUserId || ""}
+                  onViewStatus={(_s, idx, all) => {
+                    setStatusViewer({ statuses: all, initialIndex: idx });
+                    setMobileSidebarOpen(false);
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+            <div className="mb-2 flex items-center gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
                 <Input
                   className="pl-8 bg-muted/50 border-border/70"
-                  value={mobileChatSearch}
-                  onChange={(e) => setMobileChatSearch(e.target.value)}
-                  placeholder="Search chats..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Find users / requests..."
                 />
               </div>
               <Button type="button" variant="outline" size="icon" onClick={() => { setIncomingPanelOpen(true); setMobileSidebarOpen(false); }} className="shrink-0 relative border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
@@ -3896,10 +5320,42 @@ export default function ExternalChatApp() {
                 <PlusCircle className="h-4 w-4" />
               </Button>
             </div>
+            {query.trim() ? (
+              <div className="mb-2 max-h-40 overflow-y-auto rounded-md border border-border bg-card p-1.5 space-y-1">
+                {searching ? <p className="text-xs text-muted-foreground">Searching...</p> : null}
+                {!searching && results.length === 0 ? <p className="text-xs text-muted-foreground">No users found</p> : null}
+                {results.map((u) => {
+                  const rel = getPeerRelation(u);
+                  return (
+                    <div key={`m-usr-${u.id}`} className="flex items-center justify-between gap-1 rounded px-2 py-1 border border-border/50">
+                      <span className="truncate text-xs">{userLabel(u)}</span>
+                      {rel.kind === "connected" ? (
+                        <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => void startDirectMessageWithUser(u)}>Chat</Button>
+                      ) : rel.kind === "incoming" ? (
+                        <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => void actRequest(rel.requestId, "accept")}>Accept</Button>
+                      ) : rel.kind === "outgoing" ? (
+                        <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled>Pending</Button>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => void sendRequest(u.clerkId)}>Request</Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+            <div className="mb-2 relative">
+              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-[#667781] dark:text-[#AEBAC1]" />
+              <Input
+                className="h-8 pl-7 text-xs bg-muted/50 border-border/70"
+                value={mobileChatSearch}
+                onChange={(e) => setMobileChatSearch(e.target.value)}
+                placeholder="Filter conversations..."
+              />
+            </div>
             <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
             <div className="flex-1 space-y-1 overflow-y-auto pb-2">
               {filteredRooms.filter((r) => r.name?.toLowerCase().includes(mobileChatSearch.toLowerCase())).map((room) => {
-                const starred = starredRoomCodes.includes(room.code);
+                const starred = starredRoomCodeSet.has(room.code);
                 return (
                   <button
                     key={`mobile-${room.id}`}
@@ -3909,7 +5365,7 @@ export default function ExternalChatApp() {
                     }}
                     onTouchStart={(e) => onConversationTouchStart(e.changedTouches[0]?.clientX ?? 0)}
                     onTouchEnd={(e) => onConversationTouchEnd(e.changedTouches[0]?.clientX ?? 0, room.code)}
-                    className={`chat-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "chat-row-active" : "border-border/70"}`}
+                    className={`whatsapp-row-hover w-full rounded-lg border px-3 py-2 text-left transition-all ${activeRoomCode === room.code ? "whatsapp-row-active" : "border-border/70"}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex min-w-0 items-center gap-2">
@@ -3976,6 +5432,8 @@ export default function ExternalChatApp() {
                 </div>
               ) : null}
             </div>
+              </>
+            )}
             <div className="mt-auto rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 flex-1 items-center gap-2 cursor-pointer" onClick={() => { setProfileSettingsOpen(true); setMobileSidebarOpen(false); }}>
@@ -4036,6 +5494,9 @@ export default function ExternalChatApp() {
                   <Button variant="outline" onClick={() => { toggleBookmark(actionSheetMessage.id); setActionSheetOpen(false); }}>
                     {bookmarkedMessageIds.includes(actionSheetMessage.id) ? <StarOff className="mr-1 h-4 w-4 text-amber-500" /> : <Star className="mr-1 h-4 w-4" />}
                     {bookmarkedMessageIds.includes(actionSheetMessage.id) ? "Unstar" : "Star"}
+                  </Button>
+                  <Button variant="outline" onClick={() => { void translateMessageById(actionSheetMessage); setActionSheetOpen(false); }}>
+                    <Languages className="mr-1 h-4 w-4 text-[#25D366]" /> Translate
                   </Button>
                   <Button variant="outline" onClick={() => { void copyMessageContent(actionSheetMessage); setActionSheetOpen(false); }}>Copy</Button>
                   <Button variant="outline" onClick={() => { void mutateMessage(actionSheetMessage.id, { pinned: !Boolean(actionSheetMessage.pinnedAt) }); setActionSheetOpen(false); }}>{actionSheetMessage.pinnedAt ? "Unpin" : "Pin"}</Button>
@@ -4141,6 +5602,72 @@ export default function ExternalChatApp() {
             </div>
           </div>
         </div>
+        {incomingPanelOpen ? (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-sm rounded-xl border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-4 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Incoming Message Requests</p>
+                <button type="button" onClick={() => setIncomingPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto">
+                {incoming.length === 0 ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No pending message requests</p> : null}
+                {incoming.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]">{userLabel(r.sender)}</p>
+                      <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">{r.sender.email || "Pending contact"}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Button size="sm" variant="outline" onClick={() => void actRequest(r.id, "accept")} className="h-7 px-2 border-[#25D366] text-[#25D366]" title="Accept"><Check className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => void actRequest(r.id, "decline")} className="h-7 px-2 text-[#EF4444]" title="Decline"><X className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {starredPanelOpen ? (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-sm rounded-xl border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-4 shadow-2xl">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Starred Messages</p>
+                <button type="button" onClick={() => setStarredPanelOpen(false)} className="text-[#667781] hover:text-[#111B21] dark:hover:text-white"><X className="h-4 w-4" /></button>
+              </div>
+              <div className="max-h-72 space-y-1.5 overflow-y-auto">
+                {serverStarred.length === 0 && bookmarkedMessages.length === 0 ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No starred messages yet</p> : null}
+                {serverStarred.length > 0
+                  ? serverStarred.map((item) => (
+                    <button
+                      key={`modal-starred-srv-${item.id}`}
+                      type="button"
+                      onClick={() => {
+                        if (item.roomCode !== activeRoomCode) setActiveRoomCode(item.roomCode);
+                        setStarredPanelOpen(false);
+                        setTimeout(() => scrollToMessageById(item.id), 250);
+                      }}
+                      className="w-full rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-3 py-2 text-left hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]/60"
+                    >
+                      <p className="text-[10px] font-semibold text-[#25D366]">{item.roomName} · {userLabel(item.sender)}</p>
+                      <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{item.content || item.attachment?.fileName || "Attachment"}</p>
+                    </button>
+                  ))
+                  : bookmarkedMessages.slice(-10).reverse().map((m) => (
+                    <button
+                      key={`header-starred-${m.id}`}
+                      type="button"
+                      onClick={() => { scrollToMessageById(m.id); setStarredPanelOpen(false); }}
+                      className="w-full rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-3 py-2 text-left hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]/60"
+                    >
+                      <p className="line-clamp-2 text-xs text-[#111B21] dark:text-[#E9EDEF]">{m.content || "Attachment"}</p>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {callSelectorOpen && (
           <CallSelectorModal
             onClose={() => setCallSelectorOpen(false)}
@@ -4149,7 +5676,10 @@ export default function ExternalChatApp() {
               setCallSelectorOpen(false);
             }}
             currentRoomType={(activeRoom?.type as "direct" | "group" | "channel") || "group"}
-            currentRoomPeer={activeRoomPeer as any}
+            currentRoomPeer={activeRoomPeer}
+            roomMembers={activeRoom?.members}
+            currentUserId={selfUserId}
+            connectedPeers={connectedPeerUsers}
           />
         )}
 
@@ -4159,7 +5689,60 @@ export default function ExternalChatApp() {
             callType={activeCall.type}
             targetUser={activeCall.targetUser}
             onClose={() => setActiveCall(null)}
-            onCallEnded={() => setActiveCall(null)}
+            onCallEnded={() => {
+              setActiveCall(null);
+              void loadCallHistory();
+            }}
+          />
+        )}
+
+        {incomingCall && !activeCall && (
+          <IncomingCallModal
+            call={incomingCall}
+            onClose={() => {
+              dismissedCallIdsRef.current.add(incomingCall.id);
+              setIncomingCall(null);
+            }}
+            onAccept={() => {
+              setIncomingCall(null);
+              void loadCallHistory();
+            }}
+            onReject={() => {
+              dismissedCallIdsRef.current.add(incomingCall.id);
+              setIncomingCall(null);
+              void loadCallHistory();
+            }}
+          />
+        )}
+
+        {statusViewer && (
+          <StatusViewer
+            statuses={statusViewer.statuses}
+            initialIndex={statusViewer.initialIndex}
+            currentUserId={selfUserId || ""}
+            onClose={() => setStatusViewer(null)}
+            onStatusViewed={(statusId) => {
+              fetch(`/api/external-chat/statuses/${encodeURIComponent(statusId)}/view`, {
+                method: "POST",
+                credentials: "same-origin",
+              }).catch(() => undefined);
+            }}
+            onReact={(statusId, emoji) => {
+              fetch(`/api/external-chat/statuses/${encodeURIComponent(statusId)}/reactions`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ emoji }),
+              }).catch(() => undefined);
+            }}
+            onComment={(statusId, content) => {
+              fetch(`/api/external-chat/statuses/${encodeURIComponent(statusId)}/comments`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
+                body: JSON.stringify({ content }),
+              }).catch(() => undefined);
+            }}
           />
         )}
       </ChatShell>

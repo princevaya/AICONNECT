@@ -257,6 +257,23 @@ export async function createStatus(input: {
   };
 }
 
+export async function canViewerAccessStatusAttachment(attachmentId: string, viewer: AppUser): Promise<boolean> {
+  const status = await prisma.externalChatStatus.findFirst({
+    where: {
+      attachmentId,
+      deletedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    select: {
+      userId: true,
+      visibility: true,
+      allowedUserIds: true,
+    },
+  });
+  if (!status) return false;
+  return canViewStatus(viewer, status);
+}
+
 // FIXED: Completely rewritten to properly fetch visible statuses
 export async function listStatuses(viewer: AppUser) {
   await cleanupExpiredStatuses();
@@ -286,7 +303,7 @@ export async function listStatuses(viewer: AppUser) {
 
   // Filter statuses by visibility rules
   const visibleStatuses = [];
-  let selfStatus = null;
+  const selfStatuses = [];
   
   for (const status of allStatuses) {
     const canView = await canViewStatus(viewer, status);
@@ -315,14 +332,15 @@ export async function listStatuses(viewer: AppUser) {
     };
     
     if (status.userId === viewer.id) {
-      selfStatus = statusWithDetails;
+      selfStatuses.push(statusWithDetails);
     } else {
       visibleStatuses.push(statusWithDetails);
     }
   }
 
   return {
-    selfStatus,
+    selfStatus: selfStatuses[0] || null,
+    selfStatuses,
     statuses: visibleStatuses,
   };
 }

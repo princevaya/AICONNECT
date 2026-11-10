@@ -8,16 +8,29 @@ export const dynamic = "force-dynamic";
 
 export default async function ExternalChatCallPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ video?: string; audio?: string }>;
 }) {
   const { userId } = await auth();
   if (!userId) {
-    redirect("/sign-in");
+    redirect("/auth/sign-in");
   }
   const user = await ensureExternalChatUser(userId);
   const { id } = await params;
+  const query = await searchParams;
   const call = await getCallById(id, user);
 
-  return <CallRoomClient call={call} participantName={user.name || user.email || "You"} />;
+  const initialVideo = query.video !== undefined ? query.video === "1" : call.type === "video";
+  const initialAudio = query.audio !== undefined ? query.audio !== "0" : true;
+
+  return (
+    <CallRoomClient
+      call={call}
+      participantName={user.name || user.email || "You"}
+      initialVideoEnabled={initialVideo}
+      initialAudioEnabled={initialAudio}
+    />
+  );
 }

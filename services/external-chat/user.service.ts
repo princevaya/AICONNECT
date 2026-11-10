@@ -22,7 +22,7 @@ export async function ensureExternalChatUser(clerkUserId: string): Promise<AppUs
     return externalChatPrisma.user.update({
       where: { clerkId: clerkUserId },
       data: {
-        name,
+        name: existing.name || name,
         email,
         // Preserve custom imageUrl set inside external chat.
         ...(existing.imageUrl ? {} : { imageUrl: clerkProfile.imageUrl ?? null }),

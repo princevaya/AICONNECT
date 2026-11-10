@@ -641,9 +641,13 @@ export default function MeetingRoom({
         )}`,
         { cache: "no-store" }
       );
-      const tokenBody = (await tokenRes.json()) as { token?: string; error?: string };
+      const tokenBody = (await tokenRes.json()) as { token?: string; error?: string; code?: string };
       if (!tokenRes.ok || !tokenBody.token) {
-        throw new Error(tokenBody.error || "Failed to get meeting token.");
+        const err = new Error(tokenBody.error || "Failed to get meeting token.") as Error & { fatal?: boolean };
+        if (tokenRes.status === 403 || tokenBody.code === "ROOM_FULL") {
+          err.fatal = true;
+        }
+        throw err;
       }
       return tokenBody.token;
     };
@@ -685,12 +689,16 @@ export default function MeetingRoom({
         refreshParticipants();
       } catch (error) {
         if (disposed || intentionalLeaveRef.current) return;
+        const isFatal = Boolean((error as Error & { fatal?: boolean })?.fatal);
         let message = error instanceof Error ? error.message : "Failed to join meeting.";
         if (typeof window !== "undefined" && !window.isSecureContext) {
           message = "Media access (Camera/Mic/Recording) requires a secure context (HTTPS or localhost). Please access the app via http://localhost:3005 or configure HTTPS/Chrome flags.";
         }
         setMediaError(message);
         setConnectionStatus("disconnected");
+        if (isFatal) {
+          return;
+        }
         if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           const delay =
             RECONNECT_DELAYS_MS[
@@ -3036,7 +3044,7 @@ export default function MeetingRoom({
           </Button>
         </div>
 
-        <div className="mx-auto flex min-h-21.5 w-full min-w-0 max-w-[96vw] items-center justify-start gap-2 overflow-x-hidden px-1 pr-2 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] sm:pr-2 md:max-w-[94vw] md:flex-wrap md:justify-center md:overflow-visible md:px-0 md:py-4 md:pb-4 md:gap-3">
+        <div className="mx-auto flex min-h-21.5 w-full min-w-0 max-w-[96vw] flex-wrap items-center justify-center gap-2 px-2 py-3 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] md:max-w-[94vw] md:py-4 md:pb-4 md:gap-3">
           <button
             onClick={() => void toggleMic()}
             title={localMicOn ? "Microphone On" : "Microphone Off"}

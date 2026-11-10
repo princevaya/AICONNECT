@@ -16,15 +16,21 @@ export async function POST(req: NextRequest) {
     const file = form.get("file");
     const roomId = form.get("roomId");
     const roomCode = form.get("roomCode");
+    const scopeRaw = form.get("scope");
+    const scope = scopeRaw === "status" ? "status" : "room";
+
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "file is required" }, { status: 400 });
     }
-    if (typeof roomId !== "string" || !roomId.trim()) {
-      return NextResponse.json({ error: "roomId is required" }, { status: 400 });
+    if (scope === "room") {
+      if (typeof roomId !== "string" || !roomId.trim()) {
+        return NextResponse.json({ error: "roomId is required" }, { status: 400 });
+      }
+      if (typeof roomCode !== "string" || !roomCode.trim()) {
+        return NextResponse.json({ error: "roomCode is required" }, { status: 400 });
+      }
     }
-    if (typeof roomCode !== "string" || !roomCode.trim()) {
-      return NextResponse.json({ error: "roomCode is required" }, { status: 400 });
-    }
+
     const user = await ensureExternalChatUser(userId);
     const rateLimit = await enforceRateLimit({
       routeKey: "external-chat:upload",
@@ -38,15 +44,16 @@ export async function POST(req: NextRequest) {
     }
     const attachment = await uploadAttachment({
       file,
-      roomId: roomId.trim(),
-      roomCode: roomCode.trim(),
+      roomId: typeof roomId === "string" && roomId.trim() ? roomId.trim() : null,
+      roomCode: typeof roomCode === "string" && roomCode.trim() ? roomCode.trim() : null,
+      scope,
       uploader: user,
     });
     return NextResponse.json({ attachment }, { status: 201 });
   } catch (error) {
     const m = error instanceof Error ? error.message.toLowerCase() : "";
     const status =
-      m.includes("required") || m.includes("empty") || m.includes("limit") || m.includes("allowed")
+      m.includes("required") || m.includes("empty") || m.includes("limit") || m.includes("allowed") || m.includes("exceeds") || m.includes("match")
         ? 400
         : m.includes("not allowed")
           ? 403
@@ -54,4 +61,3 @@ export async function POST(req: NextRequest) {
     return toError(error, "Failed to upload", status);
   }
 }
-

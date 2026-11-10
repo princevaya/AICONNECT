@@ -68,6 +68,7 @@ export default function VSCodeEditor({
 
   const [editorLine, setEditorLine] = useState(1);
   const [editorCol, setEditorCol] = useState(1);
+  const [mobileExplorerOpen, setMobileExplorerOpen] = useState(false);
 
 
   /*
@@ -474,11 +475,13 @@ export default function VSCodeEditor({
 
 
       {/* main layout */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
 
         {/* explorer */}
         <div
-          className={`w-52 border-r flex flex-col ${explorerBg} ${explorerBorder}`}
+          className={`${
+            mobileExplorerOpen ? "flex absolute inset-y-0 left-0 z-20 shadow-xl" : "hidden"
+          } md:static md:flex w-52 shrink-0 border-r flex-col ${explorerBg} ${explorerBorder}`}
         >
 
           <div className="flex justify-between items-center p-3 text-xs font-semibold border-b" style={{borderColor: explorerBorder}}>
@@ -568,13 +571,13 @@ export default function VSCodeEditor({
 
         {/* main editor area */}
 
-        <div className="flex flex-col flex-1">
+        <div className="flex flex-col flex-1 min-w-0">
 
 
           {/* tabs */}
 
           <div
-            className={`flex items-center border-b ${topbar}`}
+            className={`flex items-center overflow-x-auto border-b ${topbar}`}
             style={{borderColor: explorerBorder}}
           >
             {openTabs.map((path) => (
@@ -610,21 +613,31 @@ export default function VSCodeEditor({
           {/* top toolbar */}
 
           <div
-            className={`flex justify-between items-center px-4 py-2 ${topbar}`}
+            className={`flex flex-wrap justify-between items-center gap-2 px-3 sm:px-4 py-2 ${topbar}`}
           >
 
-            <div className="flex flex-col">
-              <span className="text-xs">{activePath}</span>
-              {activeCoder ? (
-                <span className="text-[11px] text-slate-300">
-                  {activeCoder === participantName
-                    ? "You are live coding"
-                    : `${activeCoder} is live coding`}
-                </span>
-              ) : null}
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => setMobileExplorerOpen((prev) => !prev)}
+                className="md:hidden px-2 py-1 text-xs rounded border border-current/25"
+                title="Toggle Explorer"
+              >
+                {mobileExplorerOpen ? "✕ Files" : "📁 Files"}
+              </button>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs truncate">{activePath}</span>
+                {activeCoder ? (
+                  <span className="text-[11px] text-slate-300 truncate">
+                    {activeCoder === participantName
+                      ? "You are live coding"
+                      : `${activeCoder} is live coding`}
+                  </span>
+                ) : null}
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
 
               <select
                 value={language.id}

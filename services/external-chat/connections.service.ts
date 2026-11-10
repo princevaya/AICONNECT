@@ -1,5 +1,4 @@
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
-const db = prisma as any;
 import { AppUser } from "@/services/user.service";
 
 function orderedPair(a: string, b: string) {
@@ -78,6 +77,7 @@ export async function searchUsers(actor: AppUser, query: string) {
       name: true,
       email: true,
       imageUrl: true,
+      e2eePublicKey: true,
     },
     take: 20,
   });
@@ -85,7 +85,7 @@ export async function searchUsers(actor: AppUser, query: string) {
 }
 
 export async function listConnectionState(actor: AppUser) {
-  const outgoing = await db.externalChatConnectionRequest.findMany({
+  const outgoing = await prisma.externalChatConnectionRequest.findMany({
     where: { senderId: actor.id, status: "pending" },
     include: {
       receiver: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
@@ -94,7 +94,7 @@ export async function listConnectionState(actor: AppUser) {
     take: 100,
   });
 
-  const incoming = await db.externalChatConnectionRequest.findMany({
+  const incoming = await prisma.externalChatConnectionRequest.findMany({
     where: { receiverId: actor.id, status: "pending" },
     include: {
       sender: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
@@ -103,14 +103,14 @@ export async function listConnectionState(actor: AppUser) {
     take: 100,
   });
 
-  const connections = await db.externalChatConnection.findMany({
+  const connections = await prisma.externalChatConnection.findMany({
     where: {
       removedAt: null,
       OR: [{ userAId: actor.id }, { userBId: actor.id }],
     },
     include: {
-      userA: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
-      userB: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true } },
+      userA: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true, e2eePublicKey: true } },
+      userB: { select: { id: true, clerkId: true, name: true, email: true, imageUrl: true, e2eePublicKey: true } },
       directRoom: { select: { id: true, code: true, name: true } },
     },
     orderBy: { createdAt: "desc" },
@@ -129,7 +129,7 @@ export async function requestConnection(actor: AppUser, targetClerkId: string, m
   if (target.id === actor.id) throw new Error("Cannot connect with yourself");
 
   const [left, right] = orderedPair(actor.id, target.id);
-  const existingConnection = await db.externalChatConnection.findFirst({
+  const existingConnection = await prisma.externalChatConnection.findFirst({
     where: {
       userAId: left,
       userBId: right,
@@ -139,7 +139,7 @@ export async function requestConnection(actor: AppUser, targetClerkId: string, m
   });
   if (existingConnection) throw new Error("Already connected");
 
-  const existingReverse = await db.externalChatConnectionRequest.findFirst({
+  const existingReverse = await prisma.externalChatConnectionRequest.findFirst({
     where: {
       senderId: target.id,
       receiverId: actor.id,
@@ -152,7 +152,7 @@ export async function requestConnection(actor: AppUser, targetClerkId: string, m
     return acceptConnectionRequest(actor, existingReverse.id);
   }
 
-  return db.externalChatConnectionRequest.upsert({
+  return prisma.externalChatConnectionRequest.upsert({
     where: {
       senderId_receiverId: {
         senderId: actor.id,
@@ -173,7 +173,7 @@ export async function requestConnection(actor: AppUser, targetClerkId: string, m
 }
 
 export async function acceptConnectionRequest(actor: AppUser, requestId: string) {
-  const request = await db.externalChatConnectionRequest.findUnique({
+  const request = await prisma.externalChatConnectionRequest.findUnique({
     where: { id: requestId },
     include: {
       sender: { select: { id: true, clerkId: true, name: true, email: true } },
@@ -185,7 +185,7 @@ export async function acceptConnectionRequest(actor: AppUser, requestId: string)
   const [left, right] = orderedPair(request.senderId, request.receiverId);
   const room = await ensureDirectRoom(actor, request.sender);
 
-  const connection = await db.externalChatConnection.upsert({
+  const connection = await prisma.externalChatConnection.upsert({
     where: {
       userAId_userBId: {
         userAId: left,
@@ -203,7 +203,7 @@ export async function acceptConnectionRequest(actor: AppUser, requestId: string)
     },
   });
 
-  await db.externalChatConnectionRequest.update({
+  await prisma.externalChatConnectionRequest.update({
     where: { id: request.id },
     data: {
       status: "accepted",
@@ -218,14 +218,14 @@ export async function acceptConnectionRequest(actor: AppUser, requestId: string)
 }
 
 export async function declineConnectionRequest(actor: AppUser, requestId: string) {
-  const request = await db.externalChatConnectionRequest.findUnique({
+  const request = await prisma.externalChatConnectionRequest.findUnique({
     where: { id: requestId },
     select: { id: true, receiverId: true, status: true },
   });
   if (!request || request.status !== "pending") throw new Error("Request not found");
   if (request.receiverId !== actor.id) throw new Error("Not allowed");
 
-  await db.externalChatConnectionRequest.update({
+  await prisma.externalChatConnectionRequest.update({
     where: { id: request.id },
     data: {
       status: "declined",
@@ -235,7 +235,7 @@ export async function declineConnectionRequest(actor: AppUser, requestId: string
 }
 
 export async function removeConnection(actor: AppUser, connectionId: string) {
-  const connection = await db.externalChatConnection.findUnique({
+  const connection = await prisma.externalChatConnection.findUnique({
     where: { id: connectionId },
     include: {
       directRoom: {
@@ -247,7 +247,7 @@ export async function removeConnection(actor: AppUser, connectionId: string) {
   const ownsConnection = connection.userAId === actor.id || connection.userBId === actor.id;
   if (!ownsConnection && actor.role.toLowerCase() !== "admin") throw new Error("Not allowed");
 
-  await db.externalChatConnection.update({
+  await prisma.externalChatConnection.update({
     where: { id: connection.id },
     data: { removedAt: new Date() },
   });
@@ -257,4 +257,3 @@ export async function removeConnection(actor: AppUser, connectionId: string) {
     data: { removedAt: new Date(), leftAt: new Date() },
   });
 }
-

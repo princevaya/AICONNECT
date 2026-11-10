@@ -66,9 +66,9 @@ export default function InterviewPreviewView() {
 
   /* ================= UI ================= */
   return (
-    <div className="h-screen flex gap-6 p-6 bg-gray-100">
+    <div className="min-h-[calc(100dvh-4rem)] flex flex-col lg:flex-row gap-4 sm:gap-6 p-4 sm:p-6 bg-gray-100">
       {/* 👤 USER PREVIEW */}
-      <div className="flex-1 bg-black rounded-xl p-4 text-white">
+      <div className="flex-1 bg-black rounded-xl p-4 text-white flex flex-col">
         <h2 className="mb-2 text-lg font-semibold">You</h2>
 
         <video
@@ -76,20 +76,20 @@ export default function InterviewPreviewView() {
           autoPlay
           muted
           playsInline
-          className="w-full h-[80%] object-cover rounded-lg"
+          className="w-full aspect-video max-h-[50dvh] object-cover rounded-lg bg-zinc-900"
         />
 
-        <div className="flex gap-4 mt-4">
+        <div className="flex flex-wrap gap-3 mt-4">
           <button
             onClick={toggleCamera}
-            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600"
+            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm"
           >
             {cameraOn ? "Camera OFF" : "Camera ON"}
           </button>
 
           <button
             onClick={toggleMic}
-            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600"
+            className="px-4 py-2 rounded bg-gray-700 hover:bg-gray-600 text-sm"
           >
             {micOn ? "Mic OFF" : "Mic ON"}
           </button>
@@ -97,16 +97,16 @@ export default function InterviewPreviewView() {
       </div>
 
       {/* 🤖 AI PREVIEW */}
-      <div className="flex-1 bg-white rounded-xl p-6 text-center">
-        <h2 className="text-lg font-semibold mb-4">AI Interviewer</h2>
+      <div className="flex-1 bg-white rounded-xl p-4 sm:p-6 text-center flex flex-col items-center justify-center">
+        <h2 className="text-lg font-semibold mb-4 text-gray-900">AI Interviewer</h2>
 
         <img
           src="/ai/ai-avatar.jpg"
           alt="AI Interviewer Avatar"
-          className="w-60 h-60 mx-auto rounded-full object-cover"
+          className="w-40 h-40 sm:w-60 sm:h-60 mx-auto rounded-full object-cover"
         />
 
-        <p className="mt-6 text-gray-600">
+        <p className="mt-6 text-sm sm:text-base text-gray-600">
           You are about to start your AI interview.
           <br />
           Please check camera and microphone.
@@ -116,7 +116,7 @@ export default function InterviewPreviewView() {
         <button
           onClick={() => router.push("/dashboard/ai-interview/live")}
           disabled={!permissionGranted || !cameraOn || !micOn}
-          className={`mt-8 px-6 py-3 rounded-lg text-white transition ${
+          className={`mt-6 sm:mt-8 w-full sm:w-auto px-6 py-3 rounded-lg text-white transition ${
             permissionGranted && cameraOn && micOn
               ? "bg-blue-600 hover:bg-blue-700"
               : "bg-gray-400 cursor-not-allowed"

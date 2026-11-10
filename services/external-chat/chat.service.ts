@@ -213,7 +213,7 @@ export async function listRooms(user: AppUser, workspaceSlug?: string) {
         where: { removedAt: null },
         include: {
           user: {
-            select: { id: true, clerkId: true, name: true, email: true, imageUrl: true },
+            select: { id: true, clerkId: true, name: true, email: true, imageUrl: true, e2eePublicKey: true },
           },
         },
       },
@@ -243,7 +243,7 @@ export async function listRooms(user: AppUser, workspaceSlug?: string) {
         where: { removedAt: null },
         include: {
           user: {
-            select: { id: true, clerkId: true, name: true, email: true, imageUrl: true },
+            select: { id: true, clerkId: true, name: true, email: true, imageUrl: true, e2eePublicKey: true },
           },
         },
       },
@@ -327,6 +327,7 @@ export async function listRooms(user: AppUser, workspaceSlug?: string) {
       type: room.type,
       isPrivate: room.isPrivate,
       isDiscoverable: room.isDiscoverable,
+      e2eeEnabled: room.e2eeEnabled,
       avatarUrl: room.avatarUrl,
       archivedAt: room.archivedAt,
       unreadCount: unreadMap.get(room.id) || 0,
@@ -357,6 +358,7 @@ export async function listRooms(user: AppUser, workspaceSlug?: string) {
       type: room.type,
       isPrivate: room.isPrivate,
       isDiscoverable: room.isDiscoverable,
+      e2eeEnabled: room.e2eeEnabled,
       avatarUrl: room.avatarUrl,
       archivedAt: room.archivedAt,
       unreadCount: 0,
@@ -392,6 +394,21 @@ export async function createRoom(input: {
 
   if (input.type === "direct" && memberUsers.length !== 1) {
     throw new Error("Direct chat requires exactly one member");
+  }
+
+  if (input.type === "direct" && memberUsers[0]) {
+    const [left, right] = [input.user.id, memberUsers[0].id].sort();
+    const activeConnection = await prisma.externalChatConnection.findFirst({
+      where: {
+        userAId: left,
+        userBId: right,
+        removedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!activeConnection && !isGlobalAdmin(input.user)) {
+      throw new Error("Not allowed: connection request must be accepted before starting a direct chat");
+    }
   }
 
   const code =
@@ -641,11 +658,32 @@ export async function createMessage(input: {
   privateToUserIds?: string[];
   poll?: { question: string; options: string[] } | null;
   noteColor?: "amber" | "emerald" | "sky" | "rose" | "violet" | null;
+  e2ee?: {
+    v: number;
+    alg: string;
+    iv: string;
+    ciphertext: string;
+    keyVersion?: number;
+    senderPublicKey?: string;
+  } | null;
 }) {
   const room = await requireRoom(input.roomCode, input.sender);
   const senderMembership = await getMembership(room.id, input.sender.id);
   if (!isMembershipActive(senderMembership)) {
     throw new Error("Not allowed");
+  }
+
+  if (room.type === "direct") {
+    const activeConnection = await prisma.externalChatConnection.findFirst({
+      where: {
+        directRoomId: room.id,
+        removedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!activeConnection && !isGlobalAdmin(input.sender)) {
+      throw new Error("Not allowed: connection request must be accepted before sending messages");
+    }
   }
 
   const content = input.content.trim();
@@ -678,22 +716,37 @@ export async function createMessage(input: {
   }
 
   const allowedNoteColors = new Set(["amber", "emerald", "sky", "rose", "violet"]);
-  const metadata: Prisma.InputJsonValue | undefined = input.poll
-    ? {
-        poll: {
-          question: input.poll.question.trim(),
-          options: input.poll.options.map((option) => option.trim()).filter(Boolean).map((option) => ({
-            id: Math.random().toString(36).slice(2, 9),
-            text: option,
-            voters: [] as string[],
-          })),
-        },
-      }
-    : input.type === "note"
-      ? {
-          noteColor: allowedNoteColors.has(String(input.noteColor || "")) ? input.noteColor : "amber",
-        }
-      : undefined;
+  const e2eePayload = input.e2ee && input.e2ee.ciphertext && input.e2ee.iv ? input.e2ee : null;
+  const metadataObject: Record<string, Prisma.InputJsonValue> = {};
+  if (input.poll) {
+    metadataObject.poll = {
+      question: input.poll.question.trim(),
+      options: input.poll.options
+        .map((option) => option.trim())
+        .filter(Boolean)
+        .map((option) => ({
+          id: Math.random().toString(36).slice(2, 9),
+          text: option,
+          voters: [] as string[],
+        })),
+    };
+  } else if (input.type === "note") {
+    metadataObject.noteColor = allowedNoteColors.has(String(input.noteColor || ""))
+      ? (input.noteColor as string)
+      : "amber";
+  }
+  if (e2eePayload) {
+    metadataObject.e2ee = {
+      v: e2eePayload.v || 1,
+      alg: e2eePayload.alg || "AES-GCM",
+      iv: e2eePayload.iv,
+      ciphertext: e2eePayload.ciphertext,
+      keyVersion: e2eePayload.keyVersion || 1,
+      ...(e2eePayload.senderPublicKey ? { senderPublicKey: e2eePayload.senderPublicKey } : {}),
+    };
+  }
+  const metadata: Prisma.InputJsonValue | undefined =
+    Object.keys(metadataObject).length > 0 ? metadataObject : undefined;
 
   if (!content && !input.attachmentId && !metadata) throw new Error("Message cannot be empty");
 
@@ -720,9 +773,9 @@ export async function createMessage(input: {
       roomId: room.id,
       senderId: input.sender.id,
       type,
-      content,
+      content: e2eePayload ? "[Encrypted message]" : content,
       metadata,
-      mentions: mentionsFromContent(content),
+      mentions: e2eePayload ? [] : mentionsFromContent(content),
       privateTo: privateTo.length > 1 ? privateTo : Prisma.JsonNull,
       replyToId: input.replyToId || null,
       attachmentId: input.attachmentId || null,
@@ -909,21 +962,23 @@ export async function updateRoom(roomCode: string, user: AppUser, data: {
   avatarUrl?: string;
   isPrivate?: boolean;
   isDiscoverable?: boolean;
+  e2eeEnabled?: boolean;
 }) {
   const room = await requireRoom(roomCode, user);
   const actorMember = await prisma.externalChatRoomMember.findUnique({
     where: { roomId_userId: { roomId: room.id, userId: user.id } },
     select: { role: true },
   });
-  const allowed = canManageRoom(user, (actorMember?.role as RoomRole) || null);
+  const allowed = room.type === "direct" ? Boolean(actorMember) : canManageRoom(user, (actorMember?.role as RoomRole) || null);
   if (!allowed) throw new Error("Not allowed");
 
-  const updateData: any = {};
+  const updateData: Prisma.ExternalChatRoomUpdateInput = {};
   if (data.name !== undefined) updateData.name = data.name.trim();
   if (data.description !== undefined) updateData.description = data.description.trim() || null;
   if (data.avatarUrl !== undefined) updateData.avatarUrl = data.avatarUrl || null;
   if (data.isPrivate !== undefined) updateData.isPrivate = data.isPrivate;
   if (data.isDiscoverable !== undefined) updateData.isDiscoverable = data.isDiscoverable;
+  if (data.e2eeEnabled !== undefined) updateData.e2eeEnabled = data.e2eeEnabled;
 
   const updated = await prisma.externalChatRoom.update({
     where: { id: room.id },
@@ -1221,9 +1276,9 @@ export async function previewInviteCode(inviteCode: string, user: AppUser) {
   };
 }
 
-async function logActivity(roomId: string, userId: string, action: string, details?: any) {
+async function logActivity(roomId: string, userId: string, action: string, details?: Record<string, unknown>) {
   await prisma.externalChatRoomActivityLog.create({
-    data: { roomId, userId, action, details: details || {} },
+    data: { roomId, userId, action, details: (details || {}) as Prisma.InputJsonValue },
   });
 }
 

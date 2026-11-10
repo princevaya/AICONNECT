@@ -52,7 +52,13 @@ export async function POST(req: NextRequest) {
         ? 404
         : message.includes("not allowed")
           ? 403
-          : message.includes("multipart") || message.includes("limited")
+          : message.includes("multipart") ||
+              message.includes("limited") ||
+              message.includes("exceeds") ||
+              message.includes("allowed") ||
+              message.includes("empty") ||
+              message.includes("chunks") ||
+              message.includes("direct upload")
             ? 400
             : 500;
     return toError(error, "Failed to start upload session", status);

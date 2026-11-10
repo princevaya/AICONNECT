@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Circle, PhoneOff, ShieldCheck, Video } from "lucide-react";
+import { ArrowLeft, Circle, PhoneOff, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import MeetingRoom from "@/components/meeting/meeting-room";
 
@@ -20,14 +20,20 @@ type CallSession = {
 export default function CallRoomClient({
   call,
   participantName,
+  initialVideoEnabled,
+  initialAudioEnabled = true,
 }: {
   call: CallSession;
   participantName: string;
+  initialVideoEnabled?: boolean;
+  initialAudioEnabled?: boolean;
 }) {
   const router = useRouter();
   const displayName = useMemo(() => participantName || "Guest", [participantName]);
   const isVideoCall = call.type === "video";
   const isLive = call.status === "active" || call.status === "ringing";
+  const endedRef = useRef(false);
+
   const statusLabel =
     call.status === "active"
       ? "Live"
@@ -45,16 +51,27 @@ export default function CallRoomClient({
         ? "bg-amber-500"
         : "bg-slate-500";
 
-  const leaveCall = async () => {
-    await fetch(`/api/external-chat/calls/${encodeURIComponent(call.id)}/end`, {
+  useEffect(() => {
+    if (!isLive) return;
+    void fetch(`/api/external-chat/calls/${encodeURIComponent(call.id)}/join`, {
       method: "POST",
     }).catch(() => undefined);
-    router.push("/dashboard/external-chat");
+  }, [call.id, isLive]);
+
+  const leaveCall = async () => {
+    if (!endedRef.current) {
+      endedRef.current = true;
+      await fetch(`/api/external-chat/calls/${encodeURIComponent(call.id)}/end`, {
+        method: "POST",
+        keepalive: true,
+      }).catch(() => undefined);
+    }
+    router.push(`/dashboard/external-chat?room=${encodeURIComponent(call.room.code)}`);
   };
 
   return (
     <div className="flex min-h-dvh flex-col bg-[#ECE5DD] dark:bg-[#0B141A] text-foreground">
-      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-[#075E54] dark:bg-[#1F2C33] px-4 py-3 pt-[calc(0.85rem+env(safe-area-inset-top))] backdrop-blur">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-[#075E54] dark:bg-[#1F2C33] px-4 py-3 pt-[calc(0.85rem+env(safe-area-inset-top))] backdrop-blur">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${statusTone} ${isLive ? "animate-pulse" : ""}`} />
@@ -71,7 +88,7 @@ export default function CallRoomClient({
             size="sm"
             variant="ghost"
             className="gap-2 text-white hover:bg-white/10 hover:text-white"
-            onClick={() => router.push("/dashboard/external-chat")}
+            onClick={() => router.push(`/dashboard/external-chat?room=${encodeURIComponent(call.room.code)}`)}
           >
             <ArrowLeft className="h-4 w-4" />
             Back to chat
@@ -83,23 +100,23 @@ export default function CallRoomClient({
             onClick={() => void leaveCall()}
           >
             <PhoneOff className="h-4 w-4" />
-            Leave
+            End Call
           </Button>
         </div>
       </div>
 
-      <div className="grid gap-3 border-b border-border/60 px-4 py-3 text-xs text-white/70 md:grid-cols-3">
-        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
-          <p className="text-[11px] uppercase tracking-wide text-white/45">Room</p>
-          <p className="mt-1 truncate font-medium text-white">{call.room.code}</p>
+      <div className="grid gap-3 border-b border-border/60 px-4 py-3 text-xs text-foreground/80 dark:text-white/70 md:grid-cols-3 bg-card/40 dark:bg-transparent">
+        <div className="rounded-2xl border border-border/60 bg-background/60 dark:bg-white/5 p-3">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Room</p>
+          <p className="mt-1 truncate font-medium">{call.room.code}</p>
         </div>
-        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
-          <p className="text-[11px] uppercase tracking-wide text-white/45">Participants</p>
-          <p className="mt-1 font-medium text-white">{call.participants.length} connected or invited</p>
+        <div className="rounded-2xl border border-border/60 bg-background/60 dark:bg-white/5 p-3">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Participants</p>
+          <p className="mt-1 font-medium">{call.participants.length} connected or invited</p>
         </div>
-        <div className="rounded-2xl border border-border/60 bg-white/5 p-3">
-          <p className="text-[11px] uppercase tracking-wide text-white/45">Host</p>
-          <p className="mt-1 flex items-center gap-2 font-medium text-white">
+        <div className="rounded-2xl border border-border/60 bg-background/60 dark:bg-white/5 p-3">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Host</p>
+          <p className="mt-1 flex items-center gap-2 font-medium">
             <ShieldCheck className="h-4 w-4 text-[#25D366]" />
             {call.starter.name || call.starter.email || "Host"}
           </p>
@@ -108,12 +125,12 @@ export default function CallRoomClient({
 
       {!isLive ? (
         <div className="border-b border-border/60 px-4 py-3">
-          <div className="rounded-2xl border border-border/60 bg-white/5 p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-white">
-              <Circle className="h-3 w-3 fill-current text-white/75" />
+          <div className="rounded-2xl border border-border/60 bg-card/80 dark:bg-white/5 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Circle className="h-3 w-3 fill-current" />
               This call is {statusLabel.toLowerCase()}.
             </div>
-            <p className="mt-1 text-sm text-white/65">
+            <p className="mt-1 text-sm text-muted-foreground">
               You can still review the call context, or return to chat when you’re done.
             </p>
           </div>
@@ -121,11 +138,15 @@ export default function CallRoomClient({
       ) : null}
 
       <div className="min-h-0 flex-1">
-        <MeetingRoom
-          roomName={call.livekitRoomName}
-          participantName={displayName}
-          onLeave={() => void leaveCall()}
-        />
+        {isLive ? (
+          <MeetingRoom
+            roomName={call.livekitRoomName}
+            participantName={displayName}
+            videoEnabled={initialVideoEnabled ?? isVideoCall}
+            audioEnabled={initialAudioEnabled}
+            onLeave={() => void leaveCall()}
+          />
+        ) : null}
       </div>
     </div>
   );

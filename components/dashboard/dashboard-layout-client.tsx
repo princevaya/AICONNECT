@@ -95,12 +95,12 @@ export default function DashboardLayoutClient({ children }: Props) {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
       {/* HEADER */}
-      <header className="h-16 px-4 shrink-0 flex items-center justify-between border-b bg-background/95 text-foreground backdrop-blur sticky top-0 z-40">
-        <div className="flex items-center gap-2">
+      <header className="h-16 px-2 sm:px-4 shrink-0 flex items-center justify-between gap-2 border-b bg-background/95 text-foreground backdrop-blur sticky top-0 z-40">
+        <div className="flex items-center gap-1 sm:gap-2 min-w-0">
           <Button
             variant="ghost"
             size="icon"
-            className="rounded-full h-11 w-11 hover:bg-muted md:ml-0"
+            className="rounded-full h-9 w-9 sm:h-11 sm:w-11 shrink-0 hover:bg-muted md:ml-0"
             onClick={() => setIsSidebarCollapsed((prev) => !prev)}
             aria-label="Toggle menu"
           >
@@ -108,29 +108,29 @@ export default function DashboardLayoutClient({ children }: Props) {
           </Button>
 
           {/* Styled Google Meet Logo */}
-          <div className="flex items-center gap-2 ml-1 cursor-pointer" onClick={() => router.push("/dashboard")}>
-            <div className="h-9 w-9 rounded-lg bg-yellow-500 flex items-center justify-center shadow-sm">
-              <Video className="h-5 w-5 text-white fill-white" />
+          <div className="flex items-center gap-1.5 sm:gap-2 ml-0.5 sm:ml-1 cursor-pointer min-w-0" onClick={() => router.push("/dashboard")}>
+            <div className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-lg bg-yellow-500 flex items-center justify-center shadow-sm">
+              <Video className="h-4 w-4 sm:h-5 sm:w-5 text-white fill-white" />
             </div>
-            <span className="text-xl font-semibold tracking-tight text-foreground/90 font-sans">
-              AIConnect <span className="text-muted-foreground/60 font-light text-base">Meet</span>
+            <span className="text-base sm:text-xl font-semibold tracking-tight text-foreground/90 font-sans truncate">
+              AIConnect <span className="hidden sm:inline text-muted-foreground/60 font-light text-base">Meet</span>
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5 sm:gap-2 shrink-0">
           {/* Real-time Time & Date */}
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/help")} title="Help">
-            <HelpCircle className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/help")} title="Help" aria-label="Help">
+            <HelpCircle className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/external-chat")} title="Chat">
-            <MessageSquare className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/external-chat")} title="Chat" aria-label="Chat">
+            <MessageSquare className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/settings")} title="Settings">
-            <Settings className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/settings")} title="Settings" aria-label="Settings">
+            <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
-          <Button variant="ghost" size="icon" className="rounded-full h-10 w-10 text-muted-foreground hover:text-foreground mr-2" onClick={() => router.push("/dashboard")} title="Dashboard">
-            <LayoutGrid className="h-5 w-5" />
+          <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground hover:text-foreground sm:mr-2" onClick={() => router.push("/dashboard")} title="Dashboard" aria-label="Dashboard">
+            <LayoutGrid className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
 
         </div>
@@ -178,11 +178,11 @@ export default function DashboardLayoutClient({ children }: Props) {
         <div className="md:hidden">
           {/* Drawer should be open when isSidebarCollapsed === true */}
           <div className={cn(
-            "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-background border-r shadow-lg transform transition-transform duration-300 ease-in-out",
+            "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex flex-col bg-background border-r shadow-lg transform transition-transform duration-300 ease-in-out",
             isSidebarCollapsed ? "translate-x-0" : "-translate-x-full"
           )}
           >
-            <nav className="flex-1 px-3 py-3 overflow-y-auto">
+            <nav className="flex-1 px-3 py-3 overflow-y-auto space-y-1">
               {menuItems.map((item) => {
                 const Icon = item.icon;
                 return (
@@ -206,6 +206,22 @@ export default function DashboardLayoutClient({ children }: Props) {
                 );
               })}
             </nav>
+            <div className="mt-auto border-t px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <UserButton afterSignOutUrl="/" />
+                <span className="text-sm font-medium text-foreground">Account</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  router.push("/dashboard/settings");
+                  setIsSidebarCollapsed(false);
+                }}
+              >
+                Settings
+              </Button>
+            </div>
           </div>
           {/* Backdrop */}
           {isSidebarCollapsed && (

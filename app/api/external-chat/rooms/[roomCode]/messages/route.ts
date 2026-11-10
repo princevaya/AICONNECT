@@ -54,6 +54,14 @@ export async function POST(
       privateToUserIds?: string[];
       noteColor?: "amber" | "emerald" | "sky" | "rose" | "violet";
       poll?: { question: string; options: string[] } | null;
+      e2ee?: {
+        v: number;
+        alg: string;
+        iv: string;
+        ciphertext: string;
+        keyVersion?: number;
+        senderPublicKey?: string;
+      } | null;
     }>(req);
 
     const user = await ensureExternalChatUser(userId);
@@ -77,6 +85,7 @@ export async function POST(
       privateToUserIds: body?.privateToUserIds || [],
       noteColor: body?.noteColor || "amber",
       poll: body?.poll || null,
+      e2ee: body?.e2ee || null,
     });
     return NextResponse.json({ message }, { status: 201 });
   } catch (error) {

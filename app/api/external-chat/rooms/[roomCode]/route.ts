@@ -48,6 +48,7 @@ export async function PATCH(
       avatarUrl?: string;
       isPrivate?: boolean;
       isDiscoverable?: boolean;
+      e2eeEnabled?: boolean;
       archive?: boolean;
     }>(req);
     if (!body) {
@@ -74,6 +75,7 @@ export async function PATCH(
       avatarUrl: body.avatarUrl,
       isPrivate: body.isPrivate,
       isDiscoverable: body.isDiscoverable,
+      e2eeEnabled: body.e2eeEnabled,
     });
     return NextResponse.json({ room });
   } catch (error) {
