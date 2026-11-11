@@ -475,6 +475,7 @@ export default function MeetingRoom({
   const uiAudioContextRef = useRef<AudioContext | null>(null);
   const uiUploadUrlRef = useRef<string>("");
   const uiLocalSavedRef = useRef(false);
+  const uiRecordingStartedAtRef = useRef<number | null>(null);
   const intentionalLeaveRef = useRef(false);
   const desiredCameraEnabledRef = useRef(Boolean(videoEnabled));
   const desiredMicEnabledRef = useRef(Boolean(audioEnabled));
@@ -1025,6 +1026,7 @@ export default function MeetingRoom({
       uiRecordingChunksRef.current = [];
       uiUploadUrlRef.current = "";
       uiLocalSavedRef.current = false;
+      uiRecordingStartedAtRef.current = null;
     };
   }, []);
 
@@ -1598,84 +1600,51 @@ export default function MeetingRoom({
     URL.revokeObjectURL(url);
   };
 
-  const uploadUiRecordingToS3 = useCallback(async (blob: Blob, filename: string) => {
-    const uploadViaServerRoute = async () => {
-      setRecordingMessage("UI recording: retrying upload via server route...");
+  const uploadUiRecordingToS3 = useCallback(
+    async (blob: Blob, filename: string, durationSeconds = 0) => {
+      if (!blob || blob.size <= 0) {
+        throw new Error("Captured recording was empty (0 bytes).");
+      }
+
+      setRecordingMessage("Saving recording to server...");
       const formData = new FormData();
       formData.append(
         "file",
         new File([blob], filename, { type: blob.type || "video/webm" })
       );
       formData.append("roomName", roomName);
+      formData.append("duration", String(Math.max(0, Math.round(durationSeconds))));
+
       const response = await fetch("/api/meeting/recordings/upload", {
         method: "POST",
         body: formData,
       });
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
+        streamUrl?: string;
         url?: string;
       };
       if (!response.ok) {
         throw new Error(
-          `UI recording server-upload failed (${response.status}): ${
+          `Recording upload failed (${response.status}): ${
             payload.error || "unknown error"
           }`
         );
       }
-      return payload.url || "";
-    };
-
-    const extension = filename.toLowerCase().endsWith(".mp4") ? "mp4" : "webm";
-    setRecordingMessage("UI recording: creating upload URL...");
-    const createRes = await fetch("/api/meeting/recordings/upload-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomName,
-        contentType: blob.type || "video/webm",
-        extension,
-      }),
-    });
-    const createPayload = (await createRes.json().catch(() => ({}))) as {
-      error?: string;
-      putUrl?: string;
-      downloadUrl?: string;
-    };
-    if (!createRes.ok || !createPayload.putUrl) {
-      return uploadViaServerRoute();
-    }
-
-    setRecordingMessage("UI recording: uploading to S3...");
-    let putRes: Response;
-    try {
-      putRes = await fetch(createPayload.putUrl, {
-        method: "PUT",
-        headers: {
-          "Content-Type": blob.type || "video/webm",
-        },
-        body: blob,
-      });
-    } catch {
-      return uploadViaServerRoute();
-    }
-    if (!putRes.ok) {
-      const details = await putRes.text().catch(() => "");
-      if (putRes.status === 403 || putRes.status === 400) {
-        return uploadViaServerRoute();
-      }
-      throw new Error(
-        `UI recording S3 PUT failed (${putRes.status}): ${
-          details.slice(0, 220) || putRes.statusText || "unknown error"
-        }`
-      );
-    }
-
-    return createPayload.downloadUrl || "";
-  }, [roomName]);
+      return payload.streamUrl || payload.url || "";
+    },
+    [roomName]
+  );
 
   const stopUiRootCapture = useCallback(
     async (options?: { skipUpload?: boolean }) => {
       const recorder = uiRecorderRef.current;
+      const startedAt = uiRecordingStartedAtRef.current;
+      uiRecordingStartedAtRef.current = null;
+      const elapsedSeconds = startedAt
+        ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+        : 0;
+
       if (!recorder) return "";
       let blob: Blob;
       if (recorder.state === "inactive") {
@@ -1684,14 +1653,31 @@ export default function MeetingRoom({
         });
       } else {
         const stopped = new Promise<Blob>((resolve) => {
-          recorder.onstop = () => {
-            const b = new Blob(uiRecordingChunksRef.current, {
-              type: recorder.mimeType || "video/webm",
-            });
-            resolve(b);
+          let settled = false;
+          const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve(
+              new Blob(uiRecordingChunksRef.current, {
+                type: recorder.mimeType || "video/webm",
+              })
+            );
           };
+          recorder.onstop = finish;
+          setTimeout(finish, 4000);
         });
-        recorder.stop();
+        try {
+          if (recorder.state === "recording") {
+            recorder.requestData();
+          }
+        } catch {
+          // Ignore requestData errors when stopping.
+        }
+        try {
+          recorder.stop();
+        } catch {
+          // Ignore stop errors; fallback timer resolves.
+        }
         blob = await stopped;
       }
 
@@ -1706,14 +1692,13 @@ export default function MeetingRoom({
       uiRecorderRef.current = null;
       uiRecordingChunksRef.current = [];
       const filename = `meeting-ui-${roomName}-${Date.now()}.webm`;
-      // downloadBlobFile(filename, blob); // Disabled local browser download
       uiLocalSavedRef.current = true;
 
       if (options?.skipUpload) {
         uiUploadUrlRef.current = "";
         return "";
       }
-      const uploadedUrl = await uploadUiRecordingToS3(blob, filename);
+      const uploadedUrl = await uploadUiRecordingToS3(blob, filename, elapsedSeconds);
       uiUploadUrlRef.current = uploadedUrl;
       return uploadedUrl;
     },
@@ -1748,6 +1733,9 @@ export default function MeetingRoom({
     displayStream.getVideoTracks().forEach((track) => composed.addTrack(track));
 
     const audioContext = new AudioContext();
+    if (audioContext.state === "suspended") {
+      await audioContext.resume().catch(() => undefined);
+    }
     uiAudioContextRef.current = audioContext;
     const destination = audioContext.createMediaStreamDestination();
     let mixedCount = 0;
@@ -1815,16 +1803,27 @@ export default function MeetingRoom({
         uiRecordingChunksRef.current.push(event.data);
       }
     };
+    recorder.onerror = () => {
+      setRecordingMessage("Browser media recorder encountered an error.");
+    };
     recorder.start(1000);
 
+    uiRecordingStartedAtRef.current = Date.now();
     uiRecorderRef.current = recorder;
     uiCaptureStreamRef.current = displayStream;
 
     const [videoTrack] = displayStream.getVideoTracks();
     if (videoTrack) {
       videoTrack.onended = () => {
+        if (uiRecorderRef.current?.state === "recording") {
+          try {
+            uiRecorderRef.current.requestData();
+          } catch {
+            // Ignore flush error
+          }
+        }
         setRecordingMessage(
-          "Screen capture was ended from browser controls. Use Stop Recording to finalize."
+          "Screen share ended. Click Stop Recording to save and upload."
         );
       };
     }
@@ -1883,10 +1882,15 @@ export default function MeetingRoom({
         payload.message ||
           "Recording started. Ensure you shared the current meeting tab for full layout capture."
       );
-    } catch {
+    } catch (error) {
       if (uiRecorderRef.current) {
         await stopUiRootCapture({ skipUpload: true });
       }
+      setRecordingMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to start recording. Allow tab/screen capture to record."
+      );
       setRecordingState("idle");
     }
   }, [recordingState, roomName, setLocalRecordingAttribute, startUiRootCapture, stopUiRootCapture]);
@@ -1895,6 +1899,7 @@ export default function MeetingRoom({
     if (!recordingEgressId || recordingState !== "recording") return;
     setRecordingState("stopping");
     setRecordingMessage("");
+    let uploadError: string | null = null;
     try {
       const response = await fetch("/api/livekit/recordings/stop", {
         method: "POST",
@@ -1916,14 +1921,18 @@ export default function MeetingRoom({
       uiLocalSavedRef.current = false;
       if (uiRecorderRef.current) {
         uiCaptureAttempted = true;
-        uiUrl = await stopUiRootCapture();
+        try {
+          uiUrl = await stopUiRootCapture();
+        } catch (err) {
+          uploadError = err instanceof Error ? err.message : "Recording upload failed.";
+        }
       }
 
       const listRes = await fetch(
         `/api/livekit/recordings?room=${encodeURIComponent(roomName)}`,
         { cache: "no-store" }
-      );
-      const recordings = (await listRes.json().catch(() => [])) as Array<{
+      ).catch(() => null);
+      const recordings = (listRes ? await listRes.json().catch(() => []) : []) as Array<{
         egressId: string;
         roomName: string;
         status: string;
@@ -1939,12 +1948,6 @@ export default function MeetingRoom({
       const latest =
         recordings.find((entry) => entry.egressId === recordingEgressId) ||
         recordings[0];
-
-      if (uiUrl) {
-        window.open(uiUrl, "_blank", "noopener,noreferrer");
-      } else if (!uiCaptureAttempted && latest?.downloadUrl) {
-        window.open(latest.downloadUrl, "_blank", "noopener,noreferrer");
-      }
 
       const manifest = JSON.stringify(
         {
@@ -1962,24 +1965,28 @@ export default function MeetingRoom({
         filename,
         manifest,
         "application/json;charset=utf-8"
-      );
+      ).catch(() => undefined);
 
       setRecordingState("idle");
       setRecordingEgressId("");
       void setLocalRecordingAttribute(false);
-      if (uiCaptureAttempted && uiUrl) {
-        setRecordingMessage("UI recording saved (server upload complete).");
+      if (uploadError) {
+        setRecordingMessage(uploadError);
+      } else if (uiCaptureAttempted && uiUrl) {
+        setRecordingMessage("Recording saved! View or download it in Dashboard → Recording.");
       } else if (uiCaptureAttempted) {
-        setRecordingMessage("UI recording stop completed, but server upload failed. Check exact error above.");
+        setRecordingMessage("Recording stopped, but upload returned no URL.");
       } else {
-        setRecordingMessage("Recording stopped and metadata saved to S3.");
+        setRecordingMessage("Recording stopped.");
       }
     } catch (error) {
       console.error("Recording stop sequence failed:", error);
       setRecordingMessage(
         error instanceof Error ? error.message : "Failed to stop recording"
       );
-      setRecordingState("recording");
+      setRecordingState("idle");
+      setRecordingEgressId("");
+      void setLocalRecordingAttribute(false);
     }
   }, [
     recordingEgressId,
@@ -3175,7 +3182,10 @@ export default function MeetingRoom({
           </button>
 
           <button
-            onClick={() => {
+            onClick={async () => {
+              if (recordingState === "recording") {
+                await stopRecording();
+              }
               intentionalLeaveRef.current = true;
               roomRef.current?.disconnect();
               onLeave();

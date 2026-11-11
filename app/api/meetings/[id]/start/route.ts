@@ -1,5 +1,6 @@
 import { success, failure } from "@/app/api/_utils/response";
 import { findByCode, startMeeting } from "@/lib/meetings";
+import { ensureRoom } from "@/app/api/_utils/roomStore";
 import { auth } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
@@ -17,6 +18,7 @@ export async function POST(
 
     const meeting = await findByCode(id);
     if (!meeting) {
+      ensureRoom(id, userId);
       return failure("Meeting not found", 404);
     }
 
@@ -29,6 +31,8 @@ export async function POST(
     if (!started) {
       return failure("Failed to start meeting", 500);
     }
+
+    ensureRoom(meeting.code, userId);
 
     return success({
       started: true,

@@ -48,7 +48,18 @@ export default function PreJoinScreen({
   const [mediaBusy, setMediaBusy] = useState(false);
 
   // Time-based joining properties
-  const [meetingDetails, setMeetingDetails] = useState<any>(null);
+  const [meetingDetails, setMeetingDetails] = useState<{
+    status?: string;
+    allowJoinBeforeHost?: boolean;
+    waitingRoom?: boolean;
+    scheduledFor?: string;
+    endTime?: string | null;
+    timezone?: string;
+    duration?: string;
+    isActive?: boolean;
+    createdBy?: string | null;
+    meetingPassword?: string | null;
+  } | null>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(true);
   const [secondsLeft, setSecondsLeft] = useState(0);
   
@@ -244,9 +255,28 @@ export default function PreJoinScreen({
       return;
     }
 
+    // Fetch latest meeting status if not yet loaded so approval cannot be bypassed by clicking Join early
+    let effectiveDetails = meetingDetails;
+    if (!effectiveDetails && !isHost) {
+      try {
+        const res = await fetch(`/api/meetings/${encodeURIComponent(roomName)}/status`, {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.success) {
+            effectiveDetails = data;
+            setMeetingDetails(data);
+          }
+        }
+      } catch {
+        // Proceed with conservative waiting-room enforcement below
+      }
+    }
+
     // Passcode validation check (if required)
-    if (meetingDetails?.meetingPassword && !isHost) {
-      if (passwordInput.trim() !== meetingDetails.meetingPassword) {
+    if (effectiveDetails?.meetingPassword && !isHost) {
+      if (passwordInput.trim() !== effectiveDetails.meetingPassword) {
         setJoinError("Incorrect meeting passcode password. Please try again.");
         return;
       }
@@ -258,8 +288,9 @@ export default function PreJoinScreen({
       return;
     }
 
-    // Check if waiting room option is enabled
-    if (meetingDetails?.waitingRoom) {
+    // Require host approval unless waiting room is explicitly disabled
+    const requiresApproval = effectiveDetails ? effectiveDetails.waitingRoom !== false : true;
+    if (requiresApproval) {
       // 🔥 JOINER LOBBY FLOW (approval required)
       const joinRes = await fetch("/api/request-join", {
         method: "POST",

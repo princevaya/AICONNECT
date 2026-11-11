@@ -2,6 +2,8 @@ import { AccessToken } from "livekit-server-sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { getRoomServiceClient } from "@/lib/livekit-server";
+import { findByCode } from "@/lib/meetings";
+import { normalizeParticipantName, normalizeRoomId, rooms as roomStore } from "@/app/api/_utils/roomStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -58,6 +60,39 @@ export async function GET(req: NextRequest) {
 
     const identityPrefix = userId ? userId : "guest";
     const sessionIdentity = `${identityPrefix}:${session}:${join}`;
+
+    // ---- WAITING ROOM / APPROVAL ENFORCEMENT FOR MEETINGS ----
+    if (!room.startsWith("external-chat-") && !room.startsWith("interview-")) {
+      const meeting = await findByCode(room).catch(() => null);
+      const roomState = roomStore[normalizeRoomId(room)];
+      const isHost = Boolean(
+        (meeting?.createdBy && userId && meeting.createdBy === userId) ||
+          (roomState?.hostUserId && userId && roomState.hostUserId === userId)
+      );
+      const waitingRoomEnforced = meeting ? meeting.waitingRoom : Boolean(roomState);
+      const normalizedName = normalizeParticipantName(username);
+
+      if (waitingRoomEnforced && !isHost && !roomState?.settings?.autoApprove) {
+        if (roomState?.settings?.isLocked || roomState?.rejected?.includes(normalizedName)) {
+          return NextResponse.json(
+            {
+              error: "Host is not accepting new participants right now.",
+              code: "ROOM_LOCKED",
+            },
+            { status: 403 }
+          );
+        }
+        if (!roomState?.approved?.includes(normalizedName)) {
+          return NextResponse.json(
+            {
+              error: "Waiting for host approval before entering this meeting.",
+              code: "NOT_APPROVED",
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
 
     // ---- HARD CAP ENFORCEMENT ----
     let roomService;

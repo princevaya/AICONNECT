@@ -2,6 +2,7 @@
 
 export type RoomState = {
   hostCreatedAt: Date;
+  hostUserId?: string | null;
   pending: string[];
   approved: string[];
   rejected: string[];
@@ -30,12 +31,13 @@ export function normalizeParticipantName(name: string) {
   return name.trim();
 }
 
-export function ensureRoom(roomId: string) {
+export function ensureRoom(roomId: string, hostUserId?: string | null) {
   const normalizedRoomId = normalizeRoomId(roomId);
 
   if (!rooms[normalizedRoomId]) {
     rooms[normalizedRoomId] = {
       hostCreatedAt: new Date(),
+      hostUserId: hostUserId ?? null,
       pending: [],
       approved: [],
       rejected: [],
@@ -44,6 +46,10 @@ export function ensureRoom(roomId: string) {
         isLocked: false,
       },
     };
+  }
+
+  if (hostUserId && !rooms[normalizedRoomId].hostUserId) {
+    rooms[normalizedRoomId].hostUserId = hostUserId;
   }
 
   // Backfill settings for rooms created before settings existed.

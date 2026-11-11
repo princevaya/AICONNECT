@@ -18,8 +18,8 @@ export async function POST() {
         attendees: [],
         createdBy: userId ?? null,
         status: "Live",
-        allowJoinBeforeHost: true,
-        waitingRoom: false,
+        allowJoinBeforeHost: false,
+        waitingRoom: true,
         enableChat: true,
         allowScreenSharing: true,
       });
@@ -27,7 +27,7 @@ export async function POST() {
       console.warn("Failed to persist instant meeting to DB (proceeding in-memory):", dbErr);
     }
 
-    ensureRoom(roomId);
+    ensureRoom(roomId, userId);
 
     return NextResponse.json({
       roomId,

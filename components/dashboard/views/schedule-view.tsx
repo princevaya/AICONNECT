@@ -21,10 +21,14 @@ import {
   Loader2,
   Check,
   CalendarDays,
+  ChevronDown,
+  Globe,
   Key,
   Settings,
+  ShieldCheck,
   AlertCircle,
   Video,
+  X,
 } from "lucide-react";
 import { copyToClipboard } from "@/lib/utils";
 
@@ -137,12 +141,13 @@ export default function ScheduleView() {
   
   // Options inputs
   const [allowJoinBeforeHost, setAllowJoinBeforeHost] = useState(false);
-  const [waitingRoom, setWaitingRoom] = useState(false);
+  const [waitingRoom, setWaitingRoom] = useState(true);
   const [muteOnJoin, setMuteOnJoin] = useState(false);
   const [enableChat, setEnableChat] = useState(true);
   const [allowScreenSharing, setAllowScreenSharing] = useState(true);
   const [hasPassword, setHasPassword] = useState(false);
   const [meetingPassword, setMeetingPassword] = useState("");
+  const [scheduleListTab, setScheduleListTab] = useState<"day" | "all">("day");
 
   const [lastScheduled, setLastScheduled] = useState<ScheduledMeeting | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -154,10 +159,15 @@ export default function ScheduleView() {
 
   // Extensive timezones support
   const allTimezones = useMemo(() => {
-    if (typeof Intl !== "undefined" && typeof (Intl as any).supportedValuesOf === "function") {
+    if (typeof Intl !== "undefined") {
       try {
-        const list = (Intl as any).supportedValuesOf("timeZone") as string[];
-        if (list && list.length > 0) return list;
+        const intlWithSupportedValues = Intl as unknown as {
+          supportedValuesOf?: (key: string) => string[];
+        };
+        if (typeof intlWithSupportedValues.supportedValuesOf === "function") {
+          const list = intlWithSupportedValues.supportedValuesOf("timeZone");
+          if (list && list.length > 0) return list;
+        }
       } catch {}
     }
     return [
@@ -183,8 +193,8 @@ export default function ScheduleView() {
       const payload = await res.json();
       if (!payload.success) throw new Error(payload.error || "Failed to load");
       setMeetings(payload.meetings.map(normalizeMeeting));
-    } catch (err: any) {
-      setGlobalError(err.message);
+    } catch (err: unknown) {
+      setGlobalError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setIsLoading(false);
     }
@@ -279,7 +289,7 @@ export default function ScheduleView() {
       setDescription("");
       setAttendeeList([]);
       setAllowJoinBeforeHost(false);
-      setWaitingRoom(false);
+      setWaitingRoom(true);
       setMuteOnJoin(false);
       setEnableChat(true);
       setAllowScreenSharing(true);
@@ -288,8 +298,8 @@ export default function ScheduleView() {
       setSelectedHour("10");
       setSelectedMinute("00");
       setSelectedPeriod("AM");
-    } catch (err: any) {
-      setFormError(err.message);
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : "Failed to schedule");
     } finally {
       setIsSubmitting(false);
     }
@@ -328,7 +338,7 @@ export default function ScheduleView() {
     setDescription("");
     setAttendeeList([]);
     setAllowJoinBeforeHost(false);
-    setWaitingRoom(false);
+    setWaitingRoom(true);
     setMuteOnJoin(false);
     setEnableChat(true);
     setAllowScreenSharing(true);
@@ -369,223 +379,298 @@ export default function ScheduleView() {
   };
 
   /* ================= UI ================= */
+  const displayedSidebarMeetings =
+    scheduleListTab === "all"
+      ? meetings.filter((m) => m.status !== "Completed" && m.status !== "Cancelled")
+      : meetingsForDate;
+
   return (
-    <div className="space-y-8 pb-12">
+    <div className="mx-auto max-w-6xl space-y-6 pb-12">
       {/* Header */}
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b pb-6">
-        <div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-indigo-500 to-purple-600 bg-clip-text text-transparent">
-            Schedule Meeting
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Plan secure meetings, manage invitations, and configure lobby room options.
-          </p>
+      <header className="flex flex-col gap-4 border-b border-border/60 pb-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-600/10 text-blue-500 border border-blue-500/20">
+            <CalendarDays className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">
+              Schedule Meeting
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Plan secure meetings, send calendar invites, and manage waiting room approvals.
+            </p>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-          <span className="flex items-center gap-1.5 bg-secondary px-3 py-1.5 rounded-full text-xs font-semibold">
-            <CalendarCheck className="h-4 w-4 text-indigo-500" />
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/50 px-3 py-1.5 font-medium text-foreground/90">
+            <CalendarCheck className="h-3.5 w-3.5 text-blue-500" />
             {meetings.length} scheduled
           </span>
-          <span className="flex items-center gap-1.5 bg-secondary px-3 py-1.5 rounded-full text-xs font-semibold">
-            <Users className="h-4 w-4 text-purple-500" />
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/50 px-3 py-1.5 font-medium text-foreground/90">
+            <Users className="h-3.5 w-3.5 text-emerald-500" />
             {totalAttendees} attendees
           </span>
-          <Button variant="outline" size="sm" onClick={fetchMeetings} className="h-8 hover:bg-secondary">
-            <RefreshCw className="h-4 w-4 mr-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchMeetings}
+            disabled={isLoading}
+            className="h-8 rounded-full border-border/70 px-3 text-xs hover:bg-muted"
+          >
+            <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
         </div>
       </header>
 
       {globalError && (
-        <div className="flex items-center gap-2 border border-red-200 bg-red-50 p-3 rounded-lg text-sm text-red-700">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          <span>Error loading: {globalError}</span>
+        <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>Error loading meetings: {globalError}</span>
         </div>
       )}
 
-      <section className="grid gap-8 lg:grid-cols-[380px_1fr]">
-        
-        {/* Left Side: Calendar & Selected Date List */}
-        <div className="space-y-6">
-          <Card className="shadow-lg border border-border/80">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-base font-bold">Select Date</CardTitle>
-              <CardDescription>Choose a day to see schedule</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center">
+      <section className="grid items-start gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+        {/* Left Side: Compact Calendar & Schedule Feed */}
+        <Card className="border-border/80 bg-card/90 shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">Select Date</CardTitle>
+            <CardDescription className="text-xs">
+              Pick a date to schedule or inspect meetings
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex justify-center">
               <Calendar
                 mode="single"
                 selected={selectedDate}
                 onSelect={(d) => d && setSelectedDate(d)}
-                className="rounded-md border p-1"
+                className="rounded-xl border border-border/70 bg-background/60 p-2"
               />
+            </div>
 
-              {meetingsForDate.length > 0 && (
-                <div className="mt-6 w-full space-y-3">
-                  <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    Meetings on {format(selectedDate, "MMM d, yyyy")}:
+            <div className="border-t border-border/60 pt-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex rounded-lg bg-muted/70 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setScheduleListTab("day")}
+                    className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                      scheduleListTab === "day"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {format(selectedDate, "MMM d")} ({meetingsForDate.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleListTab("all")}
+                    className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                      scheduleListTab === "all"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    All Upcoming
+                  </button>
+                </div>
+              </div>
+
+              {displayedSidebarMeetings.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 px-4 py-5 text-center">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {scheduleListTab === "all"
+                      ? "No upcoming meetings scheduled."
+                      : `No meetings on ${format(selectedDate, "MMM d, yyyy")}.`}
                   </p>
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                    {meetingsForDate.map((m) => {
-                      const badgeColor =
-                        m.status === "Live"
-                          ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                          : m.status === "WaitingForHost"
-                          ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                          : m.status === "Completed"
-                          ? "bg-zinc-500/10 text-zinc-500 border-zinc-500/20"
-                          : m.status === "Cancelled"
-                          ? "bg-rose-500/10 text-rose-500 border-rose-500/20"
-                          : "bg-indigo-500/10 text-indigo-500 border-indigo-500/20";
+                  <p className="mt-1 text-[11px] text-muted-foreground/75">
+                    Fill the form to schedule a meeting for this day.
+                  </p>
+                </div>
+              ) : (
+                <div className="max-h-[320px] space-y-2.5 overflow-y-auto pr-1">
+                  {displayedSidebarMeetings.map((m) => {
+                    const badgeColor =
+                      m.status === "Live"
+                        ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/25"
+                        : m.status === "WaitingForHost"
+                        ? "bg-amber-500/10 text-amber-500 border-amber-500/25"
+                        : m.status === "Completed"
+                        ? "bg-zinc-500/10 text-zinc-400 border-zinc-500/25"
+                        : m.status === "Cancelled"
+                        ? "bg-rose-500/10 text-rose-500 border-rose-500/25"
+                        : "bg-blue-500/10 text-blue-500 border-blue-500/25";
 
-                      return (
-                        <div key={m.id} className="border border-border/60 rounded-xl p-3 bg-secondary/20 hover:bg-secondary/40 transition-colors space-y-2">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="font-bold text-sm truncate">{m.title}</p>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${badgeColor}`}>
-                              {m.status}
+                    return (
+                      <div
+                        key={m.id}
+                        className="rounded-xl border border-border/70 bg-muted/25 p-3 transition-colors hover:bg-muted/45 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="truncate text-sm font-semibold text-foreground">{m.title}</p>
+                          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badgeColor}`}>
+                            {m.status}
+                          </span>
+                        </div>
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <p className="flex items-center gap-1.5 font-medium text-foreground/85">
+                            <Clock className="h-3.5 w-3.5 text-blue-500" />
+                            <span>
+                              {scheduleListTab === "all" ? `${format(m.scheduledFor, "MMM d")} · ` : ""}
+                              {formatViewerTime(m.scheduledFor)} · {m.duration}
                             </span>
-                          </div>
-                          
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            <p className="flex items-center gap-1 font-medium text-foreground/80">
-                              <Clock className="h-3 w-3" />
-                              {formatViewerTime(m.scheduledFor)}
-                            </p>
-                            {m.notes && <p className="truncate italic">"{m.notes}"</p>}
-                            <p className="truncate">👥 {m.attendees.join(", ") || "No attendees"}</p>
-                          </div>
-
-                          <div className="flex gap-2 pt-2 border-t border-border/40 flex-wrap">
+                          </p>
+                          {m.notes && <p className="truncate italic">&quot;{m.notes}&quot;</p>}
+                          <p className="truncate text-[11px]">
+                            {m.attendees.length > 0 ? m.attendees.join(", ") : "No attendees yet"}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 border-t border-border/50 pt-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleCardCopyLink(m.code)}
+                            className="h-7 px-2.5 text-[11px]"
+                          >
+                            <Copy className="mr-1 h-3 w-3" />
+                            {cardCopyState[m.code] === "copied" ? "Copied!" : "Copy link"}
+                          </Button>
+                          {m.status !== "Completed" && m.status !== "Cancelled" && (
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => handleCardCopyLink(m.code)}
-                              className="h-7 text-[11px] px-2"
+                              onClick={() => {
+                                window.location.href = `/meeting/join?room=${m.code}&host=true`;
+                              }}
+                              className="h-7 bg-blue-600 px-2.5 text-[11px] text-white hover:bg-blue-700"
                             >
-                              <Copy className="h-3 w-3 mr-1" />
-                              {cardCopyState[m.code] === "copied" ? "Copied!" : "Copy link"}
+                              <Video className="mr-1 h-3 w-3" />
+                              Join Host
                             </Button>
-                            {m.status !== "Completed" && m.status !== "Cancelled" && (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  window.location.href = `/meeting/join?room=${m.code}&host=true`;
-                                }}
-                                className="h-7 text-[11px] px-2 bg-indigo-600 hover:bg-indigo-700 text-white"
-                              >
-                                Join Host
-                              </Button>
-                            )}
-                          </div>
+                          )}
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Right Side: Redesigned Scheduler Form */}
-        <div className="space-y-6">
-          <Card className="shadow-lg border border-border/80">
-            <CardHeader className="bg-secondary/10 pb-4 border-b">
-              <CardTitle className="text-lg font-bold">New Meeting Schedule</CardTitle>
-              <CardDescription>
-                Configure duration, timezones, calendar invitations, and permissions.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 pt-6">
+        {/* Right Side: Clean Scheduler Form */}
+        <Card className="border-border/80 bg-card/90 shadow-sm">
+          <CardHeader className="border-b border-border/60 bg-muted/20 pb-4">
+            <CardTitle className="text-lg font-semibold">New Meeting Schedule</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">
+              Configure duration, timezone, invitations, and host moderation controls.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            {/* Title & Description */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Meeting Title <span className="text-destructive">*</span>
+                </label>
+                <Input
+                  placeholder="e.g. Weekly Product Sync"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="h-10 rounded-lg border-border/80 bg-background/70"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Description
+                </label>
+                <Input
+                  placeholder="e.g. Review deliverables and checklist"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="h-10 rounded-lg border-border/80 bg-background/70"
+                />
+              </div>
+            </div>
 
-              {/* Title & Description */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Meeting Title <span className="text-red-500">*</span>
-                  </label>
+            {/* Date & Time */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Selected Date
+                </label>
+                <div className="relative flex items-center">
+                  <CalendarDays className="pointer-events-none absolute left-3 h-4 w-4 text-blue-500" />
                   <Input
-                    placeholder="e.g. Weekly Product Sync"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    className="focus-visible:ring-indigo-500"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Description
-                  </label>
-                  <Input
-                    placeholder="e.g. Review deliverables and checklist"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="focus-visible:ring-indigo-500"
+                    type="text"
+                    value={format(selectedDate, "eeee, MMMM d, yyyy")}
+                    readOnly
+                    className="h-10 rounded-lg border-border/80 bg-muted/40 pl-9 font-medium text-foreground focus-visible:ring-0"
                   />
                 </div>
               </div>
 
-              {/* Date, Time, Duration & Timezone Fields Grid */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Selected Date
-                  </label>
-                  <Input
-                    type="text"
-                    value={format(selectedDate, "eeee, MMMM d, yyyy")}
-                    disabled
-                    className="bg-secondary/45 font-medium text-foreground cursor-not-allowed"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Start Time <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex items-center gap-1.5 h-10 w-full">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Start Time <span className="text-destructive">*</span>
+                </label>
+                <div className="grid grid-cols-[1fr_auto_1fr_84px] items-center gap-1.5">
+                  <div className="relative">
                     <select
+                      aria-label="Hour"
                       value={selectedHour}
                       onChange={(e) => setSelectedHour(e.target.value)}
-                      className="h-10 w-full rounded-md border border-input bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="h-10 w-full appearance-none rounded-lg border border-border/80 bg-background/70 pl-3 pr-7 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                     >
                       {Array.from({ length: 12 }, (_, i) => String(i + 1)).map((hr) => (
                         <option key={hr} value={hr}>{hr}</option>
                       ))}
                     </select>
-                    <span className="text-muted-foreground font-bold">:</span>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  </div>
+                  <span className="text-center font-semibold text-muted-foreground">:</span>
+                  <div className="relative">
                     <select
+                      aria-label="Minute"
                       value={selectedMinute}
                       onChange={(e) => setSelectedMinute(e.target.value)}
-                      className="h-10 w-full rounded-md border border-input bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="h-10 w-full appearance-none rounded-lg border border-border/80 bg-background/70 pl-3 pr-7 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                     >
                       {Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0")).map((mn) => (
                         <option key={mn} value={mn}>{mn}</option>
                       ))}
                     </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  </div>
+                  <div className="relative">
                     <select
+                      aria-label="AM or PM"
                       value={selectedPeriod}
                       onChange={(e) => setSelectedPeriod(e.target.value)}
-                      className="h-10 w-full rounded-md border border-input bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="h-10 w-full appearance-none rounded-lg border border-border/80 bg-background/70 pl-3 pr-7 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                     >
                       <option value="AM">AM</option>
                       <option value="PM">PM</option>
                     </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   </div>
                 </div>
               </div>
+            </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Duration
-                  </label>
-                  <div className="flex gap-2">
+            {/* Duration & Timezone */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Duration
+                </label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
                     <select
+                      aria-label="Meeting duration"
                       value={duration}
                       onChange={(e) => setDuration(e.target.value)}
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      className="h-10 w-full appearance-none rounded-lg border border-border/80 bg-background/70 pl-3 pr-8 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                     >
                       <option value="15 Minutes">15 Minutes</option>
                       <option value="30 Minutes">30 Minutes</option>
@@ -596,44 +681,54 @@ export default function ScheduleView() {
                       <option value="3 Hours">3 Hours</option>
                       <option value="Custom">Custom</option>
                     </select>
-                    {duration === "Custom" && (
-                      <div className="flex items-center gap-1.5 shrink-0 animate-in fade-in-50 duration-200">
-                        <Input
-                          type="number"
-                          value={customDuration}
-                          onChange={(e) => setCustomDuration(e.target.value)}
-                          className="w-20 h-10 focus-visible:ring-indigo-500"
-                          placeholder="Min"
-                        />
-                        <span className="text-xs text-muted-foreground font-semibold">Min</span>
-                      </div>
-                    )}
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   </div>
+                  {duration === "Custom" && (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Input
+                        type="number"
+                        value={customDuration}
+                        onChange={(e) => setCustomDuration(e.target.value)}
+                        className="h-10 w-20 rounded-lg border-border/80"
+                        placeholder="Min"
+                      />
+                      <span className="text-xs font-medium text-muted-foreground">Min</span>
+                    </div>
+                  )}
                 </div>
+              </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                    Timezone <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setIsTzDropdownOpen(!isTzDropdownOpen)}
-                      className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm text-left hover:bg-secondary/20 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Timezone <span className="text-destructive">*</span>
+                </label>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsTzDropdownOpen((v) => !v)}
+                    className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-3 text-left text-sm font-medium transition-colors hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <span className="truncate">{timezone}</span>
-                      <span className="text-muted-foreground text-xs">▼</span>
-                    </button>
-                    {isTzDropdownOpen && (
-                      <div className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-lg backdrop-blur-sm">
+                    </span>
+                    <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${isTzDropdownOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {isTzDropdownOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-40"
+                        onClick={() => setIsTzDropdownOpen(false)}
+                      />
+                      <div className="absolute z-50 mt-1.5 w-full rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-xl">
                         <Input
                           placeholder="Search timezone..."
                           value={tzSearch}
                           onChange={(e) => setTzSearch(e.target.value)}
-                          className="mb-2 h-9 text-xs focus-visible:ring-indigo-500"
+                          className="mb-2 h-9 text-xs"
                           autoFocus
                         />
-                        <div className="space-y-0.5 max-h-[180px] overflow-y-auto">
+                        <div className="max-h-[190px] space-y-0.5 overflow-y-auto">
                           {filteredTzs.length > 0 ? (
                             filteredTzs.map((tz) => (
                               <button
@@ -644,242 +739,239 @@ export default function ScheduleView() {
                                   setIsTzDropdownOpen(false);
                                   setTzSearch("");
                                 }}
-                                className={`flex w-full items-center rounded px-2 py-1.5 text-xs text-left hover:bg-indigo-500 hover:text-white transition-colors ${
-                                  timezone === tz ? "bg-indigo-500/10 text-indigo-500 font-semibold" : ""
+                                className={`flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-blue-600 hover:text-white ${
+                                  timezone === tz ? "bg-blue-500/15 font-semibold text-blue-500" : ""
                                 }`}
                               >
                                 {tz}
                               </button>
                             ))
                           ) : (
-                            <p className="p-2 text-xs text-muted-foreground text-center">No timezones found.</p>
+                            <p className="p-2 text-center text-xs text-muted-foreground">No timezones found.</p>
                           )}
                         </div>
                       </div>
-                    )}
-                  </div>
+                    </>
+                  )}
                 </div>
               </div>
+            </div>
 
-              {/* Attendees / Invite list */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Invite Participants
-                </label>
-                <div className="flex gap-2">
+            {/* Attendees */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Invite Participants
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter email address and press Enter"
+                  value={attendeeInput}
+                  onChange={(e) => setAttendeeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddAttendee())}
+                  className="h-10 rounded-lg border-border/80 bg-background/70"
+                />
+                <Button variant="outline" type="button" onClick={handleAddAttendee} className="h-10 shrink-0 rounded-lg px-4">
+                  Add
+                </Button>
+              </div>
+              {attendeeList.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 rounded-xl border border-border/60 bg-muted/20 p-2.5">
+                  {attendeeList.map((email) => (
+                    <span
+                      key={email}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/25 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-500"
+                    >
+                      {email}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAttendee(email)}
+                        aria-label={`Remove ${email}`}
+                        className="rounded-full p-0.5 hover:bg-destructive/15 hover:text-destructive transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Each participant receives a calendar invitation with room links and an .ics attachment.
+              </p>
+            </div>
+
+            {/* Settings & Security */}
+            <div className="rounded-xl border border-border/70 bg-muted/15 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-blue-500" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                    Meeting Settings &amp; Moderation
+                  </span>
+                </div>
+                {waitingRoom && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-500">
+                    <ShieldCheck className="h-3 w-3" /> Host Approval On
+                  </span>
+                )}
+              </div>
+
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {[
+                  {
+                    checked: waitingRoom,
+                    onChange: setWaitingRoom,
+                    title: "Waiting Room",
+                    desc: "Require host approval before entry",
+                  },
+                  {
+                    checked: allowJoinBeforeHost,
+                    onChange: setAllowJoinBeforeHost,
+                    title: "Allow Join Before Host",
+                    desc: "Let attendees enter lobby early",
+                  },
+                  {
+                    checked: muteOnJoin,
+                    onChange: setMuteOnJoin,
+                    title: "Mute on Join",
+                    desc: "Start attendees with mic muted",
+                  },
+                  {
+                    checked: enableChat,
+                    onChange: setEnableChat,
+                    title: "Enable Chat",
+                    desc: "Allow in-meeting text messages",
+                  },
+                  {
+                    checked: allowScreenSharing,
+                    onChange: setAllowScreenSharing,
+                    title: "Allow Screen Sharing",
+                    desc: "Permit participants to share screen",
+                  },
+                  {
+                    checked: hasPassword,
+                    onChange: setHasPassword,
+                    title: "Meeting Passcode",
+                    desc: "Require password to enter room",
+                  },
+                ].map((opt) => (
+                  <label
+                    key={opt.title}
+                    className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors ${
+                      opt.checked
+                        ? "border-blue-500/40 bg-blue-500/5"
+                        : "border-border/60 bg-background/40 hover:bg-muted/30"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={opt.checked}
+                      onChange={(e) => opt.onChange(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded accent-blue-600"
+                    />
+                    <div className="min-w-0 text-xs">
+                      <p className="font-semibold text-foreground">{opt.title}</p>
+                      <p className="text-[11px] text-muted-foreground">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              {hasPassword && (
+                <div className="flex max-w-sm items-center gap-2 rounded-lg border border-border/80 bg-background p-2">
+                  <Key className="h-4 w-4 shrink-0 text-amber-500" />
                   <Input
-                    placeholder="Enter email address and press Enter"
-                    value={attendeeInput}
-                    onChange={(e) => setAttendeeInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleAddAttendee())}
-                    className="focus-visible:ring-indigo-500"
+                    type="password"
+                    placeholder="Enter meeting passcode"
+                    value={meetingPassword}
+                    onChange={(e) => setMeetingPassword(e.target.value)}
+                    className="h-8 border-0 bg-transparent text-xs focus-visible:ring-0"
                   />
-                  <Button variant="outline" onClick={handleAddAttendee} className="h-10 hover:bg-secondary">
-                    Add
+                </div>
+              )}
+            </div>
+
+            {formError && (
+              <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs font-medium text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+
+            {/* Submit Row */}
+            <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-border/60 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleCancel}
+                disabled={isSubmitting}
+                className="h-10 rounded-lg px-4"
+              >
+                Reset
+              </Button>
+              <Button
+                type="button"
+                onClick={handleScheduleMeeting}
+                disabled={isSubmitting}
+                className="h-10 rounded-lg bg-blue-600 px-6 font-semibold text-white hover:bg-blue-700"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Scheduling...
+                  </>
+                ) : (
+                  "Schedule Meeting"
+                )}
+              </Button>
+            </div>
+
+            {/* Result Summary */}
+            {lastScheduled && (
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+                <p className="flex items-center gap-2 text-sm font-semibold text-emerald-500">
+                  <Check className="h-4 w-4 rounded-full bg-emerald-500 p-0.5 text-white" />
+                  Meeting Scheduled Successfully!
+                </p>
+
+                <div className="space-y-1.5 rounded-lg border border-border/60 bg-background/60 p-3 text-xs text-muted-foreground">
+                  <p className="font-semibold text-foreground">{lastScheduled.title}</p>
+                  <p>
+                    {formatViewerTime(lastScheduled.scheduledFor)} ({timezone}) · {lastScheduled.duration}
+                  </p>
+                  {lastScheduled.notes && <p className="italic">&quot;{lastScheduled.notes}&quot;</p>}
+                  {lastScheduled.attendees.length > 0 && (
+                    <p>Invites sent to: {lastScheduled.attendees.join(", ")}</p>
+                  )}
+                  <p className="mt-2 select-all break-all border-t border-border/50 pt-2 font-mono text-[10px]">
+                    {resolveLink(lastScheduled.link)}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleCopyLink(lastScheduled.link)}
+                    className="h-8 text-xs"
+                  >
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    {copyState === "copied" ? "Copied!" : "Copy link"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      window.location.href = `/meeting/join?room=${lastScheduled.code}&host=true`;
+                    }}
+                    className="h-8 bg-blue-600 text-xs text-white hover:bg-blue-700"
+                  >
+                    <Video className="mr-1.5 h-3.5 w-3.5" />
+                    Join as Host
                   </Button>
                 </div>
-                {attendeeList.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2 bg-secondary/10 p-2 rounded-lg border">
-                    {attendeeList.map((email) => (
-                      <span
-                        key={email}
-                        className="flex items-center gap-1 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 px-2 py-1 rounded-full text-xs font-medium"
-                      >
-                        {email}
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveAttendee(email)}
-                          className="hover:text-red-500 hover:bg-red-50 rounded-full p-0.5 transition-colors ml-1"
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <p className="text-[11px] text-muted-foreground">
-                  Each participant receives a rich calendar invitation containing the room links and .ics file.
-                </p>
               </div>
-
-              {/* Options panel */}
-              <div className="border border-border/80 rounded-xl p-4 space-y-4 bg-secondary/10">
-                <div className="flex items-center gap-1.5 border-b pb-2">
-                  <Settings className="h-4 w-4 text-indigo-500" />
-                  <span className="text-xs font-bold uppercase tracking-wider">Meeting Settings & Options</span>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={allowJoinBeforeHost}
-                      onChange={(e) => setAllowJoinBeforeHost(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Allow Join Before Host</p>
-                      <p className="text-muted-foreground text-[10px]">Let attendees enter early</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={waitingRoom}
-                      onChange={(e) => setWaitingRoom(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Waiting Room</p>
-                      <p className="text-muted-foreground text-[10px]">Approve joiners manually</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={muteOnJoin}
-                      onChange={(e) => setMuteOnJoin(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Mute on Join</p>
-                      <p className="text-muted-foreground text-[10px]">Mute mics automatically</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={enableChat}
-                      onChange={(e) => setEnableChat(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Enable Chat</p>
-                      <p className="text-muted-foreground text-[10px]">Allow text messages</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={allowScreenSharing}
-                      onChange={(e) => setAllowScreenSharing(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Allow Screen Sharing</p>
-                      <p className="text-muted-foreground text-[10px]">Let users share slides</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={hasPassword}
-                      onChange={(e) => setHasPassword(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div className="text-xs">
-                      <p className="font-semibold">Meeting Password</p>
-                      <p className="text-muted-foreground text-[10px]">Protect with password passcode</p>
-                    </div>
-                  </label>
-                </div>
-
-                {hasPassword && (
-                  <div className="flex gap-2 items-center bg-background border p-2 rounded-lg max-w-sm mt-2 transition-all">
-                    <Key className="h-4 w-4 text-amber-500 shrink-0" />
-                    <Input
-                      type="password"
-                      placeholder="Enter passcode/password"
-                      value={meetingPassword}
-                      onChange={(e) => setMeetingPassword(e.target.value)}
-                      className="h-8 text-xs focus-visible:ring-indigo-500"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {formError && (
-                <div className="flex items-center gap-2 border border-red-200 bg-red-50 p-3 rounded-lg text-xs text-red-700 font-medium">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{formError}</span>
-                </div>
-              )}
-
-              {/* Submit Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/60">
-                <Button
-                  variant="outline"
-                  onClick={handleCancel}
-                  disabled={isSubmitting}
-                  className="hover:bg-secondary h-10"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleScheduleMeeting}
-                  disabled={isSubmitting}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold h-10 px-6"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Scheduling...
-                    </>
-                  ) : (
-                    "Schedule Meeting"
-                  )}
-                </Button>
-              </div>
-
-              {/* Result Summary */}
-              {lastScheduled && (
-                <div className="border border-emerald-200 p-4 rounded-xl space-y-3 bg-emerald-500/[0.03] transition-all">
-                  <p className="text-sm font-semibold text-emerald-600 flex items-center gap-1.5">
-                    <Check className="h-5 w-5 bg-emerald-500 text-white rounded-full p-0.5" />
-                    Meeting Scheduled Successfully!
-                  </p>
-                  
-                  <div className="text-xs text-muted-foreground space-y-1.5 bg-secondary/20 p-3 rounded-lg border">
-                    <p className="font-bold text-foreground">{lastScheduled.title}</p>
-                    <p>🕒 {formatViewerTime(lastScheduled.scheduledFor)} ({timezone})</p>
-                    {lastScheduled.notes && <p>📝 Note: "{lastScheduled.notes}"</p>}
-                    <p>👥 Invites dispatched to: {lastScheduled.attendees.join(", ")}</p>
-                    <p className="pt-1.5 font-mono text-[10px] break-all border-t mt-2 select-all">
-                      Link: {resolveLink(lastScheduled.link)}
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2 flex-wrap">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleCopyLink(lastScheduled.link)}
-                      className="h-8 text-xs hover:bg-secondary"
-                    >
-                      <Copy className="h-3.5 w-3.5 mr-1" />
-                      {copyState === "copied" ? "Copied!" : "Copy link"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        window.location.href = `/meeting/join?room=${lastScheduled.code}&host=true`;
-                      }}
-                      className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
-                    >
-                      Join as Host
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-            </CardContent>
-          </Card>
-        </div>
+            )}
+          </CardContent>
+        </Card>
       </section>
     </div>
   );

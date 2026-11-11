@@ -26,6 +26,7 @@ export async function GET(
     const stat = fs.statSync(filePath);
     const fileSize = stat.size;
     const range = req.headers.get("range");
+    const isDownload = req.nextUrl.searchParams.get("download") === "1";
 
     const extension = safeFilename.toLowerCase().endsWith(".mp4") ? "mp4" : "webm";
     const contentType = `video/${extension}`;
@@ -33,9 +34,10 @@ export async function GET(
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
       const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const rawEnd = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const end = Math.min(Number.isNaN(rawEnd) ? fileSize - 1 : rawEnd, fileSize - 1);
 
-      if (start >= fileSize || end >= fileSize) {
+      if (Number.isNaN(start) || start < 0 || start >= fileSize || end < start) {
         return new Response(null, {
           status: 416,
           headers: {
@@ -59,14 +61,20 @@ export async function GET(
         },
       });
 
+      const headers: Record<string, string> = {
+        "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunksize.toString(),
+        "Content-Type": contentType,
+        "Cache-Control": "private, max-age=0, must-revalidate",
+      };
+      if (isDownload) {
+        headers["Content-Disposition"] = `attachment; filename="${safeFilename}"`;
+      }
+
       return new Response(readableStream, {
         status: 206,
-        headers: {
-          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
-          "Accept-Ranges": "bytes",
-          "Content-Length": chunksize.toString(),
-          "Content-Type": contentType,
-        },
+        headers,
       });
     } else {
       const fileStream = fs.createReadStream(filePath);
@@ -81,13 +89,19 @@ export async function GET(
         },
       });
 
+      const headers: Record<string, string> = {
+        "Content-Length": fileSize.toString(),
+        "Content-Type": contentType,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, max-age=0, must-revalidate",
+      };
+      if (isDownload) {
+        headers["Content-Disposition"] = `attachment; filename="${safeFilename}"`;
+      }
+
       return new Response(readableStream, {
         status: 200,
-        headers: {
-          "Content-Length": fileSize.toString(),
-          "Content-Type": contentType,
-          "Accept-Ranges": "bytes",
-        },
+        headers,
       });
     }
   } catch (error) {

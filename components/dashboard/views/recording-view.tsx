@@ -176,11 +176,18 @@ export default function RecordingView() {
   }, []);
 
   const handleDownload = useCallback((recording: Recording) => {
-    if (!recording.downloadUrl) {
+    const targetUrl = recording.downloadUrl || recording.streamUrl;
+    if (!targetUrl) {
       alert("Download is not available yet.");
       return;
     }
-    window.open(recording.downloadUrl, "_blank", "noopener,noreferrer");
+    const anchor = document.createElement("a");
+    anchor.href = targetUrl;
+    anchor.download = recording.filename || `recording-${recording.roomName}.webm`;
+    anchor.rel = "noopener noreferrer";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
   }, []);
 
   const filteredRecordings = useMemo(() => {
@@ -453,10 +460,13 @@ export default function RecordingView() {
                 )}
                 <video
                   key={videoUrl}
+                  src={videoUrl}
                   controls
                   autoPlay
                   playsInline
+                  preload="metadata"
                   className="w-full h-full"
+                  onLoadedMetadata={() => setLoadingVideo(false)}
                   onLoadedData={() => setLoadingVideo(false)}
                   onCanPlay={() => setLoadingVideo(false)}
                   onError={(e) => {
@@ -475,9 +485,7 @@ export default function RecordingView() {
                     }
                     setVideoError(msg);
                   }}
-                >
-                  <source src={videoUrl} type={videoUrl.toLowerCase().endsWith(".mp4") ? "video/mp4" : "video/webm"} />
-                </video>
+                />
               </>
             ) : (
               <div className="w-full h-full flex items-center justify-center text-white/70">

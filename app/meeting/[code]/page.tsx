@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
-import { PhoneOff, Loader2 } from "lucide-react";
+import { PhoneOff } from "lucide-react";
 
 export default function MeetingPage() {
   const params = useParams();
@@ -32,7 +32,7 @@ export default function MeetingPage() {
   const [isLoadingPending, setIsLoadingPending] = useState(false);
   const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
-  const [isHostPanelCollapsed, setIsHostPanelCollapsed] = useState(false);
+  const [isHostPanelCollapsed, setIsHostPanelCollapsed] = useState(true);
   const mutationVersionRef = useRef(0);
   const [isModerating, setIsModerating] = useState(false);
   const [shareLink, setShareLink] = useState("");
@@ -67,7 +67,11 @@ export default function MeetingPage() {
           { cache: "no-store" }
         ).catch(() => null);
 
-        let statusData: any = null;
+        let statusData: {
+          createdBy?: string | null;
+          waitingRoom?: boolean;
+          status?: string;
+        } | null = null;
         if (statusRes && statusRes.ok) {
           const json = await statusRes.json().catch(() => null);
           if (json?.success) {
@@ -75,11 +79,12 @@ export default function MeetingPage() {
           }
         }
 
+        const hasCreator = Boolean(statusData?.createdBy);
         const isMeetingCreator = Boolean(
-          statusData?.createdBy && user?.id && statusData.createdBy === user.id
+          hasCreator && user?.id && statusData?.createdBy === user.id
         );
 
-        if (isMeetingCreator || isExplicitHost) {
+        if (isMeetingCreator || (!hasCreator && isExplicitHost)) {
           // ✅ User is Host
           setIsHost(true);
           await fetch(`/api/meetings/${encodeURIComponent(meetingCode)}/start`, {
@@ -90,8 +95,8 @@ export default function MeetingPage() {
           // ✅ User is Attendee
           setIsHost(false);
 
-          // Only verify lobby approval if waiting room is explicitly enabled
-          if (statusData?.waitingRoom) {
+          // Enforce waiting-room approval unless explicitly disabled for this meeting
+          if (statusData?.waitingRoom !== false) {
             const approvalRes = await fetch(
               `/api/check-approval?roomId=${encodeURIComponent(meetingCode)}&name=${encodeURIComponent(
                 participantName
@@ -407,7 +412,11 @@ export default function MeetingPage() {
         <Button
           onClick={() => setIsHostPanelCollapsed(false)}
           size="sm"
-          className="fixed bottom-24 right-3 z-50 rounded-full shadow-lg sm:bottom-auto sm:right-6 sm:top-6"
+          className={`fixed bottom-24 right-3 z-50 rounded-full shadow-lg sm:bottom-auto sm:right-6 sm:top-6 ${
+            pendingUsers.length > 0
+              ? "bg-amber-500 text-slate-950 hover:bg-amber-400 animate-pulse font-semibold"
+              : ""
+          }`}
         >
           Host Panel ({pendingUsers.length})
         </Button>
