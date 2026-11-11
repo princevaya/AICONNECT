@@ -166,7 +166,7 @@
 /* WhatsApp-style styles for external chat only */
 @layer components {
   .whatsapp-shell {
-    background: #ECE5DD;
+    background: #EFEAE2;
   }
   
   .dark .whatsapp-shell {
@@ -175,20 +175,22 @@
 
   .whatsapp-chat-grid {
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr) 320px;
-    gap: 0.75rem;
+    grid-template-columns: 60px 360px minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .whatsapp-chat-grid.with-info-panel {
+    grid-template-columns: 60px 340px minmax(0, 1fr) 320px;
   }
 
   .whatsapp-panel {
-
-    border-radius: 0.75rem;
-    border: 1px solid rgba(233, 237, 239, 0.6);
-    backdrop-filter: blur(20px);
+    border-radius: 0;
+    border: none;
     overflow: hidden;
   }
 
   .dark .whatsapp-panel {
-    border-color: rgba(42, 57, 66, 0.6);
+    border-color: rgba(42, 57, 66, 0.7);
   }
 
   .chat-doodle-bg {
@@ -298,15 +300,10 @@
     background: #128C7E;
   }
 
-  /* Responsive - hide right panel on smaller screens */
-  @media (max-width: 1279px) {
-    .whatsapp-chat-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  @media (max-width: 767px) {
-    .whatsapp-chat-grid {
+  /* Responsive - stack/drawer below desktop */
+  @media (max-width: 1023px) {
+    .whatsapp-chat-grid,
+    .whatsapp-chat-grid.with-info-panel {
       grid-template-columns: 1fr;
     }
   }

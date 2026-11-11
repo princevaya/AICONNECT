@@ -16,14 +16,16 @@ const TABS: Array<{ id: FilterTab; label: string }> = [
 
 export function ChatShell({
   children,
-  className
+  className,
+  infoOpen = false,
 }: {
   children: ReactNode;
   className?: string;
+  infoOpen?: boolean;
 }) {
   return (
-    <div className={`chat-shell min-h-[calc(100dvh-4rem)] rounded-xl p-1 sm:p-3 ${className || ''}`}>
-      <div className="whatsapp-chat-grid mx-auto w-full max-w-[1920px] h-[calc(100dvh-4.5rem)] sm:h-[calc(100dvh-5.5rem)]">
+    <div className={`chat-shell h-[100dvh] w-full overflow-hidden ${className || ''}`}>
+      <div className={`whatsapp-chat-grid ${infoOpen ? "with-info-panel" : ""} h-full w-full`}>
         {children}
       </div>
     </div>
@@ -52,16 +54,18 @@ export function SidebarFilterTabs({
   onChange: (tab: FilterTab) => void;
 }) {
   return (
-    <div className="mb-3 grid grid-cols-4 gap-1 rounded-lg border border-border/70 bg-muted/35 p-1">
+    <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-0.5">
       {TABS.map((tab) => (
         <Button
           key={tab.id}
           type="button"
           size="sm"
-          variant={active === tab.id ? "default" : "ghost"}
+          variant="ghost"
           className={cn(
-            "h-7 text-xs transition-all",
-            active === tab.id ? "shadow-sm" : "text-muted-foreground hover:text-foreground"
+            "h-7 rounded-full px-3 text-xs font-medium transition-all",
+            active === tab.id
+              ? "bg-[#D9FDD3] text-[#008069] hover:bg-[#D9FDD3] dark:bg-[#0A332C] dark:text-[#00A884] dark:hover:bg-[#0A332C]"
+              : "bg-[#F0F2F5] text-[#54656F] hover:bg-[#E9EDEF] dark:bg-[#202C33] dark:text-[#8696A0] dark:hover:bg-[#2A3942]"
           )}
           onClick={() => onChange(tab.id)}
         >

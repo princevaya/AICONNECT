@@ -92,6 +92,14 @@ export default function DashboardLayoutClient({ children }: Props) {
     },
   ];
 
+  if (pathname.startsWith("/dashboard/external-chat")) {
+    return (
+      <div className="h-[100dvh] w-full overflow-hidden bg-background text-foreground font-sans">
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-sans select-none">
       {/* HEADER */}

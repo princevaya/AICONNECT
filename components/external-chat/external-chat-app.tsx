@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
+  ArrowLeft,
   Check,
   CheckCheck,
   Bell,
@@ -11,9 +12,9 @@ import {
   Download,
   FileImage,
   HelpCircle,
+  Info,
   LogIn,
   Loader2,
-  LayoutDashboard,
   MessageSquare,
   Mic,
   MoreVertical,
@@ -28,6 +29,7 @@ import {
   Reply,
   Search,
   Send,
+  Smile,
   Star,
   StarOff,
   UserPlus,
@@ -534,9 +536,11 @@ export default function ExternalChatApp() {
   const [createGroupName, setCreateGroupName] = useState("");
   const [searching, setSearching] = useState(false);
   const [messageSearchIndex, setMessageSearchIndex] = useState(0);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [emojiTrayOpen, setEmojiTrayOpen] = useState(false);
   const [menuOpenForRoomCode, setMenuOpenForRoomCode] = useState<string | null>(null);
   const [messageMenuOpenId, setMessageMenuOpenId] = useState<string | null>(null);
-  const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(false);
+  const [infoPanelCollapsed, setInfoPanelCollapsed] = useState(true);
   const [filterTab, setFilterTab] = useState<FilterTab>("all");
   const [starredRoomCodes, setStarredRoomCodes] = useState<string[]>([]);
   const [starredPanelOpen, setStarredPanelOpen] = useState(false);
@@ -1623,8 +1627,11 @@ export default function ExternalChatApp() {
         !(e.target instanceof HTMLSelectElement);
       if (!isMetaK && !slashFocus) return;
       e.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+      setMessageSearchOpen(true);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1662,10 +1669,10 @@ export default function ExternalChatApp() {
   }, []);
 
   useEffect(() => {
-    if (!error) return;
+    if (!error || setupRequired) return;
     const t = setTimeout(() => setError(""), 6000);
     return () => clearTimeout(t);
-  }, [error]);
+  }, [error, setupRequired]);
 
   useEffect(() => {
     if (inAppNotifications.length === 0) return;
@@ -3268,7 +3275,7 @@ export default function ExternalChatApp() {
             <ThemeToggle />
           </div>
           <div className="rounded-xl border border-amber-500/20 bg-background/40 p-4 text-sm text-amber-50">
-            {error}
+            {error || "Postgres schema tables are missing or database endpoint is unreachable."}
           </div>
           <div className="mt-4 space-y-2 text-sm text-amber-100/90">
             <p>Checks:</p>
@@ -3282,22 +3289,34 @@ export default function ExternalChatApp() {
   }
 
   return (
-    <div className="whatsapp-scrollbar">
-      <ChatShell className="whatsapp-shell">
-        <ChatPanel className="hidden p-3 xl:flex flex-col h-full min-h-0 whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-[#25D366]" />
-              <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">AI Connect</p>
-            </div>
-            <ThemeToggle />
-          </div>
-
-          <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/50 dark:bg-[#2A3942]/40 p-1">
+    <div className="whatsapp-scrollbar h-[100dvh] w-full overflow-hidden">
+      <ChatShell className="whatsapp-shell" infoOpen={!infoPanelCollapsed}>
+        <nav
+          aria-label="WhatsApp navigation"
+          className="hidden lg:flex flex-col items-center justify-between py-3 px-1.5 bg-[#F0F2F5] dark:bg-[#202C33] border-r border-[#E9EDEF] dark:border-[#222D34] select-none"
+        >
+          <div className="flex flex-col items-center gap-2">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={() => router.push("/dashboard")}
+              title="Back to Dashboard"
+              aria-label="Back to Dashboard"
+              className="h-10 w-10 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div className="my-0.5 h-px w-7 bg-[#D1D7DB] dark:bg-[#2A3942]" />
             {[
-              { id: "chats" as const, label: "Chats", icon: MessageSquare },
-              { id: "calls" as const, label: "Calls", icon: History },
-              { id: "status" as const, label: "Status", icon: CircleDot },
+              {
+                id: "chats" as const,
+                label: "Chats",
+                icon: MessageSquare,
+                badge: visibleRooms.reduce((sum, r) => sum + (r.unreadCount || 0), 0),
+              },
+              { id: "calls" as const, label: "Calls", icon: Phone, badge: 0 },
+              { id: "status" as const, label: "Status", icon: CircleDot, badge: 0 },
             ].map((tab) => {
               const Icon = tab.icon;
               const active = navSection === tab.id;
@@ -3305,45 +3324,160 @@ export default function ExternalChatApp() {
                 <button
                   key={`desktop-nav-${tab.id}`}
                   type="button"
+                  title={tab.label}
+                  aria-label={tab.label}
                   onClick={() => {
                     setNavSection(tab.id);
                     if (tab.id === "calls") void loadCallHistory();
                   }}
-                  className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                  className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
                     active
-                      ? "bg-[#25D366] text-white shadow-sm"
-                      : "text-[#667781] dark:text-[#AEBAC1] hover:bg-white/70 dark:hover:bg-[#1F2C33]"
+                      ? "bg-[#D9FDD3] text-[#008069] dark:bg-[#00A884]/20 dark:text-[#00A884]"
+                      : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{tab.label}</span>
+                  <Icon className="h-5 w-5" />
+                  {tab.badge > 0 ? (
+                    <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-semibold text-[#111B21]">
+                      {tab.badge > 99 ? "99+" : tab.badge}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
+            <button
+              type="button"
+              title="Incoming Requests"
+              aria-label="Incoming Requests"
+              onClick={() => {
+                setIncomingPanelOpen((v) => !v);
+                setStarredPanelOpen(false);
+              }}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
+                incomingPanelOpen
+                  ? "bg-[#D9FDD3] text-[#008069] dark:bg-[#00A884]/20 dark:text-[#00A884]"
+                  : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+              }`}
+            >
+              <UserPlus className="h-5 w-5" />
+              {incoming.length > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-semibold text-[#111B21]">
+                  {incoming.length > 9 ? "9+" : incoming.length}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              title="Starred Messages"
+              aria-label="Starred Messages"
+              onClick={() => {
+                setStarredPanelOpen((v) => !v);
+                setIncomingPanelOpen(false);
+              }}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
+                starredPanelOpen
+                  ? "bg-[#D9FDD3] text-[#008069] dark:bg-[#00A884]/20 dark:text-[#00A884]"
+                  : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+              }`}
+            >
+              <Star className="h-5 w-5" />
+              {serverStarred.length > 0 || bookmarkedMessages.length > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-semibold text-[#111B21]">
+                  {(serverStarred.length || bookmarkedMessages.length) > 9 ? "9+" : serverStarred.length || bookmarkedMessages.length}
+                </span>
+              ) : null}
+            </button>
+          </div>
+
+          <div className="flex flex-col items-center gap-2">
+            <button
+              type="button"
+              title="Notifications"
+              aria-label="Notifications"
+              onClick={() => setNotificationsOpen((v) => !v)}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
+                notificationsOpen
+                  ? "bg-[#D9FDD3] text-[#008069] dark:bg-[#00A884]/20 dark:text-[#00A884]"
+                  : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+              }`}
+            >
+              <Bell className="h-5 w-5" />
+              {inAppNotifications.length > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-semibold text-[#111B21]">
+                  {inAppNotifications.length > 9 ? "9+" : inAppNotifications.length}
+                </span>
+              ) : null}
+            </button>
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => setProfileSettingsOpen(true)}
+              title="Profile, Wallpaper & E2EE Settings"
+              aria-label="Open Profile & Settings"
+              className="h-9 w-9 overflow-hidden rounded-full border border-[#D1D7DB] dark:border-[#2A3942] bg-[#00A884]/15 transition hover:ring-2 hover:ring-[#00A884]/50"
+            >
+              <UserAvatar
+                user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
+                className="h-full w-full object-cover"
+                fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#00A884]"
+              />
+            </button>
+          </div>
+        </nav>
+
+        <ChatPanel className="hidden lg:flex flex-col h-full min-h-0 whatsapp-panel bg-white dark:bg-[#111B21] border-r border-[#E9EDEF] dark:border-[#222D34]">
+          <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+            <h1 className="text-[20px] font-bold tracking-tight text-[#111B21] dark:text-[#E9EDEF]">
+              {navSection === "calls" ? "Calls" : navSection === "status" ? "Status" : "Chats"}
+            </h1>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setCreateGroupOpen(true)}
+                title="Create new group"
+                className="h-8 gap-1 rounded-full px-2.5 text-xs font-medium text-[#00A884] hover:bg-[#00A884]/10"
+              >
+                <PlusCircle className="h-4 w-4" />
+                <span>Group</span>
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={() => setProfileSettingsOpen(true)}
+                title="Profile & Settings"
+                aria-label="Open Profile & Settings"
+                className="h-8 w-8 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-[#F0F2F5] dark:hover:bg-[#202C33]"
+              >
+                <Settings2 className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {navSection === "calls" ? (
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col px-3 pb-2">
               <div className="mb-2 flex flex-wrap gap-1">
                 {(["all", "missed", "incoming", "outgoing", "audio", "video"] as const).map((f) => (
                   <button
                     key={`call-filter-${f}`}
                     type="button"
                     onClick={() => setCallHistoryFilter(f)}
-                    className={`rounded-full px-2.5 py-0.5 text-[11px] capitalize border transition ${
+                    className={`rounded-full px-2.5 py-0.5 text-[11px] capitalize transition ${
                       callHistoryFilter === f
-                        ? "border-[#25D366] bg-[#25D366] text-white"
-                        : "border-[#E9EDEF] dark:border-[#2A3942] text-[#667781] dark:text-[#AEBAC1]"
+                        ? "bg-[#D9FDD3] text-[#008069] font-medium dark:bg-[#0A332C] dark:text-[#00A884]"
+                        : "bg-[#F0F2F5] text-[#54656F] dark:bg-[#202C33] dark:text-[#AEBAC1]"
                     }`}
                   >
                     {f}
                   </button>
                 ))}
               </div>
-              <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
+              <div className="flex-1 overflow-y-auto">
                 {loadingCalls ? (
                   <div className="flex items-center text-xs text-[#667781] dark:text-[#AEBAC1] py-4 justify-center">
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" /> Loading call log...
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#00A884]" /> Loading call log...
                   </div>
                 ) : null}
                 {callHistory
@@ -3364,10 +3498,10 @@ export default function ExternalChatApp() {
                     return (
                       <div
                         key={`call-hist-${c.id}`}
-                        className="flex items-center justify-between gap-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 p-2.5 hover:bg-[#F0F2F5]/60 dark:hover:bg-[#2A3942]/40"
+                        className="flex items-center justify-between gap-2 border-b border-[#F0F2F5] dark:border-[#222D34]/60 px-2 py-2.5 hover:bg-[#F5F6F6] dark:hover:bg-[#202C33]"
                       >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${c.status === "missed" ? "bg-red-500/15 text-red-500" : "bg-[#25D366]/15 text-[#25D366]"}`}>
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${c.status === "missed" ? "bg-red-500/15 text-red-500" : "bg-[#00A884]/15 text-[#00A884]"}`}>
                             {c.status === "missed" ? (
                               <PhoneMissed className="h-4 w-4" />
                             ) : isOutgoing ? (
@@ -3377,7 +3511,7 @@ export default function ExternalChatApp() {
                             )}
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">{title}</p>
+                            <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">{title}</p>
                             <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">
                               {c.type === "video" ? "Video" : "Audio"} · {c.status}
                               {dur ? ` · ${dur}` : ""}
@@ -3390,15 +3524,15 @@ export default function ExternalChatApp() {
                         {peerMember ? (
                           <Button
                             size="sm"
-                            variant="outline"
+                            variant="ghost"
                             onClick={() => {
                               if (c.room?.code) setActiveRoomCode(c.room.code);
                               setActiveCall({ type: c.type, targetUser: peerMember });
                             }}
                             title={`Call back (${c.type})`}
-                            className="h-8 w-8 p-0 shrink-0 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                            className="h-8 w-8 p-0 shrink-0 rounded-full text-[#00A884] hover:bg-[#00A884]/10"
                           >
-                            {c.type === "video" ? <Video className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}
+                            {c.type === "video" ? <Video className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
                           </Button>
                         ) : null}
                       </div>
@@ -3410,7 +3544,7 @@ export default function ExternalChatApp() {
               </div>
             </div>
           ) : navSection === "status" ? (
-            <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-hidden px-3 pb-2">
               <StatusTabContent
                 userId={selfUserId || ""}
                 onViewStatus={(_status, index, allStatuses) => setStatusViewer({ statuses: allStatuses, initialIndex: index })}
@@ -3418,38 +3552,73 @@ export default function ExternalChatApp() {
             </div>
           ) : (
             <>
-              <div className="relative mb-3 space-y-2 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/35 dark:bg-[#2A3942]/35 p-2">
-                <div className="flex gap-2">
-                  <div className="relative min-w-0 flex-1">
-                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                    <Input className="pl-8 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find people or send request..." />
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setCreateGroupOpen(true)} className="shrink-0 border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
-                    <PlusCircle className="mr-1 h-4 w-4" />
-                    Group
-                  </Button>
+              <div className="px-3 pb-2">
+                <div className="relative flex items-center">
+                  <Search className="pointer-events-none absolute left-3 h-4 w-4 text-[#54656F] dark:text-[#8696A0]" />
+                  <Input
+                    id="whatsapp-sidebar-search"
+                    className="h-9 rounded-lg border-0 bg-[#F0F2F5] dark:bg-[#202C33] pl-9 pr-8 text-sm text-[#111B21] dark:text-[#E9EDEF] placeholder:text-[#667781] dark:placeholder:text-[#8696A0] focus-visible:ring-1 focus-visible:ring-[#00A884]"
+                    value={desktopChatSearch || query}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDesktopChatSearch(val);
+                      setQuery(val);
+                    }}
+                    placeholder="Search or start new chat"
+                  />
+                  {desktopChatSearch || query ? (
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      onClick={() => {
+                        setDesktopChatSearch("");
+                        setQuery("");
+                      }}
+                      className="absolute right-2.5 rounded-full p-0.5 text-[#54656F] hover:bg-black/5 dark:text-[#8696A0] dark:hover:bg-white/10"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
                 </div>
+                {selectedGroupMemberIds.length > 0 ? (
+                  <div className="mt-1.5 flex items-center justify-between rounded-md bg-[#D9FDD3]/60 dark:bg-[#0A332C]/60 px-2.5 py-1 text-[11px] text-[#008069] dark:text-[#00A884]">
+                    <span>{selectedGroupMemberIds.length} selected for group</span>
+                    <button type="button" onClick={() => setCreateGroupOpen(true)} className="font-semibold underline">
+                      Create Group
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="px-3 pb-2">
+                <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
+              </div>
+
+              <div className="flex-1 overflow-y-auto">
                 {query.trim() ? (
-                  <div className="absolute top-full left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-2 shadow-lg space-y-1">
-                    {searching ? <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Searching...</p> : null}
+                  <div className="border-b border-[#E9EDEF] dark:border-[#222D34] pb-2 mb-1">
+                    <p className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#00A884]">
+                      People &amp; Directory
+                    </p>
+                    {searching ? <p className="px-4 py-1 text-xs text-[#667781] dark:text-[#AEBAC1]">Searching...</p> : null}
                     {!searching && results.length === 0 ? (
-                      <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">No users found matching &quot;{query.trim()}&quot;</p>
+                      <p className="px-4 py-1 text-xs text-[#667781] dark:text-[#AEBAC1]">No users found matching &quot;{query.trim()}&quot;</p>
                     ) : null}
                     {results.map((u) => {
                       const rel = getPeerRelation(u);
                       return (
-                        <div key={u.id} className="flex items-center justify-between gap-2 rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/65 dark:bg-[#1F2C33]/65 px-2 py-1.5">
+                        <div key={u.id} className="flex items-center justify-between gap-2 px-3 py-2 hover:bg-[#F5F6F6] dark:hover:bg-[#202C33]">
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]">{userLabel(u)}</p>
+                            <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">{userLabel(u)}</p>
                             <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">{u.email || "No email provided"}</p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <Button
                               size="sm"
-                              variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "outline"}
+                              variant={selectedGroupMemberIds.includes(u.clerkId) ? "default" : "ghost"}
                               onClick={() => toggleGroupMember(u.clerkId)}
                               title="Add to new group selection"
-                              className={selectedGroupMemberIds.includes(u.clerkId) ? "bg-[#25D366] hover:bg-[#128C7E]" : "border-[#E9EDEF] dark:border-[#2A3942]"}
+                              className={`h-7 w-7 p-0 ${selectedGroupMemberIds.includes(u.clerkId) ? "bg-[#00A884] hover:bg-[#008f6f] text-white" : "text-[#54656F] dark:text-[#AEBAC1]"}`}
                             >
                               <PlusCircle className="h-3.5 w-3.5" />
                             </Button>
@@ -3458,22 +3627,22 @@ export default function ExternalChatApp() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => void startDirectMessageWithUser(u)}
-                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                                className="h-7 px-2 text-xs border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10"
                                 title="Open chat"
                               >
-                                <MessageSquare className="h-3.5 w-3.5 mr-1" /> Chat
+                                Chat
                               </Button>
                             ) : rel.kind === "incoming" ? (
                               <Button
                                 size="sm"
                                 variant="outline"
                                 onClick={() => void actRequest(rel.requestId, "accept")}
-                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                                className="h-7 px-2 text-xs border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10"
                               >
                                 Accept
                               </Button>
                             ) : rel.kind === "outgoing" ? (
-                              <Button size="sm" variant="outline" disabled className="text-[11px]">
+                              <Button size="sm" variant="outline" disabled className="h-7 px-2 text-[11px]">
                                 Pending
                               </Button>
                             ) : (
@@ -3481,10 +3650,10 @@ export default function ExternalChatApp() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => void sendRequest(u.clerkId)}
-                                className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                                className="h-7 px-2 text-xs border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10"
                                 title="Send message request"
                               >
-                                <UserPlus className="h-3.5 w-3.5 mr-1" /> Request
+                                <UserPlus className="h-3 w-3 mr-1" /> Request
                               </Button>
                             )}
                           </div>
@@ -3493,27 +3662,17 @@ export default function ExternalChatApp() {
                     })}
                   </div>
                 ) : null}
-                {selectedGroupMemberIds.length > 0 ? (
-                  <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">{selectedGroupMemberIds.length} selected for group creation</p>
+
+                {loadingRooms ? (
+                  <div className="flex items-center px-4 py-4 text-sm text-[#667781] dark:text-[#AEBAC1]">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#00A884]" />Loading chats...
+                  </div>
                 ) : null}
-              </div>
-
-              <div className="mb-2 relative">
-                <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-[#667781] dark:text-[#AEBAC1]" />
-                <Input
-                  className="h-8 pl-8 text-xs bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942]"
-                  value={desktopChatSearch}
-                  onChange={(e) => setDesktopChatSearch(e.target.value)}
-                  placeholder="Filter conversations..."
-                />
-              </div>
-
-              <SidebarFilterTabs active={filterTab} onChange={setFilterTab} />
-
-              <div className="flex-1 space-y-1 overflow-y-auto pr-1">
-                {loadingRooms ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading chats...</div> : null}
                 {!loadingRooms && filteredRooms.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-[#667781] dark:text-[#AEBAC1]">No conversations match this view.</p>
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-xs font-medium text-[#667781] dark:text-[#AEBAC1]">No conversations match this view.</p>
+                    <p className="mt-1 text-[11px] text-[#667781]/80 dark:text-[#AEBAC1]/70">Use the search box above to find people and connect.</p>
+                  </div>
                 ) : null}
                 {filteredRooms.map((room) => {
                   const starred = starredRoomCodeSet.has(room.code);
@@ -3531,209 +3690,236 @@ export default function ExternalChatApp() {
                       }}
                       onTouchStart={(e) => onConversationTouchStart(e.changedTouches[0]?.clientX ?? 0)}
                       onTouchEnd={(e) => onConversationTouchEnd(e.changedTouches[0]?.clientX ?? 0, room.code)}
-                      className={`whatsapp-row-hover w-full rounded-lg border ${compactMode ? "px-2.5 py-1.5" : "px-3 py-2"} text-left transition-all ${activeRoomCode === room.code ? "whatsapp-row-active" : "border-[#E9EDEF]/70 dark:border-[#2A3942]/70"
-                        } cursor-pointer`}
+                      className={`group w-full border-b border-[#F0F2F5] dark:border-[#222D34]/60 ${
+                        compactMode ? "px-3 py-2" : "px-3.5 py-2.5"
+                      } text-left transition-colors cursor-pointer ${
+                        activeRoomCode === room.code
+                          ? "bg-[#F0F2F5] dark:bg-[#2A3942]"
+                          : "hover:bg-[#F5F6F6] dark:hover:bg-[#202C33]"
+                      }`}
                     >
-                  <div className="flex items-start gap-2">
-                    <div className="relative">
-                      <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-[#25D366]/15 text-xs font-semibold text-[#25D366]">
-                        {roomAvatarImage(room, selfUserId) ? (
-                          <img src={roomAvatarImage(room, selfUserId) || ""} alt={room.name} className="h-full w-full object-cover" />
-                        ) : (
-                          (room.name || "DM").slice(0, 2).toUpperCase()
-                        )}
-                      </div>
-                      <OnlineDot />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">{room.name}</p>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setStarredRoomCodes((prev) =>
-                                prev.includes(room.code) ? prev.filter((c) => c !== room.code) : [...prev, room.code]
-                              );
-                            }}
-                            className="rounded p-0.5 text-[#667781] dark:text-[#AEBAC1] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] hover:text-[#111B21] dark:hover:text-[#E9EDEF]"
-                          >
-                            <Pin className={`h-3.5 w-3.5 ${starred ? "text-[#25D366]" : ""}`} />
-                          </button>
-                          {room.unreadCount > 0 ? <span className="rounded-full bg-[#25D366] px-2 py-0.5 text-[10px] text-white">{room.unreadCount}</span> : null}
+                      <div className="flex items-center gap-3">
+                        <div className="relative shrink-0">
+                          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-[#00A884]/15 text-sm font-semibold text-[#00A884]">
+                            {roomAvatarImage(room, selfUserId) ? (
+                              <img src={roomAvatarImage(room, selfUserId) || ""} alt={room.name} className="h-full w-full object-cover" />
+                            ) : (
+                              (room.name || "DM").slice(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <OnlineDot />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="truncate text-[15px] font-medium text-[#111B21] dark:text-[#E9EDEF]">{room.name}</p>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setStarredRoomCodes((prev) =>
+                                    prev.includes(room.code) ? prev.filter((c) => c !== room.code) : [...prev, room.code]
+                                  );
+                                }}
+                                title={starred ? "Unpin chat" : "Pin chat"}
+                                className={`rounded p-0.5 text-[#667781] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10 ${
+                                  starred ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                                } transition-opacity`}
+                              >
+                                <Pin className={`h-3.5 w-3.5 ${starred ? "text-[#00A884]" : ""}`} />
+                              </button>
+                              {room.unreadCount > 0 ? (
+                                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[#25D366] px-1.5 text-[11px] font-semibold text-[#111B21]">
+                                  {room.unreadCount}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <p className="truncate text-xs text-[#667781] dark:text-[#8696A0]">
+                            {room.type === "group" ? "Group" : "Direct"} chat{room.archivedAt ? " · Archived" : ""}
+                          </p>
                         </div>
                       </div>
-                      <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">
-                        {room.type === "group" ? "Group" : "Direct"} chat{room.archivedAt ? " · Archived" : ""}
-                      </p>
                     </div>
+                  );
+                })}
+                {archivedRooms.length > 0 ? (
+                  <div className="border-t border-[#E9EDEF] dark:border-[#222D34] bg-[#F0F2F5]/30 dark:bg-[#202C33]/30 p-3">
+                    <button
+                      type="button"
+                      className="mb-2 flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-[#00A884]"
+                      onClick={() => setArchivedOpen((v) => !v)}
+                    >
+                      <span>Archived ({archivedRooms.length})</span>
+                      <ChevronRight className={`h-3.5 w-3.5 transition ${archivedOpen ? "rotate-90" : ""}`} />
+                    </button>
+                    {archivedOpen ? (
+                      <div className="space-y-1">
+                        {archivedRooms.map((room) => {
+                          const role = room.viewerMembership?.role;
+                          const canUnarchive = role === "owner" || role === "admin";
+                          return (
+                            <div key={`archived-${room.id}`} className="rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#111B21] p-2">
+                              <button
+                                type="button"
+                                onClick={() => setActiveRoomCode(room.code)}
+                                className="w-full text-left"
+                              >
+                                <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">{room.name}</p>
+                                <p className="text-[11px] text-[#667781] dark:text-[#8696A0]">Read-only archived chat</p>
+                              </button>
+                              <div className="mt-2 flex items-center gap-1">
+                                {canUnarchive ? (
+                                  <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(false, room.code)} className="border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10">
+                                    Unarchive
+                                  </Button>
+                                ) : null}
+                                <Button size="sm" variant="ghost" onClick={() => void deleteChatForMe(room.code)} className="text-[#EF4444] hover:bg-[#EF4444]/10">
+                                  <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete For Me
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              );
-            })}
-            {archivedRooms.length > 0 ? (
-              <div className="mt-3 rounded-lg border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#F0F2F5]/20 dark:bg-[#2A3942]/20 p-2">
-                <button
-                  type="button"
-                  className="mb-2 flex w-full items-center justify-between text-left text-xs font-semibold uppercase tracking-wide text-[#667781] dark:text-[#AEBAC1]"
-                  onClick={() => setArchivedOpen((v) => !v)}
-                >
-                  <span>Archived</span>
-                  <ChevronRight className={`h-3.5 w-3.5 transition ${archivedOpen ? "rotate-90" : ""}`} />
-                </button>
-                {archivedOpen ? <div className="space-y-1">
-                  {archivedRooms.map((room) => {
-                    const role = room.viewerMembership?.role;
-                    const canUnarchive = role === "owner" || role === "admin";
-                    return (
-                      <div key={`archived-${room.id}`} className="rounded-md border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-white/50 dark:bg-[#1F2C33]/50 p-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveRoomCode(room.code)}
-                          className="w-full text-left"
-                        >
-                          <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">{room.name}</p>
-                          <p className="text-[11px] text-[#667781] dark:text-[#AEBAC1]">Read-only archived chat</p>
-                        </button>
-                        <div className="mt-2 flex items-center gap-1">
-                          {canUnarchive ? (
-                            <Button size="sm" variant="outline" onClick={() => void toggleArchiveRoom(false, room.code)} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
-                              Unarchive
-                            </Button>
-                          ) : null}
-                          <Button size="sm" variant="ghost" onClick={() => void deleteChatForMe(room.code)} className="text-[#EF4444] hover:bg-[#EF4444]/10">
-                            <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete For Me
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div> : null}
+                ) : null}
               </div>
-            ) : null}
-          </div>
-          </>
+            </>
           )}
-            <div className="mt-2 flex items-center justify-between gap-2 border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 pt-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <div className="h-9 w-9 overflow-hidden rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 bg-[#25D366]/15">
-                  <UserAvatar
-                    user={selfUser || { id: "self", clerkId: "self", name: "You", email: null, imageUrl: profileImageUrl }}
-                    className="h-full w-full object-cover"
-                    fallbackClassName="flex h-full w-full items-center justify-center text-xs font-semibold text-[#25D366]"
-                  />
-                </div>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF]">{selfUser?.name || "My Profile"}</p>
-                  <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">Settings, Wallpaper &amp; E2EE</p>
-                </div>
-              </div>
-              <Button size="sm" variant="outline" onClick={() => setProfileSettingsOpen(true)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Open Profile & Settings">
-                <Settings2 className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-              </Button>
-            </div>
         </ChatPanel>
 
-        <ChatPanel className={`flex min-h-0 flex-col ${infoPanelCollapsed ? "xl:col-span-2" : ""} whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80`}>
-          <div className="sticky top-0 z-10 border-b border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/85 dark:bg-[#1F2C33]/85 p-2.5 sm:p-3 backdrop-blur whatsapp-header">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+        <ChatPanel className="flex min-h-0 flex-col whatsapp-panel bg-[#EFEAE2] dark:bg-[#0B141A]">
+          <div className="sticky top-0 z-10 border-b border-[#E9EDEF] dark:border-[#222D34] bg-[#F0F2F5] dark:bg-[#202C33] px-3 py-2 whatsapp-header">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="xl:hidden text-[#667781] dark:text-[#AEBAC1] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]"
+                  onClick={() => router.push("/dashboard")}
+                  title="Back to Dashboard"
+                  aria-label="Back to Dashboard"
+                  className="lg:hidden h-8 w-8 shrink-0 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="lg:hidden h-8 w-8 shrink-0 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
                   onClick={() => setMobileSidebarOpen(true)}
+                  aria-label="Open conversations"
+                  title="Open conversations"
                 >
                   <PanelLeft className="h-4 w-4" />
                 </Button>
-                <div className="relative">
-                  <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#25D366]/15 text-xs font-semibold text-[#25D366]">
-                    {activeRoom && roomAvatarImage(activeRoom, selfUserId) ? (
-                      <img src={roomAvatarImage(activeRoom, selfUserId) || ""} alt={activeRoom.name} className="h-full w-full object-cover" />
-                    ) : (
-                      (activeRoom?.name || "CH").slice(0, 2).toUpperCase()
-                    )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (activeRoom) setInfoPanelCollapsed((v) => !v);
+                  }}
+                  className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+                >
+                  <div className="relative shrink-0">
+                    <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-[#00A884]/15 text-xs font-semibold text-[#00A884]">
+                      {activeRoom && roomAvatarImage(activeRoom, selfUserId) ? (
+                        <img src={roomAvatarImage(activeRoom, selfUserId) || ""} alt={activeRoom.name} className="h-full w-full object-cover" />
+                      ) : (
+                        (activeRoom?.name || "AC").slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    {activeRoom ? <OnlineDot /> : null}
                   </div>
-                  <OnlineDot />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <p className="truncate text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">{activeRoom?.name || "Select a conversation"}</p>
-                    {activeRoom?.e2eeEnabled ? (
-                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500" title="End-to-End Encrypted">
-                        <Lock className="h-2.5 w-2.5" /> E2EE
-                      </span>
-                    ) : null}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <p className="truncate text-[15px] font-semibold text-[#111B21] dark:text-[#E9EDEF]">
+                        {activeRoom?.name || "AI Connect"}
+                      </p>
+                      {activeRoom?.e2eeEnabled ? (
+                        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-[#00A884]/15 px-1.5 py-0.5 text-[10px] font-medium text-[#00A884]" title="End-to-End Encrypted">
+                          <Lock className="h-2.5 w-2.5" /> E2EE
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="truncate text-xs text-[#667781] dark:text-[#8696A0]">
+                      {activeRoomTypingUsers.length > 0
+                        ? `${activeRoomTypingUsers.join(", ")} typing...`
+                        : activeRoomSubtitle}
+                    </p>
                   </div>
-                  <p className="truncate text-xs text-[#667781] dark:text-[#AEBAC1]">
-                    {activeRoomTypingUsers.length > 0
-                      ? `${activeRoomTypingUsers.join(", ")} typing...`
-                      : activeRoomSubtitle}
-                  </p>
-                </div>
+                </button>
               </div>
-              <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1 md:gap-1.5">
+              <div className="flex shrink-0 flex-nowrap items-center justify-end gap-0.5 sm:gap-1">
                 {activeRoom ? (
                   <Button
-                    size="sm"
-                    variant={activeRoom.e2eeEnabled ? "default" : "outline"}
+                    type="button"
+                    size="icon"
+                    variant="ghost"
                     onClick={() => void toggleRoomE2ee()}
                     title={activeRoom.e2eeEnabled ? "Disable End-to-End Encryption" : "Enable End-to-End Encryption"}
-                    className={`h-8 px-2 ${activeRoom.e2eeEnabled ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "border-[#E9EDEF] dark:border-[#2A3942]"}`}
+                    aria-label={activeRoom.e2eeEnabled ? "Disable E2EE" : "Enable E2EE"}
+                    className={`h-8 w-8 rounded-full ${activeRoom.e2eeEnabled ? "bg-[#00A884]/15 text-[#00A884]" : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"}`}
                   >
-                    {activeRoom.e2eeEnabled ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5 text-[#667781] dark:text-[#AEBAC1]" />}
+                    {activeRoom.e2eeEnabled ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                   </Button>
                 ) : null}
-                <Button size="sm" variant="outline" onClick={() => router.push("/dashboard")} className="hidden h-8 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] md:inline-flex">
-                  <LayoutDashboard className="h-4 w-4 text-[#25D366] xl:mr-1" /><span className="hidden xl:inline">Dashboard</span>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setCallSelectorOpen(true)}
+                  title="Start Audio or Video Call"
+                  aria-label="Start Call"
+                  className="h-8 w-8 rounded-full text-[#00A884] hover:bg-[#00A884]/10"
+                >
+                  <Phone className="h-4 w-4" />
                 </Button>
                 <Button
-                  size="sm"
-                  variant={infoPanelCollapsed ? "outline" : "default"}
-                  className={`hidden h-8 xl:inline-flex ${infoPanelCollapsed ? "border-[#E9EDEF] dark:border-[#2A3942]" : "bg-[#25D366] hover:bg-[#128C7E] text-white"}`}
-                  onClick={() => setInfoPanelCollapsed((v) => !v)}
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => {
+                    setMessageSearchOpen((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        requestAnimationFrame(() => searchInputRef.current?.focus());
+                      } else {
+                        setSearch("");
+                      }
+                      return next;
+                    });
+                  }}
+                  title="Search messages (Ctrl+K)"
+                  aria-label="Search messages"
+                  className={`h-8 w-8 rounded-full ${messageSearchOpen || search.trim() ? "bg-[#00A884]/15 text-[#00A884]" : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"}`}
                 >
-                  {infoPanelCollapsed ? "Show Info" : "Hide Info"}
+                  <Search className="h-4 w-4" />
                 </Button>
-                <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => { setIncomingPanelOpen((v) => !v); setStarredPanelOpen(false); }} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Incoming Requests">
-                    <UserPlus className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                  </Button>
-                  {incoming.length > 0 ? (
-                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
-                      {incoming.length > 9 ? "9+" : incoming.length}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => { setStarredPanelOpen((v) => !v); setIncomingPanelOpen(false); }} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Starred Messages">
-                    <Star className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                  </Button>
-                  {(serverStarred.length > 0 || bookmarkedMessages.length > 0) ? (
-                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
-                      {(serverStarred.length || bookmarkedMessages.length) > 9 ? "9+" : (serverStarred.length || bookmarkedMessages.length)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="relative">
-                  <Button size="sm" variant="outline" onClick={() => setNotificationsOpen((v) => !v)} className="h-8 px-2 border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]" aria-label="Notifications">
-                    <Bell className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-                  </Button>
-                  {inAppNotifications.length > 0 ? (
-                    <span className="absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] text-white">
-                      {inAppNotifications.length > 9 ? "9+" : inAppNotifications.length}
-                    </span>
-                  ) : null}
-                </div>
-                <Button size="sm" variant="outline" onClick={() => setCallSelectorOpen(true)} className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10">
-                  <Phone className="h-4 w-4" />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setInfoPanelCollapsed((v) => !v)}
+                  title={infoPanelCollapsed ? "Contact & Room Info" : "Close Info"}
+                  aria-label={infoPanelCollapsed ? "Show Info" : "Hide Info"}
+                  className={`h-8 w-8 rounded-full ${!infoPanelCollapsed ? "bg-[#00A884]/15 text-[#00A884]" : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"}`}
+                >
+                  <Info className="h-4 w-4" />
                 </Button>
                 {activeRoom ? (
                   <div className="relative">
-                    <Button size="sm" variant="outline" onClick={() => setMenuOpenForRoomCode((p) => p === activeRoom.code ? null : activeRoom.code)} className="border-[#E9EDEF] dark:border-[#2A3942] hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                      <MoreVertical className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setMenuOpenForRoomCode((p) => (p === activeRoom.code ? null : activeRoom.code))}
+                      aria-label="Room menu"
+                      className="h-8 w-8 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+                    >
+                      <MoreVertical className="h-4 w-4" />
                     </Button>
                     {menuOpenForRoomCode === activeRoom.code ? (
                       <div className="absolute right-0 z-20 mt-1 w-56 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] p-1 shadow-lg">
@@ -3917,23 +4103,42 @@ export default function ExternalChatApp() {
                 </div>
               </div>
             ) : null}
-            <div className="mt-3 relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />
-              <Input ref={searchInputRef} className="pl-8 bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search messages..." />
-            </div>
-            {search.trim() ? (
-              <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-[#F0F2F5]/25 dark:bg-[#2A3942]/25 px-2 py-1.5">
-                <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">
-                  {messageMatches.length ? `${messageSearchIndex + 1}/${messageMatches.length} matches` : "No matches"}
-                </p>
-                <div className="flex items-center gap-1">
-                  <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(-1)} disabled={!messageMatches.length} className="hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                    <ChevronLeft className="h-4 w-4" />
-                  </Button>
-                  <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(1)} disabled={!messageMatches.length} className="hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942]">
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
+            {messageSearchOpen || search.trim() ? (
+              <div className="mt-2 flex items-center gap-2 rounded-lg bg-white dark:bg-[#111B21] px-2.5 py-1.5 border border-[#E9EDEF] dark:border-[#2A3942]">
+                <Search className="h-4 w-4 shrink-0 text-[#667781] dark:text-[#8696A0]" />
+                <Input
+                  ref={searchInputRef}
+                  className="h-7 border-0 bg-transparent px-1 text-xs text-[#111B21] dark:text-[#E9EDEF] focus-visible:ring-0"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search messages in this chat..."
+                />
+                {search.trim() ? (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-[11px] text-[#667781] dark:text-[#8696A0]">
+                      {messageMatches.length ? `${messageSearchIndex + 1}/${messageMatches.length}` : "0"}
+                    </span>
+                    <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(-1)} disabled={!messageMatches.length} className="h-6 w-6">
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button type="button" size="icon" variant="ghost" onClick={() => jumpMatch(1)} disabled={!messageMatches.length} className="h-6 w-6">
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : null}
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Close message search"
+                  onClick={() => {
+                    setSearch("");
+                    setMessageSearchOpen(false);
+                  }}
+                  className="h-6 w-6 shrink-0 text-[#667781] dark:text-[#8696A0]"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
               </div>
             ) : null}
             {pinnedMessages.length > 0 ? (
@@ -4025,8 +4230,50 @@ export default function ExternalChatApp() {
                 </Button>
               </div>
             ) : null}
-            {loadingMessages ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#25D366]" />Loading messages...</div> : null}
-            {!loadingMessages && messages.length === 0 ? <p className="text-sm text-[#667781] dark:text-[#AEBAC1]">No messages yet.</p> : null}
+            {loadingMessages ? <div className="flex items-center text-sm text-[#667781] dark:text-[#AEBAC1]"><Loader2 className="mr-2 h-4 w-4 animate-spin text-[#00A884]" />Loading messages...</div> : null}
+            {!loadingMessages && !activeRoom ? (
+              <div className="flex h-full min-h-[280px] flex-col items-center justify-center px-6 text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#00A884]/15 text-[#00A884] shadow-sm">
+                  <MessageSquare className="h-8 w-8" />
+                </div>
+                <h2 className="text-xl font-semibold text-[#111B21] dark:text-[#E9EDEF]">AI Connect Web</h2>
+                <p className="mt-1.5 max-w-md text-xs sm:text-sm text-[#667781] dark:text-[#8696A0]">
+                  Send and receive messages, share up to 10 GB files, start HD audio/video calls, and post 24-hour status updates.
+                </p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      if (window.innerWidth < 1024) {
+                        setMobileSidebarOpen(true);
+                      } else {
+                        const el = document.getElementById("whatsapp-sidebar-search");
+                        el?.focus();
+                      }
+                    }}
+                    className="rounded-full bg-[#00A884] hover:bg-[#008f6f] text-white px-4"
+                  >
+                    Start a Chat
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCreateGroupOpen(true)}
+                    className="rounded-full border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10 px-4"
+                  >
+                    New Group
+                  </Button>
+                </div>
+                <p className="mt-6 inline-flex items-center gap-1.5 text-[11px] text-[#667781] dark:text-[#8696A0]">
+                  <Lock className="h-3 w-3 text-[#00A884]" /> End-to-end encryption supported
+                </p>
+              </div>
+            ) : null}
+            {!loadingMessages && activeRoom && messages.length === 0 ? (
+              <p className="py-8 text-center text-sm text-[#667781] dark:text-[#8696A0]">No messages yet. Say hello!</p>
+            ) : null}
             <div className="space-y-3">
               {visibleTimelineItems.map((item) => {
                 if (item.kind === "day") {
@@ -4355,7 +4602,7 @@ export default function ExternalChatApp() {
               </div>
             </div>
           ) : null}
-          <form ref={composerFormRef} onSubmit={sendMessage} className="whatsapp-composer border-t border-[#E9EDEF]/60 dark:border-[#2A3942]/60 bg-white/75 dark:bg-[#1F2C33]/75 p-2 backdrop-blur">
+          <form ref={composerFormRef} onSubmit={sendMessage} className="whatsapp-composer border-t border-[#E9EDEF] dark:border-[#222D34] bg-[#F0F2F5] dark:bg-[#202C33] px-2 py-2 sm:px-3">
             {undoSend ? (
               <div className="mb-1.5 flex items-center justify-between rounded-md border border-[#25D366]/30 bg-[#25D366]/10 px-2 py-1 text-xs">
                 <span className="text-[#111B21] dark:text-[#E9EDEF]">Message sent. Undo?</span>
@@ -4405,63 +4652,70 @@ export default function ExternalChatApp() {
                 </div>
               </div>
             ) : null}
-            <div className="mb-1 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-0.5">
-                {["👍", "❤️", "😂", "🔥", "🙏"].map((emoji) => (
-                  <button
-                    key={`quick-${emoji}`}
-                    type="button"
-                    onClick={() => setText((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
-                    disabled={!canSendInActiveRoom}
-                    className="rounded-full border border-[#E9EDEF]/70 dark:border-[#2A3942]/70 px-1.5 py-0.5 text-xs hover:bg-[#F0F2F5] dark:hover:bg-[#2A3942] text-[#111B21] dark:text-[#E9EDEF]"
-                  >
-                    {emoji}
-                  </button>
-                ))}
+            {emojiTrayOpen ? (
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#2A3942] px-2.5 py-1.5 shadow-sm">
+                <div className="flex flex-wrap items-center gap-1">
+                  {["👍", "❤️", "😂", "🔥", "🙏", "🎉", "😍", "👏"].map((emoji) => (
+                    <button
+                      key={`quick-${emoji}`}
+                      type="button"
+                      onClick={() => setText((prev) => `${prev}${prev ? " " : ""}${emoji}`)}
+                      disabled={!canSendInActiveRoom}
+                      className="rounded-full px-2 py-0.5 text-sm hover:bg-[#F0F2F5] dark:hover:bg-[#202C33] transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+                <span className="hidden text-[10px] text-[#667781] dark:text-[#8696A0] sm:inline">
+                  {activeRoomCode && draftByRoom[activeRoomCode] ? "Draft saved" : "Slash cmds: /poll /note /text /call"}
+                </span>
               </div>
-              <span className="hidden text-[10px] text-[#667781] dark:text-[#AEBAC1] sm:inline">{activeRoomCode && draftByRoom[activeRoomCode] ? "Draft saved" : "Use /poll /note /text /call"}</span>
-            </div>
-            <div className="flex flex-wrap items-end gap-1.5">
-              <select
-                value={messageType}
-                onChange={(e) => setMessageType(e.target.value as "text" | "note" | "poll")}
-                className="h-9 w-[68px] shrink-0 rounded-md border border-[#E9EDEF] dark:border-[#2A3942] bg-white dark:bg-[#1F2C33] px-1 text-xs text-[#111B21] dark:text-[#E9EDEF]"
+            ) : null}
+            <div className="flex items-end gap-1 sm:gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-full ${emojiTrayOpen ? "bg-[#00A884]/15 text-[#00A884]" : "text-[#54656F] dark:text-[#8696A0] hover:bg-black/5 dark:hover:bg-white/10"}`}
+                onClick={() => setEmojiTrayOpen((v) => !v)}
+                disabled={!canSendInActiveRoom}
+                title="Emojis & commands"
+                aria-label="Toggle emoji picker"
               >
-                <option value="text">Text</option>
-                <option value="note">Note</option>
-                <option value="poll">Poll</option>
-              </select>
+                <Smile className="h-4 w-4 sm:h-5 sm:w-5" />
+              </Button>
               <input ref={fileInputRef} type="file" className="hidden" onChange={onFile} />
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 shrink-0"
+                className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-full text-[#54656F] dark:text-[#8696A0] hover:bg-black/5 dark:hover:bg-white/10"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading || !canSendInActiveRoom}
-                title="Attach file"
+                title="Attach file (up to 10 GB)"
+                aria-label="Attach file"
               >
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin text-[#25D366]" /> : <Paperclip className="h-4 w-4 text-[#667781] dark:text-[#AEBAC1]" />}
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin text-[#00A884]" /> : <Paperclip className="h-4 w-4 sm:h-5 sm:w-5" />}
               </Button>
-              <Button
-                type="button"
-                variant={recording ? "destructive" : "ghost"}
-                size="icon"
-                className={`h-9 w-9 shrink-0 transition ${recording ? "animate-pulse" : ""}`}
-                onClick={() => void toggleRecording()}
-                disabled={!canSendInActiveRoom}
-                title="Voice note"
+              <select
+                value={messageType}
+                onChange={(e) => setMessageType(e.target.value as "text" | "note" | "poll")}
+                aria-label="Message type"
+                className="h-8 sm:h-9 w-[54px] sm:w-[66px] shrink-0 rounded-full border-0 bg-white dark:bg-[#2A3942] px-1.5 sm:px-2 text-[11px] sm:text-xs font-medium text-[#111B21] dark:text-[#E9EDEF]"
               >
-                <Mic className="h-4 w-4" />
-              </Button>
+                <option value="text">Text</option>
+                <option value="note">Note</option>
+                <option value="poll">Poll</option>
+              </select>
               <div className="relative min-w-0 flex-1">
                 <Textarea
                   ref={textareaRef}
                   value={text}
                   onChange={(e) => onTextChange(e.target.value)}
                   onKeyDown={onTextKeyDown}
-                  className="min-h-[38px] max-h-32 resize-none bg-white dark:bg-[#1F2C33] border-[#E9EDEF] dark:border-[#2A3942] text-[#111B21] dark:text-[#E9EDEF] py-2"
-                  placeholder="Type message. Use @username for mentions."
+                  className="min-h-[40px] max-h-32 resize-none rounded-xl border-0 bg-white dark:bg-[#2A3942] px-3 py-2 text-sm text-[#111B21] dark:text-[#E9EDEF] placeholder:text-[#667781] dark:placeholder:text-[#8696A0] focus-visible:ring-1 focus-visible:ring-[#00A884]"
+                  placeholder="Type a message"
                   disabled={!canSendInActiveRoom}
                 />
                 {mentionOpen ? (
@@ -4483,7 +4737,25 @@ export default function ExternalChatApp() {
                   </div>
                 ) : null}
               </div>
-              <Button type="submit" size="icon" disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom} className="h-9 w-9 shrink-0 transition-transform duration-150 active:scale-95 bg-[#25D366] hover:bg-[#128C7E] text-white">
+              <Button
+                type="button"
+                variant={recording ? "destructive" : "ghost"}
+                size="icon"
+                className={`h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-full transition ${recording ? "animate-pulse" : "text-[#54656F] dark:text-[#8696A0] hover:bg-black/5 dark:hover:bg-white/10"}`}
+                onClick={() => void toggleRecording()}
+                disabled={!canSendInActiveRoom}
+                title="Voice note"
+                aria-label="Voice note"
+              >
+                <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
+              </Button>
+              <Button
+                type="submit"
+                size="icon"
+                disabled={sending || uploading || !activeRoomCode || !canSendInActiveRoom}
+                aria-label="Send message"
+                className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 rounded-full transition-transform duration-150 active:scale-95 bg-[#00A884] hover:bg-[#008f6f] text-white"
+              >
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
@@ -4507,10 +4779,22 @@ export default function ExternalChatApp() {
           </form>
         </ChatPanel>
 
-        <ChatPanel className={`${infoPanelCollapsed ? "hidden" : "hidden xl:flex"} min-h-0 flex-col p-3 whatsapp-panel bg-white/80 dark:bg-[#1F2C33]/80`}>
-          <div className="mb-3 border-b border-[#E9EDEF]/60 dark:border-[#2A3942]/60 pb-3">
-            <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Info Panel</p>
-            <p className="text-xs text-[#667781] dark:text-[#AEBAC1]">Members, media and pinned context</p>
+        <ChatPanel className={`${infoPanelCollapsed ? "hidden" : "fixed inset-y-0 right-0 z-40 flex w-[88vw] max-w-sm shadow-2xl lg:static lg:z-auto lg:w-auto lg:max-w-none lg:shadow-none"} min-h-0 flex-col p-3 whatsapp-panel bg-white dark:bg-[#111B21] border-l border-[#E9EDEF] dark:border-[#222D34]`}>
+          <div className="mb-3 flex items-center justify-between gap-2 border-b border-[#E9EDEF] dark:border-[#222D34] pb-2.5">
+            <div>
+              <p className="text-sm font-semibold text-[#111B21] dark:text-[#E9EDEF]">Contact &amp; Room Info</p>
+              <p className="text-xs text-[#667781] dark:text-[#8696A0]">Members, media and pinned context</p>
+            </div>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={() => setInfoPanelCollapsed(true)}
+              aria-label="Close info panel"
+              className="h-8 w-8 rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
 
           <div className="mb-4">
@@ -5213,17 +5497,56 @@ export default function ExternalChatApp() {
           </div>
         </div>
 
-        <div className={`fixed inset-0 z-40 transition xl:hidden ${mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+        <div className={`fixed inset-0 z-40 transition lg:hidden ${mobileSidebarOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
           <button
             type="button"
             aria-label="Close conversations"
             onClick={() => setMobileSidebarOpen(false)}
             className={`absolute inset-0 bg-black/35 transition-opacity ${mobileSidebarOpen ? "opacity-100" : "opacity-0"}`}
           />
-          <aside className={`flex flex-col absolute left-0 top-0 h-full w-[88vw] max-w-sm border-r border-border/70 bg-background/95 p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-sm font-semibold">AI Connect</p>
-              <Button size="sm" variant="ghost" onClick={() => setMobileSidebarOpen(false)}><X className="h-4 w-4" /></Button>
+          <aside className={`flex flex-col absolute left-0 top-0 h-full w-[88vw] max-w-sm border-r border-border/70 bg-white dark:bg-[#111B21] p-3 backdrop-blur-xl transition-transform duration-300 ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
+            <div className="mb-2 flex items-center justify-between gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => router.push("/dashboard")}
+                className="h-8 gap-1.5 px-2 text-xs font-semibold text-[#111B21] dark:text-[#E9EDEF] hover:bg-black/5 dark:hover:bg-white/10"
+              >
+                <ArrowLeft className="h-4 w-4" /> Dashboard
+              </Button>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  aria-label="Incoming Requests"
+                  onClick={() => { setIncomingPanelOpen(true); setMobileSidebarOpen(false); }}
+                  className="relative flex h-8 w-8 items-center justify-center rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  {incoming.length > 0 ? <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-[#25D366]" /> : null}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Starred Messages"
+                  onClick={() => { setStarredPanelOpen(true); setMobileSidebarOpen(false); }}
+                  className="relative flex h-8 w-8 items-center justify-center rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <Star className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  aria-label="Notifications"
+                  onClick={() => { setNotificationsOpen((v) => !v); setMobileSidebarOpen(false); }}
+                  className="relative flex h-8 w-8 items-center justify-center rounded-full text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <Bell className="h-4 w-4" />
+                  {inAppNotifications.length > 0 ? <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-[#25D366]" /> : null}
+                </button>
+                <ThemeToggle />
+                <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full" onClick={() => setMobileSidebarOpen(false)} aria-label="Close drawer">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
             <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/40 p-1">
               {[

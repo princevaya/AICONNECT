@@ -4,7 +4,7 @@ import ExternalChatApp from "@/components/external-chat/external-chat-app";
 
 export default function ExternalChatView() {
   return (
-    <div className="h-[calc(100dvh-4rem)] w-full overflow-hidden">
+    <div className="fixed inset-0 z-50 h-[100dvh] w-full overflow-hidden bg-background">
       <ExternalChatApp />
     </div>
   );
