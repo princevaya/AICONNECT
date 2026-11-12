@@ -1,6 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
-import { ensureExternalChatUser } from "@/services/external-chat/user.service";
+import {
+  ensureExternalChatUser,
+  syncLoggedInAppUsersToExternalChat,
+} from "@/services/external-chat/user.service";
 import { searchUsers } from "@/services/external-chat/connections.service";
 import { enforceRateLimit } from "@/services/rate-limit.service";
 import { toError } from "@/app/api/external-chat/_utils";
@@ -13,7 +16,7 @@ export async function GET(req: NextRequest) {
     const { userId } = await auth();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const q = req.nextUrl.searchParams.get("q") || "";
-    if (!q.trim()) return NextResponse.json({ users: [] });
+    const forceRefresh = req.nextUrl.searchParams.get("refresh") === "1";
     const user = await ensureExternalChatUser(userId);
     const limit = await enforceRateLimit({
       routeKey: "external-chat:user-search",
@@ -25,6 +28,7 @@ export async function GET(req: NextRequest) {
     if (!limit.allowed) {
       return NextResponse.json({ error: "Too many search requests" }, { status: 429 });
     }
+    await syncLoggedInAppUsersToExternalChat({ query: q, force: forceRefresh });
     const users = await searchUsers(user, q);
     return NextResponse.json({ users });
   } catch (error) {

@@ -52,6 +52,7 @@ import {
   Play,
   XCircle,
   History,
+  RefreshCw,
 } from "lucide-react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
@@ -501,7 +502,10 @@ export default function ExternalChatApp() {
   const [incoming, setIncoming] = useState<Pending[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<OutgoingPending[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [navSection, setNavSection] = useState<"chats" | "calls" | "status">("chats");
+  const [navSection, setNavSection] = useState<"chats" | "calls" | "status" | "friends">("chats");
+  const [directoryUsers, setDirectoryUsers] = useState<UserRow[]>([]);
+  const [directorySearch, setDirectorySearch] = useState("");
+  const [loadingDirectory, setLoadingDirectory] = useState(false);
   const [desktopChatSearch, setDesktopChatSearch] = useState("");
   const [callHistory, setCallHistory] = useState<CallHistoryItem[]>([]);
   const [loadingCalls, setLoadingCalls] = useState(false);
@@ -1490,6 +1494,35 @@ export default function ExternalChatApp() {
     };
   }, [activeRoom?.name, activeRoomCode, authCoolingDown, authReady, browserNotifications, loadCallHistory, loadMessages, pushNotification, rooms, scheduleRealtimeRefresh, selfUserId, setupRequired, showBrowserNotification]);
 
+  const loadDirectory = useCallback(
+    async (searchText: string, forceRefresh = false) => {
+      if (!authReady || setupRequired || authCoolingDown) return;
+      setLoadingDirectory(true);
+      try {
+        const params = new URLSearchParams();
+        if (searchText.trim()) params.set("q", searchText.trim());
+        if (forceRefresh) params.set("refresh", "1");
+        const suffix = params.toString() ? `?${params.toString()}` : "";
+        const data = await api<{ users: UserRow[] }>(`/api/external-chat/users${suffix}`);
+        setDirectoryUsers(data.users || []);
+      } catch (err) {
+        handleApiError(err, "Failed to load application members");
+      } finally {
+        setLoadingDirectory(false);
+      }
+    },
+    [authCoolingDown, authReady, handleApiError, setupRequired]
+  );
+
+  useEffect(() => {
+    if (navSection !== "friends" || !authReady || setupRequired || authCoolingDown) return;
+    const delay = directorySearch.trim() ? 220 : 0;
+    const t = setTimeout(() => {
+      void loadDirectory(directorySearch, !directorySearch.trim());
+    }, delay);
+    return () => clearTimeout(t);
+  }, [authCoolingDown, authReady, directorySearch, loadDirectory, navSection, setupRequired]);
+
   useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -2175,7 +2208,11 @@ export default function ExternalChatApp() {
       });
       await loadConnections();
       await loadRooms();
-      if (action === "accept" && res.result?.roomCode) setActiveRoomCode(res.result.roomCode);
+      if (action === "accept" && res.result?.roomCode) {
+        setActiveRoomCode(res.result.roomCode);
+        setNavSection("chats");
+        setIncomingPanelOpen(false);
+      }
     } catch (e) {
       handleApiError(e, "Failed request action");
     }
@@ -3261,6 +3298,176 @@ export default function ExternalChatApp() {
     }
   };
 
+  const renderAddFriendDirectory = () => (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="px-3 pb-2">
+        <div className="relative flex items-center">
+          <Search className="pointer-events-none absolute left-3 h-4 w-4 text-[#54656F] dark:text-[#8696A0]" />
+          <Input
+            className="h-9 rounded-lg border-0 bg-[#F0F2F5] dark:bg-[#202C33] pl-9 pr-8 text-sm text-[#111B21] dark:text-[#E9EDEF] placeholder:text-[#667781] dark:placeholder:text-[#8696A0] focus-visible:ring-1 focus-visible:ring-[#00A884]"
+            value={directorySearch}
+            onChange={(e) => setDirectorySearch(e.target.value)}
+            placeholder="Search app members by name or email"
+          />
+          {directorySearch ? (
+            <button
+              type="button"
+              aria-label="Clear member search"
+              onClick={() => setDirectorySearch("")}
+              className="absolute right-2.5 rounded-full p-0.5 text-[#54656F] hover:bg-black/5 dark:text-[#8696A0] dark:hover:bg-white/10"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-3">
+        {incoming.length > 0 ? (
+          <div className="space-y-1">
+            <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#00A884]">
+              Friend Requests ({incoming.length})
+            </p>
+            {incoming.map((r) => (
+              <div
+                key={`friend-inc-${r.id}`}
+                className="flex items-center justify-between gap-2 rounded-lg border border-[#E9EDEF] dark:border-[#222D34] bg-[#F5F6F6]/60 dark:bg-[#202C33]/60 px-2.5 py-2"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <UserAvatar
+                    user={r.sender}
+                    className="h-9 w-9 shrink-0 rounded-full object-cover"
+                    fallbackClassName="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#00A884]/15 text-xs font-semibold text-[#00A884]"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">
+                      {userLabel(r.sender)}
+                    </p>
+                    <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">
+                      {r.sender.email || "Wants to connect"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    onClick={() => void actRequest(r.id, "accept")}
+                    className="h-7 px-2.5 text-xs bg-[#00A884] hover:bg-[#008f6f] text-white"
+                  >
+                    <Check className="h-3 w-3 mr-1" /> Accept
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void actRequest(r.id, "decline")}
+                    className="h-7 w-7 p-0 text-[#EF4444] hover:bg-red-500/10"
+                    title="Decline"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between px-2 py-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[#00A884]">
+              App Members ({directoryUsers.length})
+            </p>
+            <button
+              type="button"
+              onClick={() => void loadDirectory(directorySearch, true)}
+              disabled={loadingDirectory}
+              className="inline-flex items-center gap-1 text-[11px] text-[#54656F] dark:text-[#AEBAC1] hover:text-[#00A884]"
+            >
+              <RefreshCw className={`h-3 w-3 ${loadingDirectory ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+
+          {loadingDirectory && directoryUsers.length === 0 ? (
+            <div className="flex items-center justify-center py-6 text-xs text-[#667781] dark:text-[#AEBAC1]">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#00A884]" />
+              Loading logged-in members...
+            </div>
+          ) : null}
+
+          {!loadingDirectory && directoryUsers.length === 0 ? (
+            <p className="px-2 py-6 text-center text-xs text-[#667781] dark:text-[#AEBAC1]">
+              {directorySearch.trim()
+                ? `No members found matching "${directorySearch.trim()}".`
+                : "No other members have signed in yet."}
+            </p>
+          ) : null}
+
+          {directoryUsers.map((u) => {
+            const rel = getPeerRelation(u);
+            return (
+              <div
+                key={`dir-member-${u.id}`}
+                className="flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 hover:bg-[#F5F6F6] dark:hover:bg-[#202C33]"
+              >
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <UserAvatar
+                    user={u}
+                    className="h-9 w-9 shrink-0 rounded-full object-cover"
+                    fallbackClassName="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#00A884]/15 text-xs font-semibold text-[#00A884]"
+                  />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-[#111B21] dark:text-[#E9EDEF]">
+                      {userLabel(u)}
+                    </p>
+                    <p className="truncate text-[11px] text-[#667781] dark:text-[#AEBAC1]">
+                      {u.email || "AIConnect Member"}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {rel.kind === "connected" ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void startDirectMessageWithUser(u)}
+                      className="h-7 px-2.5 text-xs border-[#00A884] text-[#00A884] hover:bg-[#00A884]/10"
+                    >
+                      <MessageSquare className="h-3 w-3 mr-1" /> Chat
+                    </Button>
+                  ) : rel.kind === "incoming" ? (
+                    <Button
+                      size="sm"
+                      onClick={() => void actRequest(rel.requestId, "accept")}
+                      className="h-7 px-2.5 text-xs bg-[#00A884] hover:bg-[#008f6f] text-white"
+                    >
+                      Accept
+                    </Button>
+                  ) : rel.kind === "outgoing" ? (
+                    <Button size="sm" variant="outline" disabled className="h-7 px-2.5 text-[11px]">
+                      Pending
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={() => void sendRequest(u.clerkId)}
+                      className="h-7 px-2.5 text-xs bg-[#00A884] hover:bg-[#008f6f] text-white"
+                    >
+                      <UserPlus className="h-3 w-3 mr-1" /> Add Friend
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="px-2 pt-1 text-[11px] text-[#667781] dark:text-[#AEBAC1]">
+          Send a friend request to connect. Direct chat unlocks once they approve.
+        </p>
+      </div>
+    </div>
+  );
+
   if (setupRequired) {
     return (
       <div className="flex h-full min-h-full items-center justify-center p-4 md:p-8">
@@ -3317,6 +3524,12 @@ export default function ExternalChatApp() {
               },
               { id: "calls" as const, label: "Calls", icon: Phone, badge: 0 },
               { id: "status" as const, label: "Status", icon: CircleDot, badge: 0 },
+              {
+                id: "friends" as const,
+                label: "Add Friend",
+                icon: UserPlus,
+                badge: incoming.length,
+              },
             ].map((tab) => {
               const Icon = tab.icon;
               const active = navSection === tab.id;
@@ -3328,6 +3541,8 @@ export default function ExternalChatApp() {
                   aria-label={tab.label}
                   onClick={() => {
                     setNavSection(tab.id);
+                    setStarredPanelOpen(false);
+                    setIncomingPanelOpen(false);
                     if (tab.id === "calls") void loadCallHistory();
                   }}
                   className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
@@ -3345,27 +3560,6 @@ export default function ExternalChatApp() {
                 </button>
               );
             })}
-            <button
-              type="button"
-              title="Incoming Requests"
-              aria-label="Incoming Requests"
-              onClick={() => {
-                setIncomingPanelOpen((v) => !v);
-                setStarredPanelOpen(false);
-              }}
-              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
-                incomingPanelOpen
-                  ? "bg-[#D9FDD3] text-[#008069] dark:bg-[#00A884]/20 dark:text-[#00A884]"
-                  : "text-[#54656F] dark:text-[#AEBAC1] hover:bg-black/5 dark:hover:bg-white/10"
-              }`}
-            >
-              <UserPlus className="h-5 w-5" />
-              {incoming.length > 0 ? (
-                <span className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#25D366] px-1 text-[10px] font-semibold text-[#111B21]">
-                  {incoming.length > 9 ? "9+" : incoming.length}
-                </span>
-              ) : null}
-            </button>
             <button
               type="button"
               title="Starred Messages"
@@ -3428,7 +3622,13 @@ export default function ExternalChatApp() {
         <ChatPanel className="hidden lg:flex flex-col h-full min-h-0 whatsapp-panel bg-white dark:bg-[#111B21] border-r border-[#E9EDEF] dark:border-[#222D34]">
           <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
             <h1 className="text-[20px] font-bold tracking-tight text-[#111B21] dark:text-[#E9EDEF]">
-              {navSection === "calls" ? "Calls" : navSection === "status" ? "Status" : "Chats"}
+              {navSection === "calls"
+                ? "Calls"
+                : navSection === "status"
+                  ? "Status"
+                  : navSection === "friends"
+                    ? "Add Friend"
+                    : "Chats"}
             </h1>
             <div className="flex items-center gap-1">
               <Button
@@ -3550,6 +3750,8 @@ export default function ExternalChatApp() {
                 onViewStatus={(_status, index, allStatuses) => setStatusViewer({ statuses: allStatuses, initialIndex: index })}
               />
             </div>
+          ) : navSection === "friends" ? (
+            renderAddFriendDirectory()
           ) : (
             <>
               <div className="px-3 pb-2">
@@ -5548,11 +5750,12 @@ export default function ExternalChatApp() {
                 </Button>
               </div>
             </div>
-            <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/40 p-1">
+            <div className="mb-3 grid grid-cols-4 gap-1 rounded-lg border border-border/70 bg-muted/40 p-1">
               {[
                 { id: "chats" as const, label: "Chats", icon: MessageSquare },
                 { id: "calls" as const, label: "Calls", icon: History },
                 { id: "status" as const, label: "Status", icon: CircleDot },
+                { id: "friends" as const, label: "Friends", icon: UserPlus },
               ].map((tab) => {
                 const Icon = tab.icon;
                 const active = navSection === tab.id;
@@ -5564,7 +5767,7 @@ export default function ExternalChatApp() {
                       setNavSection(tab.id);
                       if (tab.id === "calls") void loadCallHistory();
                     }}
-                    className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium ${
+                    className={`flex items-center justify-center gap-1 rounded-md px-1.5 py-1.5 text-xs font-medium ${
                       active ? "bg-[#25D366] text-white" : "text-muted-foreground"
                     }`}
                   >
@@ -5619,6 +5822,8 @@ export default function ExternalChatApp() {
                   }}
                 />
               </div>
+            ) : navSection === "friends" ? (
+              renderAddFriendDirectory()
             ) : (
               <>
             <div className="mb-2 flex items-center gap-2">

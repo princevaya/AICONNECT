@@ -169,6 +169,20 @@ type MeetingRealtimeEvent =
       op: WhiteboardOp;
     }
   | {
+      type: "whiteboard_ops";
+      mode: WhiteboardMode;
+      ops: WhiteboardOp[];
+    }
+  | {
+      type: "whiteboard_sync";
+      controllerId: string;
+      mode: WhiteboardMode;
+      background: string;
+      allowedEditorIds: string[];
+      whiteboardOps: WhiteboardOp[];
+      annotationOps: WhiteboardOp[];
+    }
+  | {
       type: "whiteboard_history";
       mode: WhiteboardMode;
       action: "undo" | "redo";
@@ -218,6 +232,8 @@ type WhiteboardOp = {
   size: number;
   from: WhiteboardPoint;
   to: WhiteboardPoint;
+  points?: WhiteboardPoint[];
+  normalized?: boolean;
 };
 
 function trackFromPublication(pub: TrackPublication | undefined, kind: Track.Kind) {
@@ -479,7 +495,23 @@ export default function MeetingRoom({
   const intentionalLeaveRef = useRef(false);
   const desiredCameraEnabledRef = useRef(Boolean(videoEnabled));
   const desiredMicEnabledRef = useRef(Boolean(audioEnabled));
-  const whiteboardLastPublishAtRef = useRef(0);
+  const whiteboardPendingQueueRef = useRef<Array<{ mode: WhiteboardMode; op: WhiteboardOp }>>([]);
+  const whiteboardFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const whiteboardSyncStateRef = useRef<{
+    controllerId: string;
+    mode: WhiteboardMode;
+    background: string;
+    allowedEditorIds: string[];
+    whiteboardOps: WhiteboardOp[];
+    annotationOps: WhiteboardOp[];
+  }>({
+    controllerId: "",
+    mode: "whiteboard",
+    background: "#ffffff",
+    allowedEditorIds: [],
+    whiteboardOps: [],
+    annotationOps: [],
+  });
   const notesAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actionsAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasInitializedNotesRef = useRef(false);
@@ -762,7 +794,28 @@ export default function MeetingRoom({
     };
 
     room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
-    room.on(RoomEvent.ParticipantConnected, handleRoomUpdate);
+    room.on(RoomEvent.ParticipantConnected, () => {
+      handleRoomUpdate();
+      const current = whiteboardSyncStateRef.current;
+      if (
+        current.controllerId &&
+        current.controllerId === room.localParticipant.identity &&
+        room.state === ConnectionState.Connected
+      ) {
+        const payload = new TextEncoder().encode(
+          JSON.stringify({
+            type: "whiteboard_sync",
+            controllerId: current.controllerId,
+            mode: current.mode,
+            background: current.background,
+            allowedEditorIds: current.allowedEditorIds,
+            whiteboardOps: current.whiteboardOps,
+            annotationOps: current.annotationOps,
+          } satisfies MeetingRealtimeEvent)
+        );
+        void room.localParticipant.publishData(payload, { reliable: true }).catch(() => undefined);
+      }
+    });
     room.on(RoomEvent.ParticipantDisconnected, handleRoomUpdate);
     room.on(RoomEvent.TrackSubscribed, handleRoomUpdate);
     room.on(RoomEvent.TrackUnsubscribed, handleRoomUpdate);
@@ -946,10 +999,44 @@ export default function MeetingRoom({
         if (parsed.type === "whiteboard_op") {
           const targetMode = parsed.mode || "whiteboard";
           if (targetMode === "whiteboard") {
-            setWhiteboardOps((prev) => [...prev, parsed.op]);
+            setWhiteboardOps((prev) =>
+              prev.some((entry) => entry.id === parsed.op.id) ? prev : [...prev, parsed.op]
+            );
           } else {
-            setAnnotationOps((prev) => [...prev, parsed.op]);
+            setAnnotationOps((prev) =>
+              prev.some((entry) => entry.id === parsed.op.id) ? prev : [...prev, parsed.op]
+            );
           }
+          return;
+        }
+        if (parsed.type === "whiteboard_ops") {
+          const targetMode = parsed.mode || "whiteboard";
+          const incomingOps = Array.isArray(parsed.ops) ? parsed.ops : [];
+          if (incomingOps.length === 0) return;
+          if (targetMode === "whiteboard") {
+            setWhiteboardOps((prev) => {
+              const seen = new Set(prev.map((entry) => entry.id));
+              const next = incomingOps.filter((entry) => !seen.has(entry.id));
+              return next.length > 0 ? [...prev, ...next] : prev;
+            });
+          } else {
+            setAnnotationOps((prev) => {
+              const seen = new Set(prev.map((entry) => entry.id));
+              const next = incomingOps.filter((entry) => !seen.has(entry.id));
+              return next.length > 0 ? [...prev, ...next] : prev;
+            });
+          }
+          return;
+        }
+        if (parsed.type === "whiteboard_sync") {
+          setWhiteboardControllerId(parsed.controllerId || "");
+          setWhiteboardMode(parsed.mode || "whiteboard");
+          setWhiteboardBackground(parsed.background || "#ffffff");
+          setWhiteboardAllowedEditorIds(parsed.allowedEditorIds || []);
+          setWhiteboardOps(Array.isArray(parsed.whiteboardOps) ? parsed.whiteboardOps : []);
+          setAnnotationOps(Array.isArray(parsed.annotationOps) ? parsed.annotationOps : []);
+          setWhiteboardRedoOps([]);
+          setAnnotationRedoOps([]);
           return;
         }
         if (parsed.type === "whiteboard_history") {
@@ -1254,6 +1341,65 @@ export default function MeetingRoom({
     void publishRoomEvent({ type: "whiteboard_permissions", allowedEditorIds });
   };
 
+  useEffect(() => {
+    whiteboardSyncStateRef.current = {
+      controllerId: whiteboardControllerId,
+      mode: whiteboardMode,
+      background: whiteboardBackground,
+      allowedEditorIds: whiteboardAllowedEditorIds,
+      whiteboardOps,
+      annotationOps,
+    };
+  }, [
+    whiteboardControllerId,
+    whiteboardMode,
+    whiteboardBackground,
+    whiteboardAllowedEditorIds,
+    whiteboardOps,
+    annotationOps,
+  ]);
+
+  const flushWhiteboardQueue = useCallback(() => {
+    if (whiteboardFlushTimerRef.current) {
+      clearTimeout(whiteboardFlushTimerRef.current);
+      whiteboardFlushTimerRef.current = null;
+    }
+    const queued = whiteboardPendingQueueRef.current;
+    if (queued.length === 0) return;
+    whiteboardPendingQueueRef.current = [];
+
+    const wbOps: WhiteboardOp[] = [];
+    const annOps: WhiteboardOp[] = [];
+    for (const item of queued) {
+      if (item.mode === "annotate") {
+        annOps.push(item.op);
+      } else {
+        wbOps.push(item.op);
+      }
+    }
+    if (wbOps.length > 0) {
+      void publishRoomEvent(
+        { type: "whiteboard_ops", mode: "whiteboard", ops: wbOps },
+        { reliable: true }
+      );
+    }
+    if (annOps.length > 0) {
+      void publishRoomEvent(
+        { type: "whiteboard_ops", mode: "annotate", ops: annOps },
+        { reliable: true }
+      );
+    }
+  }, [publishRoomEvent]);
+
+  useEffect(() => {
+    return () => {
+      if (whiteboardFlushTimerRef.current) {
+        clearTimeout(whiteboardFlushTimerRef.current);
+        whiteboardFlushTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const appendWhiteboardOp = (op: WhiteboardOp) => {
     if (!canEditWhiteboard) return;
     const opWithAuthor: WhiteboardOp = {
@@ -1269,15 +1415,18 @@ export default function MeetingRoom({
     }
     const isContinuousTool =
       op.tool === "pen" || op.tool === "highlighter" || op.tool === "eraser";
-    const now = Date.now();
-    if (isContinuousTool && now - whiteboardLastPublishAtRef.current < 24) {
+    whiteboardPendingQueueRef.current.push({ mode: whiteboardMode, op: opWithAuthor });
+
+    if (!isContinuousTool) {
+      flushWhiteboardQueue();
       return;
     }
-    whiteboardLastPublishAtRef.current = now;
-    void publishRoomEvent(
-      { type: "whiteboard_op", mode: whiteboardMode, op: opWithAuthor },
-      { reliable: false }
-    );
+
+    if (!whiteboardFlushTimerRef.current) {
+      whiteboardFlushTimerRef.current = setTimeout(() => {
+        flushWhiteboardQueue();
+      }, 20);
+    }
   };
 
   const clearWhiteboard = () => {
@@ -3212,87 +3361,407 @@ export default function MeetingRoom({
   );
 }
 
-function drawWhiteboardOps(
+function resolveWhiteboardPoint(
+  point: WhiteboardPoint,
+  width: number,
+  height: number,
+  normalized?: boolean
+): WhiteboardPoint {
+  if (normalized) {
+    return { x: point.x * width, y: point.y * height };
+  }
+  return point;
+}
+
+function drawSmoothPolyline(
+  ctx: CanvasRenderingContext2D,
+  points: WhiteboardPoint[],
+  lineWidth: number
+) {
+  if (points.length === 0) return;
+  if (points.length === 1) {
+    ctx.beginPath();
+    ctx.arc(points[0].x, points[0].y, Math.max(1, lineWidth / 2), 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  if (points.length === 2) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.lineTo(points[1].x, points[1].y);
+    ctx.stroke();
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length - 1; i++) {
+    const midX = (points[i].x + points[i + 1].x) / 2;
+    const midY = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+  }
+  const last = points[points.length - 1];
+  ctx.lineTo(last.x, last.y);
+  ctx.stroke();
+}
+
+function drawCanvasOps(
   ctx: CanvasRenderingContext2D,
   ops: WhiteboardOp[],
-  background: string
+  width: number,
+  height: number,
+  options: { background?: string; isAnnotation?: boolean; previewOp?: WhiteboardOp | null }
 ) {
-  const canvas = ctx.canvas;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = background;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, width, height);
+  if (!options.isAnnotation && options.background) {
+    ctx.fillStyle = options.background;
+    ctx.fillRect(0, 0, width, height);
+  }
 
-  for (const op of ops) {
-    const alpha = op.tool === "highlighter" ? 0.28 : 1;
+  const scaleFactor = Math.min(width / 1280, height / 720);
+  const renderList = options.previewOp ? [...ops, options.previewOp] : ops;
+
+  for (const op of renderList) {
+    const alpha = op.tool === "highlighter" ? (options.isAnnotation ? 0.32 : 0.28) : 1;
+    const lineWidth = op.normalized
+      ? Math.max(1.25, op.size * (scaleFactor > 0 ? scaleFactor : 1))
+      : op.size;
+    const strokeColor =
+      op.tool === "eraser"
+        ? options.isAnnotation
+          ? "rgba(0,0,0,1)"
+          : options.background || "#ffffff"
+        : op.color;
+
     ctx.save();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.lineWidth = op.size;
+    ctx.lineWidth = lineWidth;
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = op.tool === "eraser" ? background : op.color;
-    ctx.fillStyle = op.tool === "eraser" ? background : op.color;
+    ctx.strokeStyle = strokeColor;
+    ctx.fillStyle = strokeColor;
+    ctx.globalCompositeOperation =
+      options.isAnnotation && op.tool === "eraser" ? "destination-out" : "source-over";
 
-    if (op.tool === "line" || op.tool === "pen" || op.tool === "highlighter" || op.tool === "eraser") {
-      ctx.beginPath();
-      ctx.moveTo(op.from.x, op.from.y);
-      ctx.lineTo(op.to.x, op.to.y);
-      ctx.stroke();
-    } else if (op.tool === "rect") {
-      const x = Math.min(op.from.x, op.to.x);
-      const y = Math.min(op.from.y, op.to.y);
-      const w = Math.abs(op.to.x - op.from.x);
-      const h = Math.abs(op.to.y - op.from.y);
-      ctx.strokeRect(x, y, w, h);
-    } else if (op.tool === "circle") {
-      const cx = (op.from.x + op.to.x) / 2;
-      const cy = (op.from.y + op.to.y) / 2;
-      const rx = Math.abs(op.to.x - op.from.x) / 2;
-      const ry = Math.abs(op.to.y - op.from.y) / 2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
-      ctx.stroke();
+    if (op.tool === "pen" || op.tool === "highlighter" || op.tool === "eraser") {
+      const rawPoints = op.points && op.points.length > 0 ? op.points : [op.from, op.to];
+      const mapped = rawPoints.map((pt) =>
+        resolveWhiteboardPoint(pt, width, height, op.normalized)
+      );
+      drawSmoothPolyline(ctx, mapped, lineWidth);
+    } else {
+      const from = resolveWhiteboardPoint(op.from, width, height, op.normalized);
+      const to = resolveWhiteboardPoint(op.to, width, height, op.normalized);
+
+      if (op.tool === "line") {
+        ctx.beginPath();
+        ctx.moveTo(from.x, from.y);
+        ctx.lineTo(to.x, to.y);
+        ctx.stroke();
+      } else if (op.tool === "rect") {
+        const x = Math.min(from.x, to.x);
+        const y = Math.min(from.y, to.y);
+        const w = Math.abs(to.x - from.x);
+        const h = Math.abs(to.y - from.y);
+        ctx.strokeRect(x, y, w, h);
+      } else if (op.tool === "circle") {
+        const cx = (from.x + to.x) / 2;
+        const cy = (from.y + to.y) / 2;
+        const rx = Math.abs(to.x - from.x) / 2;
+        const ry = Math.abs(to.y - from.y) / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }
 }
 
-function drawAnnotationOps(ctx: CanvasRenderingContext2D, ops: WhiteboardOp[]) {
-  const canvas = ctx.canvas;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+function createWhiteboardOpId() {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
-  for (const op of ops) {
-    const alpha = op.tool === "highlighter" ? 0.32 : 1;
-    ctx.save();
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = op.size;
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = op.tool === "eraser" ? "rgba(0,0,0,0)" : op.color;
-    ctx.fillStyle = op.color;
-    ctx.globalCompositeOperation = op.tool === "eraser" ? "destination-out" : "source-over";
+function useWhiteboardCanvasDrawing({
+  ops,
+  canEdit,
+  tool,
+  color,
+  size,
+  onAddOp,
+  background,
+  isAnnotation,
+}: {
+  ops: WhiteboardOp[];
+  canEdit: boolean;
+  tool: WhiteboardTool;
+  color: string;
+  size: number;
+  onAddOp: (op: WhiteboardOp) => void;
+  background?: string;
+  isAnnotation?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
+  const strokePointsRef = useRef<WhiteboardPoint[]>([]);
+  const lastEmittedIndexRef = useRef(0);
+  const lastSliceTimeRef = useRef(0);
+  const previewOpRef = useRef<WhiteboardOp | null>(null);
+  const opsRef = useRef(ops);
+  const sizeRef = useRef({ width: 0, height: 0 });
 
-    if (op.tool === "line" || op.tool === "pen" || op.tool === "highlighter" || op.tool === "eraser") {
-      ctx.beginPath();
-      ctx.moveTo(op.from.x, op.from.y);
-      ctx.lineTo(op.to.x, op.to.y);
-      ctx.stroke();
-    } else if (op.tool === "rect") {
-      const x = Math.min(op.from.x, op.to.x);
-      const y = Math.min(op.from.y, op.to.y);
-      const w = Math.abs(op.to.x - op.from.x);
-      const h = Math.abs(op.to.y - op.from.y);
-      ctx.strokeRect(x, y, w, h);
-    } else if (op.tool === "circle") {
-      const cx = (op.from.x + op.to.x) / 2;
-      const cy = (op.from.y + op.to.y) / 2;
-      const rx = Math.abs(op.to.x - op.from.x) / 2;
-      const ry = Math.abs(op.to.y - op.from.y) / 2;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
-      ctx.stroke();
+  const redraw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const { width, height } = sizeRef.current;
+    if (width <= 0 || height <= 0) return;
+    drawCanvasOps(ctx, opsRef.current, width, height, {
+      background,
+      isAnnotation,
+      previewOp: previewOpRef.current,
+    });
+  }, [background, isAnnotation]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const syncCanvasSizeAndDraw = () => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const targetWidth = Math.max(1, Math.floor(rect.width * dpr));
+      const targetHeight = Math.max(1, Math.floor(rect.height * dpr));
+      if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+      }
+      sizeRef.current = { width: rect.width, height: rect.height };
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      drawCanvasOps(ctx, opsRef.current, rect.width, rect.height, {
+        background,
+        isAnnotation,
+        previewOp: previewOpRef.current,
+      });
+    };
+
+    syncCanvasSizeAndDraw();
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(syncCanvasSizeAndDraw)
+        : null;
+    observer?.observe(canvas);
+    window.addEventListener("resize", syncCanvasSizeAndDraw);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", syncCanvasSizeAndDraw);
+    };
+  }, [background, isAnnotation]);
+
+  useEffect(() => {
+    opsRef.current = ops;
+    redraw();
+  }, [ops, redraw]);
+
+  const toNormalizedPoint = (clientX: number, clientY: number): WhiteboardPoint | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)),
+    };
+  };
+
+  const commitContinuousSlice = (forceFinal: boolean) => {
+    const pts = strokePointsRef.current;
+    const startIdx = lastEmittedIndexRef.current;
+    if (pts.length === 0) return;
+
+    if (pts.length === 1) {
+      if (!forceFinal) return;
+      onAddOp({
+        id: createWhiteboardOpId(),
+        tool,
+        color,
+        size,
+        from: pts[0],
+        to: pts[0],
+        points: [pts[0]],
+        normalized: true,
+      });
+      return;
     }
-    ctx.restore();
-  }
+
+    if (startIdx >= pts.length - 1) return;
+    const slice = pts.slice(startIdx);
+    lastEmittedIndexRef.current = pts.length - 1;
+    lastSliceTimeRef.current = Date.now();
+    onAddOp({
+      id: createWhiteboardOpId(),
+      tool,
+      color,
+      size,
+      from: slice[0],
+      to: slice[slice.length - 1],
+      points: slice,
+      normalized: true,
+    });
+  };
+
+  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!canEdit || event.button > 0) return;
+    const point = toNormalizedPoint(event.clientX, event.clientY);
+    if (!point) return;
+    drawingRef.current = true;
+    strokePointsRef.current = [point];
+    lastEmittedIndexRef.current = 0;
+    lastSliceTimeRef.current = Date.now();
+    previewOpRef.current = {
+      id: "active-preview",
+      tool,
+      color,
+      size,
+      from: point,
+      to: point,
+      points: [point],
+      normalized: true,
+    };
+    redraw();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Ignore pointer capture failures on synthetic events
+    }
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!canEdit || !drawingRef.current) return;
+    const isContinuousTool = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const nativeEvt = event.nativeEvent as PointerEvent;
+    const events =
+      isContinuousTool && typeof nativeEvt.getCoalescedEvents === "function"
+        ? nativeEvt.getCoalescedEvents()
+        : [nativeEvt];
+    const sourceEvents = events.length > 0 ? events : [nativeEvt];
+
+    let updated = false;
+    for (const evt of sourceEvents) {
+      const point = toNormalizedPoint(evt.clientX, evt.clientY);
+      if (!point) continue;
+      if (isContinuousTool) {
+        const pts = strokePointsRef.current;
+        const prev = pts[pts.length - 1];
+        if (prev && Math.hypot(point.x - prev.x, point.y - prev.y) < 0.00035) {
+          continue;
+        }
+        pts.push(point);
+        updated = true;
+      } else {
+        const origin = strokePointsRef.current[0] || point;
+        previewOpRef.current = {
+          id: "active-preview",
+          tool,
+          color,
+          size,
+          from: origin,
+          to: point,
+          normalized: true,
+        };
+        updated = true;
+      }
+    }
+
+    if (!updated) return;
+
+    if (isContinuousTool) {
+      const pts = strokePointsRef.current;
+      const startIdx = lastEmittedIndexRef.current;
+      const unemitted = pts.slice(startIdx);
+      previewOpRef.current = {
+        id: "active-preview",
+        tool,
+        color,
+        size,
+        from: unemitted[0],
+        to: unemitted[unemitted.length - 1],
+        points: unemitted,
+        normalized: true,
+      };
+      if (Date.now() - lastSliceTimeRef.current >= 20 || unemitted.length >= 10) {
+        commitContinuousSlice(false);
+        const latest = pts[pts.length - 1];
+        previewOpRef.current = {
+          id: "active-preview",
+          tool,
+          color,
+          size,
+          from: latest,
+          to: latest,
+          points: [latest],
+          normalized: true,
+        };
+      }
+    }
+
+    redraw();
+  };
+
+  const finishStroke = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawingRef.current) return;
+    const isContinuousTool = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const point = toNormalizedPoint(event.clientX, event.clientY);
+
+    if (isContinuousTool) {
+      if (point) {
+        const pts = strokePointsRef.current;
+        const prev = pts[pts.length - 1];
+        if (!prev || Math.hypot(point.x - prev.x, point.y - prev.y) >= 0.0002) {
+          pts.push(point);
+        }
+      }
+      commitContinuousSlice(true);
+    } else if (point && strokePointsRef.current[0]) {
+      onAddOp({
+        id: createWhiteboardOpId(),
+        tool,
+        color,
+        size,
+        from: strokePointsRef.current[0],
+        to: point,
+        normalized: true,
+      });
+    }
+
+    drawingRef.current = false;
+    strokePointsRef.current = [];
+    lastEmittedIndexRef.current = 0;
+    previewOpRef.current = null;
+    redraw();
+
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Ignore release errors when pointer capture already ended
+    }
+  };
+
+  return {
+    canvasRef,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp: finishStroke,
+    onPointerCancel: finishStroke,
+  };
 }
 
 function WhiteboardStage({
@@ -3316,78 +3785,17 @@ function WhiteboardStage({
   onAddOp: (op: WhiteboardOp) => void;
   controllerName: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const startRef = useRef<WhiteboardPoint | null>(null);
-
-  const getPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  };
-
-  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    if (!point) return;
-    drawingRef.current = true;
-    startRef.current = point;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit || !drawingRef.current) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (!point || !from) return;
-    if (tool === "pen" || tool === "highlighter" || tool === "eraser") {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-      startRef.current = point;
-    }
-  };
-
-  const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (point && from && (tool === "line" || tool === "rect" || tool === "circle")) {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-    }
-    drawingRef.current = false;
-    startRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.floor(rect.width);
-      canvas.height = Math.floor(rect.height);
-      drawWhiteboardOps(ctx, ops, background);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [ops, background]);
+  const { canvasRef, onPointerDown, onPointerMove, onPointerUp, onPointerCancel } =
+    useWhiteboardCanvasDrawing({
+      ops,
+      canEdit,
+      tool,
+      color,
+      size,
+      onAddOp,
+      background,
+      isAnnotation: false,
+    });
 
   return (
     <div className="relative h-full overflow-hidden rounded-2xl border border-border bg-card/60 shadow-xl">
@@ -3396,8 +3804,8 @@ function WhiteboardStage({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="h-full w-full"
+        onPointerCancel={onPointerCancel}
+        className={`h-full w-full touch-none ${canEdit ? "cursor-crosshair" : "cursor-default"}`}
       />
       <span className="absolute bottom-3 left-3 rounded-full bg-emerald-700/80 px-3 py-1 text-sm font-semibold text-white shadow">
         {mode === "annotate" ? `${possessive(controllerName)} Annotation` : `${possessive(controllerName)} Whiteboard`}
@@ -3434,78 +3842,16 @@ function AnnotateStage({
   controllerName: string;
   sharedByName: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const drawingRef = useRef(false);
-  const startRef = useRef<WhiteboardPoint | null>(null);
-
-  const getPoint = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  };
-
-  const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    if (!point) return;
-    drawingRef.current = true;
-    startRef.current = point;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit || !drawingRef.current) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (!point || !from) return;
-    if (tool === "pen" || tool === "highlighter" || tool === "eraser") {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-      startRef.current = point;
-    }
-  };
-
-  const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!canEdit) return;
-    const point = getPoint(event);
-    const from = startRef.current;
-    if (point && from && (tool === "line" || tool === "rect" || tool === "circle")) {
-      onAddOp({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        tool,
-        color,
-        size,
-        from,
-        to: point,
-      });
-    }
-    drawingRef.current = false;
-    startRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.floor(rect.width);
-      canvas.height = Math.floor(rect.height);
-      drawAnnotationOps(ctx, ops);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-    return () => window.removeEventListener("resize", resize);
-  }, [ops]);
+  const { canvasRef, onPointerDown, onPointerMove, onPointerUp, onPointerCancel } =
+    useWhiteboardCanvasDrawing({
+      ops,
+      canEdit,
+      tool,
+      color,
+      size,
+      onAddOp,
+      isAnnotation: true,
+    });
 
   return (
     <div className="relative h-full overflow-hidden rounded-2xl border border-border bg-card/60 shadow-xl">
@@ -3515,8 +3861,8 @@ function AnnotateStage({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        className="absolute inset-0 h-full w-full"
+        onPointerCancel={onPointerCancel}
+        className={`absolute inset-0 h-full w-full touch-none ${canEdit ? "cursor-crosshair" : "cursor-default"}`}
       />
       <span className="absolute bottom-3 left-3 rounded-full bg-emerald-700/80 px-3 py-1 text-sm font-semibold text-white shadow">
         {`${possessive(controllerName)} Annotation on ${possessive(sharedByName)} Screen`}

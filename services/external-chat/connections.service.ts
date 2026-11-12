@@ -1,4 +1,5 @@
 import { externalChatPrisma as prisma } from "@/lib/external-chat-prisma";
+import { ensureExternalChatUserByClerkId } from "@/services/external-chat/user.service";
 import { AppUser } from "@/services/user.service";
 
 function orderedPair(a: string, b: string) {
@@ -61,15 +62,18 @@ async function ensureDirectRoom(userA: AppUser, userB: { id: string; clerkId: st
 
 export async function searchUsers(actor: AppUser, query: string) {
   const q = query.trim();
-  if (!q) return [];
   const users = await prisma.user.findMany({
     where: {
       id: { not: actor.id },
-      OR: [
-        { name: { contains: q, mode: "insensitive" } },
-        { email: { contains: q, mode: "insensitive" } },
-        { clerkId: { contains: q, mode: "insensitive" } },
-      ],
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { email: { contains: q, mode: "insensitive" } },
+              { clerkId: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
     },
     select: {
       id: true,
@@ -79,7 +83,8 @@ export async function searchUsers(actor: AppUser, query: string) {
       imageUrl: true,
       e2eePublicKey: true,
     },
-    take: 20,
+    orderBy: [{ name: "asc" }, { createdAt: "desc" }],
+    take: q ? 50 : 100,
   });
   return users;
 }
@@ -121,10 +126,22 @@ export async function listConnectionState(actor: AppUser) {
 }
 
 export async function requestConnection(actor: AppUser, targetClerkId: string, message?: string) {
-  const target = await prisma.user.findUnique({
-    where: { clerkId: targetClerkId.trim() },
+  const trimmedTargetId = targetClerkId.trim();
+  let target = await prisma.user.findUnique({
+    where: { clerkId: trimmedTargetId },
     select: { id: true, clerkId: true, name: true, email: true },
   });
+  if (!target) {
+    const synced = await ensureExternalChatUserByClerkId(trimmedTargetId);
+    if (synced) {
+      target = {
+        id: synced.id,
+        clerkId: synced.clerkId,
+        name: synced.name,
+        email: synced.email,
+      };
+    }
+  }
   if (!target) throw new Error("User not found");
   if (target.id === actor.id) throw new Error("Cannot connect with yourself");
 
