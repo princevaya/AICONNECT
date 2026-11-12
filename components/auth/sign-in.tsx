@@ -15,8 +15,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Icons } from "@/components/global/icons";
-import { cn } from "@/lib/utils";
 import { AlertCircle, Loader2, Mail, Lock, Github } from "lucide-react";
+
+function getClerkErrorMessage(err: unknown, fallback: string): string {
+  const clerkErr = err as { errors?: Array<{ longMessage?: string; message?: string }> } | null;
+  return clerkErr?.errors?.[0]?.longMessage || clerkErr?.errors?.[0]?.message || fallback;
+}
 
 export default function CustomSignIn() {
   const { isLoaded, signIn, setActive } = useSignIn();
@@ -48,8 +52,8 @@ export default function CustomSignIn() {
       } else {
         setError("Sign in failed. Please try again.");
       }
-    } catch (err: any) {
-      setError(err.errors?.[0]?.longMessage || "Invalid email or password");
+    } catch (err: unknown) {
+      setError(getClerkErrorMessage(err, "Invalid email or password"));
     } finally {
       setIsLoading(false);
     }
@@ -61,14 +65,19 @@ export default function CustomSignIn() {
     setIsLoading(true);
     setError("");
 
+    const ssoCallbackUrl =
+      redirectUrl !== "/dashboard"
+        ? `/auth/sso-callback?redirect_url=${encodeURIComponent(redirectUrl)}`
+        : "/auth/sso-callback";
+
     try {
       await signIn.authenticateWithRedirect({
         strategy,
-        redirectUrl: "/auth/sso-callback",
+        redirectUrl: ssoCallbackUrl,
         redirectUrlComplete: redirectUrl,
       });
-    } catch (err: any) {
-      setError(err.errors?.[0]?.longMessage || "OAuth sign-in failed");
+    } catch (err: unknown) {
+      setError(getClerkErrorMessage(err, "OAuth sign-in failed"));
       setIsLoading(false);
     }
   };

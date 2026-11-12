@@ -2,15 +2,19 @@
 
 import * as React from "react";
 import { useSignUp } from "@clerk/nextjs";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Icons } from "@/components/global/icons";
-import { cn } from "@/lib/utils";
 import { AlertCircle, Loader2, Mail, Lock, User, Github, CheckCircle2 } from "lucide-react";
+
+function getClerkErrorMessage(err: unknown, fallback: string): string {
+    const clerkErr = err as { errors?: Array<{ longMessage?: string; message?: string }> } | null;
+    return clerkErr?.errors?.[0]?.longMessage || clerkErr?.errors?.[0]?.message || fallback;
+}
 
 export default function CustomSignUp() {
     const { isLoaded, signUp, setActive } = useSignUp();
@@ -18,13 +22,78 @@ export default function CustomSignUp() {
     const [password, setPassword] = React.useState("");
     const [firstName, setFirstName] = React.useState("");
     const [lastName, setLastName] = React.useState("");
+    const [username, setUsername] = React.useState("");
+    const [legalAccepted, setLegalAccepted] = React.useState(false);
     const [pendingVerification, setPendingVerification] = React.useState(false);
     const [code, setCode] = React.useState("");
     const [error, setError] = React.useState("");
     const [isLoading, setIsLoading] = React.useState(false);
+    const pathname = usePathname();
     const router = useRouter();
     const searchParams = useSearchParams();
     const redirectUrl = searchParams.get("redirect_url") || "/dashboard";
+
+    const isContinueOAuthSignUp = Boolean(
+        isLoaded &&
+        !pendingVerification &&
+        signUp?.status === "missing_requirements" &&
+        (pathname?.includes("/continue") ||
+            signUp?.verifications?.externalAccount?.status === "verified")
+    );
+
+    const missingFields = React.useMemo(
+        () => new Set(signUp?.missingFields ?? []),
+        [signUp?.missingFields]
+    );
+
+    React.useEffect(() => {
+        if (!isContinueOAuthSignUp || !signUp) return;
+        if (signUp.firstName && !firstName) setFirstName(signUp.firstName);
+        if (signUp.lastName && !lastName) setLastName(signUp.lastName);
+        if (signUp.emailAddress && !emailAddress) setEmailAddress(signUp.emailAddress);
+        if (signUp.username && !username) setUsername(signUp.username);
+    }, [isContinueOAuthSignUp, signUp, firstName, lastName, emailAddress, username]);
+
+    const handleContinueSignUp = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!isLoaded || !signUp) return;
+
+        setIsLoading(true);
+        setError("");
+
+        try {
+            const payload: Record<string, unknown> = {};
+            if (missingFields.has("first_name")) payload.firstName = firstName.trim();
+            if (missingFields.has("last_name")) payload.lastName = lastName.trim();
+            if (missingFields.has("username")) payload.username = username.trim();
+            if (missingFields.has("email_address")) payload.emailAddress = emailAddress.trim();
+            if (missingFields.has("password")) payload.password = password;
+            if (missingFields.has("legal_accepted")) payload.legalAccepted = legalAccepted;
+
+            const updated =
+                Object.keys(payload).length > 0
+                    ? await signUp.update(payload as Parameters<typeof signUp.update>[0])
+                    : signUp;
+
+            if (updated.status === "complete") {
+                await setActive({ session: updated.createdSessionId });
+                router.push(redirectUrl);
+                return;
+            }
+
+            if (updated.unverifiedFields.includes("email_address")) {
+                await updated.prepareEmailAddressVerification({ strategy: "email_code" });
+                setPendingVerification(true);
+                return;
+            }
+
+            setError("Please fill in all required fields to finish creating your account.");
+        } catch (err: unknown) {
+            setError(getClerkErrorMessage(err, "Could not complete registration"));
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -44,8 +113,8 @@ export default function CustomSignUp() {
 
             await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
             setPendingVerification(true);
-        } catch (err: any) {
-            setError(err.errors?.[0]?.longMessage || "Registration failed");
+        } catch (err: unknown) {
+            setError(getClerkErrorMessage(err, "Registration failed"));
         } finally {
             setIsLoading(false);
         }
@@ -70,8 +139,8 @@ export default function CustomSignUp() {
             } else {
                 setError("Verification failed. Please try again.");
             }
-        } catch (err: any) {
-            setError(err.errors?.[0]?.longMessage || "Invalid verification code");
+        } catch (err: unknown) {
+            setError(getClerkErrorMessage(err, "Invalid verification code"));
         } finally {
             setIsLoading(false);
         }
@@ -83,14 +152,19 @@ export default function CustomSignUp() {
         setIsLoading(true);
         setError("");
 
+        const ssoCallbackUrl =
+            redirectUrl !== "/dashboard"
+                ? `/auth/sso-callback?redirect_url=${encodeURIComponent(redirectUrl)}`
+                : "/auth/sso-callback";
+
         try {
             await signUp.authenticateWithRedirect({
                 strategy,
-                redirectUrl: "/auth/sso-callback",
+                redirectUrl: ssoCallbackUrl,
                 redirectUrlComplete: redirectUrl,
             });
-        } catch (err: any) {
-            setError(err.errors?.[0]?.longMessage || "OAuth sign-up failed");
+        } catch (err: unknown) {
+            setError(getClerkErrorMessage(err, "OAuth sign-up failed"));
             setIsLoading(false);
         }
     };
@@ -112,12 +186,18 @@ export default function CustomSignUp() {
                         </div>
                     </div>
                     <CardTitle className="text-2xl font-bold">
-                        {pendingVerification ? "Verify your email" : "Create an account"}
+                        {pendingVerification
+                            ? "Verify your email"
+                            : isContinueOAuthSignUp
+                                ? "Complete your account"
+                                : "Create an account"}
                     </CardTitle>
                     <CardDescription>
                         {pendingVerification
                             ? "Enter the verification code sent to your email"
-                            : "Get started with AIConnect today"}
+                            : isContinueOAuthSignUp
+                                ? "Provide the remaining details to finish signing up"
+                                : "Get started with AIConnect today"}
                     </CardDescription>
                 </CardHeader>
 
@@ -129,7 +209,113 @@ export default function CustomSignUp() {
                         </div>
                     )}
 
-                    {!pendingVerification ? (
+                    {isContinueOAuthSignUp ? (
+                        <form onSubmit={handleContinueSignUp} className="space-y-4">
+                            {(missingFields.has("first_name") || missingFields.has("last_name")) && (
+                                <div className="grid grid-cols-2 gap-3">
+                                    {missingFields.has("first_name") && (
+                                        <div className="space-y-2">
+                                            <Label htmlFor="continueFirstName">First name</Label>
+                                            <Input
+                                                id="continueFirstName"
+                                                type="text"
+                                                placeholder="John"
+                                                value={firstName}
+                                                onChange={(e) => setFirstName(e.target.value)}
+                                                disabled={isLoading}
+                                                required
+                                            />
+                                        </div>
+                                    )}
+                                    {missingFields.has("last_name") && (
+                                        <div className="space-y-2">
+                                            <Label htmlFor="continueLastName">Last name</Label>
+                                            <Input
+                                                id="continueLastName"
+                                                type="text"
+                                                placeholder="Doe"
+                                                value={lastName}
+                                                onChange={(e) => setLastName(e.target.value)}
+                                                disabled={isLoading}
+                                                required
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {missingFields.has("username") && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="continueUsername">Username</Label>
+                                    <Input
+                                        id="continueUsername"
+                                        type="text"
+                                        placeholder="Choose a username"
+                                        value={username}
+                                        onChange={(e) => setUsername(e.target.value)}
+                                        disabled={isLoading}
+                                        required
+                                    />
+                                </div>
+                            )}
+
+                            {missingFields.has("email_address") && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="continueEmail">Email</Label>
+                                    <Input
+                                        id="continueEmail"
+                                        type="email"
+                                        placeholder="name@example.com"
+                                        value={emailAddress}
+                                        onChange={(e) => setEmailAddress(e.target.value)}
+                                        disabled={isLoading}
+                                        required
+                                    />
+                                </div>
+                            )}
+
+                            {missingFields.has("password") && (
+                                <div className="space-y-2">
+                                    <Label htmlFor="continuePassword">Password</Label>
+                                    <Input
+                                        id="continuePassword"
+                                        type="password"
+                                        placeholder="Create a strong password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        disabled={isLoading}
+                                        required
+                                    />
+                                </div>
+                            )}
+
+                            {missingFields.has("legal_accepted") && (
+                                <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={legalAccepted}
+                                        onChange={(e) => setLegalAccepted(e.target.checked)}
+                                        disabled={isLoading}
+                                        required
+                                    />
+                                    <span>I accept the Terms of Service and Privacy Policy</span>
+                                </label>
+                            )}
+
+                            <div id="clerk-captcha" />
+
+                            <Button type="submit" className="w-full" disabled={isLoading}>
+                                {isLoading ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Completing sign up...
+                                    </>
+                                ) : (
+                                    "Continue"
+                                )}
+                            </Button>
+                        </form>
+                    ) : !pendingVerification ? (
                         <>
                             <form onSubmit={handleSubmit} className="space-y-4">
                                 <div className="grid grid-cols-2 gap-3">
@@ -199,6 +385,8 @@ export default function CustomSignUp() {
                                         Must be at least 8 characters
                                     </p>
                                 </div>
+
+                                <div id="clerk-captcha" />
 
                                 <Button
                                     type="submit"
