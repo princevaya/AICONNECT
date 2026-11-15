@@ -60,3 +60,5 @@ chat-history*
 
 # clerk configuration (may contain secrets)
 .clerk/
+# Personal interview resume uploads
+/public/uploads/interviews/*.pdf

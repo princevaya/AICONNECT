@@ -1,0 +1,115 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum InterviewSessionStatus {
+  CREATED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Candidate {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String?
+  jobRole   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions InterviewSession[]
+
+  @@index([email])
+}
+
+model InterviewSession {
+  id                    String                @id @default(cuid())
+  candidateId           String
+  status                InterviewSessionStatus @default(CREATED)
+
+  resumeFileName        String?
+  resumeStoragePath     String?
+  resumeStorageProvider String?               @default("supabase")
+  resumeText            String?               @db.Text
+
+  overallScore          Float?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  questions InterviewQuestion[]
+  answers   InterviewAnswer[]
+  report    InterviewReport?
+
+  @@index([candidateId])
+}
+
+model InterviewQuestion {
+  id             String   @id @default(cuid())
+  sessionId      String
+  questionNumber Int
+  questionText   String   @db.Text
+  createdAt      DateTime @default(now())
+
+  session InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  answer  InterviewAnswer?
+
+  @@unique([sessionId, questionNumber])
+}
+
+model InterviewAnswer {
+  id         String   @id @default(cuid())
+  sessionId  String
+  questionId String   @unique
+  answerText String   @db.Text
+  recordedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  session  InterviewSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question InterviewQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  score    InterviewScore?
+
+  followUps InterviewFollowUp[]
+}
+
+model InterviewFollowUp {
+  id           String   @id @default(cuid())
+  answerId     String
+  questionText String   @db.Text
+  answerText   String?  @db.Text
+  sequence     Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  answer InterviewAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+
+  @@unique([answerId, sequence])
+  @@index([answerId])
+}
+
+model InterviewScore {
+  id        String   @id @default(cuid())
+  answerId  String   @unique
+  score     Float
+  feedback  String   @db.Text
+  createdAt DateTime @default(now())
+
+  answer InterviewAnswer @relation(fields: [answerId], references: [id], onDelete: Cascade)
+}
+
+model InterviewReport {
+  id           String   @id @default(cuid())
+  sessionId    String   @unique
+  overallScore Float?
+  summary      String   @db.Text
+  reportText   String   @db.Text
+  generatedAt  DateTime @default(now())
+
+  session InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
