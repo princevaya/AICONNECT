@@ -165,14 +165,15 @@ function mapRow(row: MeetingRow): MeetingRecord {
 /* ---------- queries ---------- */
 export async function listMeetings(userId?: string, userEmail?: string | null): Promise<MeetingRecord[]> {
   await ensureTable();
+  const normalizedEmail = userEmail?.trim().toLowerCase() || null;
   if (userId) {
-    if (userEmail) {
+    if (normalizedEmail) {
       const result = await pool.query(
         `SELECT * FROM meeting_rooms 
          WHERE is_active = true 
            AND (created_by = $1 OR attendees @> $2::jsonb) 
          ORDER BY scheduled_for ASC`,
-        [userId, JSON.stringify([userEmail])]
+        [userId, JSON.stringify([normalizedEmail])]
       );
       return result.rows.map(mapRow);
     } else {
@@ -237,6 +238,7 @@ export interface CreateMeetingPayload {
   allowScreenSharing?: boolean;
   meetingPassword?: string | null;
   status?: string;
+  isActive?: boolean;
 }
 
 function generateMeetingCode(): string {
@@ -322,7 +324,15 @@ export async function createMeeting(
       payload.title,
       payload.scheduledFor,
       endTime,
-      JSON.stringify(payload.attendees),
+      JSON.stringify(
+        Array.from(
+          new Set(
+            payload.attendees
+              .map((a) => a.trim().toLowerCase())
+              .filter(Boolean)
+          )
+        )
+      ),
       payload.notes ?? null,
       status,
       payload.createdBy ?? null,
@@ -352,10 +362,10 @@ export async function updateMeeting(
   if (!existing) return null;
 
   const sets: string[] = [];
-  const vals: any[] = [];
+  const vals: unknown[] = [];
   let paramIdx = 1;
 
-  const addField = (col: string, val: any) => {
+  const addField = (col: string, val: unknown) => {
     if (val !== undefined) {
       sets.push(`${col} = $${paramIdx++}`);
       vals.push(val);
@@ -370,10 +380,18 @@ export async function updateMeeting(
     addField("end_time", payload.endTime);
   }
   if (payload.attendees !== undefined) {
-    addField("attendees", JSON.stringify(payload.attendees));
+    const normalizedAttendees = Array.from(
+      new Set(payload.attendees.map((a) => a.trim().toLowerCase()).filter(Boolean))
+    );
+    addField("attendees", JSON.stringify(normalizedAttendees));
   }
   addField("notes", payload.notes);
   addField("status", payload.status);
+  if (payload.isActive !== undefined) {
+    addField("is_active", payload.isActive);
+  } else if (payload.status === "Cancelled" || payload.status === "Completed") {
+    addField("is_active", false);
+  }
   addField("timezone", payload.timezone);
   addField("duration", payload.duration);
   addField("allow_join_before_host", payload.allowJoinBeforeHost);
@@ -443,13 +461,14 @@ export async function markMeetingClosed(code: string): Promise<void> {
 
 export async function listAllMeetings(userId?: string, userEmail?: string | null): Promise<MeetingRecord[]> {
   await ensureTable();
+  const normalizedEmail = userEmail?.trim().toLowerCase() || null;
   if (userId) {
-    if (userEmail) {
+    if (normalizedEmail) {
       const result = await pool.query(
         `SELECT * FROM meeting_rooms 
          WHERE (created_by = $1 OR attendees @> $2::jsonb) 
          ORDER BY scheduled_for DESC`,
-        [userId, JSON.stringify([userEmail])]
+        [userId, JSON.stringify([normalizedEmail])]
       );
       return result.rows.map(mapRow);
     } else {

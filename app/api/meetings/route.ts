@@ -1,11 +1,11 @@
 import { success, failure } from "@/app/api/_utils/response";
-import { createMeeting, listAllMeetings, listMeetings } from "@/lib/meetings";
+import { createMeeting, listAllMeetings, listMeetings, type MeetingRecord } from "@/lib/meetings";
 import { sendMeetingInvite } from "@/lib/email";
 import { auth, currentUser } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
 
-function toClientPayload(m: any) {
+function toClientPayload(m: MeetingRecord) {
   return {
     id: m.id,
     code: m.code,
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
     const attendeesSet = new Set<string>();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     for (const email of rawAttendees) {
-      const cleanEmail = typeof email === "string" ? email.trim() : "";
+      const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
       if (!cleanEmail) continue;
       if (!emailRegex.test(cleanEmail)) {
         return failure(`Invalid email address format: ${cleanEmail}`, 400);
@@ -154,13 +154,18 @@ export async function POST(req: Request) {
       )
     );
 
-    const emailsSent = emailResults.filter((r) => r.status === "fulfilled").length;
+    const emailsSent = emailResults.filter(
+      (r) => r.status === "fulfilled" && r.value.sent
+    ).length;
+    const emailsSkipped = emailResults.filter(
+      (r) => r.status === "fulfilled" && r.value.skipped
+    ).length;
     const emailsFailed = emailResults.filter((r) => r.status === "rejected").length;
 
     return success(
       {
         meeting: clientMeeting,
-        invites: { sent: emailsSent, failed: emailsFailed },
+        invites: { sent: emailsSent, skipped: emailsSkipped, failed: emailsFailed },
       },
       201
     );

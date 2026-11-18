@@ -16,7 +16,7 @@ WORKDIR /app
 # -------------------------
 FROM base AS deps
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml prisma.config.ts prisma.chat.config.ts ./
 COPY prisma ./prisma
 
 RUN pnpm config set dangerously-allow-all-builds true
@@ -43,6 +43,7 @@ ARG NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL
 ARG NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL
 ARG NEXT_PUBLIC_APP_URL
 ARG NEXT_PUBLIC_LIVEKIT_URL
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
 # Make them available during build
 ENV DATABASE_URL=${DATABASE_URL}
@@ -57,6 +58,7 @@ ENV NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL=${NEXT_PUBLIC_CLERK_SIGN_IN_FOR
 ENV NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL=${NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL}
 ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
 ENV NEXT_PUBLIC_LIVEKIT_URL=${NEXT_PUBLIC_LIVEKIT_URL}
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=${NEXT_PUBLIC_VAPID_PUBLIC_KEY}
 
 # Build app
 RUN pnpm run build
@@ -87,7 +89,7 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/next.config.js ./next.config.js
+COPY --from=builder /app/prisma.chat.config.ts ./prisma.chat.config.ts
 COPY --from=builder /app/next.config.ts ./next.config.ts
 
 # Expose app port

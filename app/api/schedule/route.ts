@@ -13,7 +13,7 @@ function getScheduleErrorDetails(error: unknown) {
     return {
       status: 503,
       message:
-        "Scheduler database is not configured. Set DATABASE_URL in Vercel project environment variables.",
+        "Scheduler database is not configured. Set DATABASE_URL in server environment variables.",
     };
   }
 
@@ -96,6 +96,9 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const { userId } = await auth();
+    if (!userId) {
+      return failure("Unauthorized", 401);
+    }
 
     const body = await req.json();
 
@@ -118,7 +121,13 @@ export async function POST(req: Request) {
     }
 
     const attendees: string[] = Array.isArray(body.attendees)
-      ? body.attendees
+      ? Array.from(
+          new Set(
+            body.attendees
+              .map((a: unknown) => (typeof a === "string" ? a.trim().toLowerCase() : ""))
+              .filter(Boolean)
+          )
+        )
       : [];
 
     const timezone = typeof body.timezone === "string" ? body.timezone.trim() : "UTC";
@@ -162,7 +171,10 @@ export async function POST(req: Request) {
     );
 
     const emailsSent = emailResults.filter(
-      (r) => r.status === "fulfilled"
+      (r) => r.status === "fulfilled" && r.value.sent
+    ).length;
+    const emailsSkipped = emailResults.filter(
+      (r) => r.status === "fulfilled" && r.value.skipped
     ).length;
     const emailsFailed = emailResults.filter(
       (r) => r.status === "rejected"
@@ -171,7 +183,7 @@ export async function POST(req: Request) {
     return success(
       {
         meeting: toClientPayload(meeting),
-        invites: { sent: emailsSent, failed: emailsFailed },
+        invites: { sent: emailsSent, skipped: emailsSkipped, failed: emailsFailed },
       },
       201
     );

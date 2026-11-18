@@ -1,10 +1,10 @@
 import { success, failure } from "@/app/api/_utils/response";
-import { findByCode, updateMeeting } from "@/lib/meetings";
+import { findByCode, updateMeeting, type CreateMeetingPayload, type MeetingRecord } from "@/lib/meetings";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
 
-function toClientPayload(m: any, organizerName: string) {
+function toClientPayload(m: MeetingRecord, organizerName: string) {
   return {
     id: m.id,
     code: m.code,
@@ -94,7 +94,7 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const payload: any = {};
+    const payload: Partial<CreateMeetingPayload> = {};
 
     if (body.title !== undefined) {
       const title = typeof body.title === "string" ? body.title.trim() : "";
@@ -135,7 +135,7 @@ export async function PATCH(
       const attendeesSet = new Set<string>();
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       for (const email of rawAttendees) {
-        const cleanEmail = typeof email === "string" ? email.trim() : "";
+        const cleanEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
         if (!cleanEmail) continue;
         if (!emailRegex.test(cleanEmail)) {
           return failure(`Invalid email address format: ${cleanEmail}`, 400);
@@ -205,6 +205,7 @@ export async function DELETE(
     // Mark cancelled & inactive
     const updated = await updateMeeting(meeting.code, {
       status: "Cancelled",
+      isActive: false,
     });
 
     if (!updated) {

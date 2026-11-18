@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -8,33 +9,19 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-type ResendClient = {
-  emails: {
-    send: (input: {
-      from: string;
-      to: string;
-      subject: string;
-      html: string;
-      attachments?: Array<{
-        filename: string;
-        content: Buffer | string;
-        contentType?: string;
-      }>;
-    }) => Promise<unknown>;
-  };
-};
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-function getResendClient(): ResendClient | null {
-  const apiKey = process.env.RESEND_API_KEY;
+function getResendClient(): Resend | null {
+  const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) return null;
-  try {
-    const req = eval("require") as (id: string) => unknown;
-    const mod = req("resend") as { Resend?: new (key: string) => ResendClient };
-    if (!mod?.Resend) return null;
-    return new mod.Resend(apiKey);
-  } catch {
-    return null;
-  }
+  return new Resend(apiKey);
 }
 
 function getMeetingSender() {
@@ -66,14 +53,15 @@ export async function sendMeetingInvite({
   timezone?: string;
   duration?: string;
   organizerName?: string;
-}) {
+}): Promise<{ sent: boolean; skipped?: boolean }> {
   const sender = getMeetingSender();
   if (!sender) {
     console.warn("[email] No email provider is configured. Skipping invite email.");
-    return;
+    return { sent: false, skipped: true };
   }
 
-  const meetingLink = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3005"}/meeting/join?room=${meetingCode}`;
+  const appBaseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3005").replace(/\/+$/, "");
+  const meetingLink = `${appBaseUrl}/meeting/join?room=${encodeURIComponent(meetingCode)}`;
   
   // Calculate end time
   let mins = 30;
@@ -150,6 +138,13 @@ export async function sendMeetingInvite({
     timeZone: timezone,
   });
 
+  const safeTitle = escapeHtml(title);
+  const safeOrganizer = escapeHtml(organizerName);
+  const safeNotes = notes ? escapeHtml(notes) : "";
+  const safeDuration = escapeHtml(duration);
+  const safeTimezone = escapeHtml(timezone);
+  const safeCode = escapeHtml(meetingCode);
+
   const html = `
     <div style="font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f9fafb; padding: 32px 16px; color: #1f2937;">
       <div style="max-width: 540px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
@@ -162,13 +157,13 @@ export async function sendMeetingInvite({
 
         <!-- Content Body -->
         <div style="background-color: #ffffff; padding: 32px 24px;">
-          <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600; color: #111827;">${title}</h2>
+          <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 600; color: #111827;">${safeTitle}</h2>
           
           <div style="background-color: #f3f4f6; border-radius: 8px; padding: 20px; margin-bottom: 24px;">
             <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
               <tr style="border-bottom: 1px solid #e5e7eb;">
                 <td style="padding: 8px 0; color: #6b7280; width: 100px; font-weight: 500;">Organizer:</td>
-                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${organizerName}</td>
+                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${safeOrganizer}</td>
               </tr>
               <tr style="border-bottom: 1px solid #e5e7eb;">
                 <td style="padding: 8px 0; color: #6b7280; font-weight: 500;">Date:</td>
@@ -176,11 +171,11 @@ export async function sendMeetingInvite({
               </tr>
               <tr style="border-bottom: 1px solid #e5e7eb;">
                 <td style="padding: 8px 0; color: #6b7280; font-weight: 500;">Time:</td>
-                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${meetingTimeStr} (${timezone}${offsetStr})</td>
+                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${meetingTimeStr} (${safeTimezone}${offsetStr})</td>
               </tr>
               <tr>
                 <td style="padding: 8px 0; color: #6b7280; font-weight: 500;">Duration:</td>
-                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${duration}</td>
+                <td style="padding: 8px 0; color: #111827; font-weight: 600;">${safeDuration}</td>
               </tr>
             </table>
             <p style="margin: 12px 0 0 0; font-size: 12px; color: #6b7280; font-style: italic;">
@@ -188,10 +183,10 @@ export async function sendMeetingInvite({
             </p>
           </div>
 
-          ${notes ? `
+          ${safeNotes ? `
             <div style="margin-bottom: 24px;">
               <h3 style="margin: 0 0 8px 0; font-size: 14px; color: #4b5563; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Description</h3>
-              <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4b5563; white-space: pre-line;">${notes}</p>
+              <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #4b5563; white-space: pre-line;">${safeNotes}</p>
             </div>
           ` : ""}
 
@@ -206,7 +201,7 @@ export async function sendMeetingInvite({
           <div style="border-top: 1px solid #e5e7eb; padding-top: 20px; font-size: 13px; color: #6b7280;">
             <p style="margin: 0 0 4px 0;">Or use the link below to join:</p>
             <a href="${meetingLink}" style="color: #4f46e5; text-decoration: underline; word-break: break-all;">${meetingLink}</a>
-            <p style="margin: 12px 0 0 0;">Meeting Room Code: <strong style="color: #111827;">${meetingCode}</strong></p>
+            <p style="margin: 12px 0 0 0;">Meeting Room Code: <strong style="color: #111827;">${safeCode}</strong></p>
           </div>
 
         </div>
@@ -233,7 +228,7 @@ export async function sendMeetingInvite({
         }
       ]
     });
-    return;
+    return { sent: true };
   }
 
   await sender.client.sendMail({
@@ -249,4 +244,5 @@ export async function sendMeetingInvite({
       }
     ]
   });
+  return { sent: true };
 }

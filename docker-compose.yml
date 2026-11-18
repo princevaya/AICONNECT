@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   app:
     build:
@@ -7,26 +5,29 @@ services:
       dockerfile: Dockerfile
       args:
         DATABASE_URL: ${DATABASE_URL}
-        CHAT_DATABASE_URL: ${CHAT_DATABASE_URL}
+        DIRECT_URL: ${DIRECT_URL:-}
+        CHAT_DATABASE_URL: ${CHAT_DATABASE_URL:-}
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
-        NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_URL}
-        NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_URL}
-        NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL}
-        NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL}
-        NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL}
-        NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL}
+        NEXT_PUBLIC_CLERK_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_URL:-/auth/sign-in}
+        NEXT_PUBLIC_CLERK_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_URL:-/auth/sign-up}
+        NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL:-/dashboard}
+        NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL: ${NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL:-/dashboard}
+        NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL:-}
+        NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL: ${NEXT_PUBLIC_CLERK_SIGN_UP_FORCE_REDIRECT_URL:-}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
         NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL}
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
     container_name: aiconnect-app
     restart: always
     ports:
-      - "3005:3005"
+      # Bind to localhost only; Nginx terminates HTTPS on ports 80/443.
+      - "127.0.0.1:3005:3005"
     environment:
       NODE_ENV: production
       PORT: 3005
       DATABASE_URL: ${DATABASE_URL}
-      CHAT_DATABASE_URL: ${CHAT_DATABASE_URL}
-      DIRECT_URL: ${DIRECT_URL}
+      CHAT_DATABASE_URL: ${CHAT_DATABASE_URL:-}
+      DIRECT_URL: ${DIRECT_URL:-}
     env_file:
       - .env
     depends_on:
@@ -42,15 +43,16 @@ services:
     container_name: aiconnect-db
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: aiconnect
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-aiconnect}
     ports:
-      - "5432:5432"
+      # Bind to localhost only so Postgres is never publicly exposed on the VPS.
+      - "127.0.0.1:5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d aiconnect"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-aiconnect}"]
       interval: 5s
       timeout: 5s
       retries: 5

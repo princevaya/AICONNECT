@@ -113,17 +113,33 @@ function getUtcDate(year: number, month: number, day: number, hour: number, minu
   return utcEstimate;
 }
 
+function getDefaultScheduleSlot() {
+  const target = new Date(Date.now() + 30 * 60 * 1000);
+  const roundedMin = Math.ceil(target.getMinutes() / 15) * 15;
+  target.setMinutes(roundedMin, 0, 0);
+  const h24 = target.getHours();
+  const period = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return {
+    date: target,
+    hour: String(h12).padStart(2, "0"),
+    minute: String(target.getMinutes()).padStart(2, "0"),
+    period,
+  };
+}
+
 /* ================= COMPONENT ================= */
 export default function ScheduleView() {
+  const initialSlot = useMemo(() => getDefaultScheduleSlot(), []);
   const [meetings, setMeetings] = useState<ScheduledMeeting[]>([]);
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(initialSlot.date);
   
   // Time and field inputs
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [selectedHour, setSelectedHour] = useState("10");
-  const [selectedMinute, setSelectedMinute] = useState("00");
-  const [selectedPeriod, setSelectedPeriod] = useState("AM");
+  const [selectedHour, setSelectedHour] = useState(initialSlot.hour);
+  const [selectedMinute, setSelectedMinute] = useState(initialSlot.minute);
+  const [selectedPeriod, setSelectedPeriod] = useState(initialSlot.period);
   const [duration, setDuration] = useState("30 Minutes");
   const [customDuration, setCustomDuration] = useState("45");
   
@@ -150,6 +166,8 @@ export default function ScheduleView() {
   const [scheduleListTab, setScheduleListTab] = useState<"day" | "all">("day");
 
   const [lastScheduled, setLastScheduled] = useState<ScheduledMeeting | null>(null);
+  const [lastInviteSummary, setLastInviteSummary] = useState<{ sent: number; skipped: number; failed: number } | null>(null);
+  const [cancellingCode, setCancellingCode] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -227,7 +245,24 @@ export default function ScheduleView() {
   const handleScheduleMeeting = async () => {
     setFormError(null);
 
-    if (!title.trim()) return setFormError("Please enter a meeting title");
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return setFormError("Please enter a meeting title");
+    if (trimmedTitle.length < 3) {
+      return setFormError("Meeting title must be at least 3 characters long");
+    }
+
+    // Automatically include an email typed in the invite field if the user forgot to click Add.
+    const finalAttendees = [...attendeeList];
+    const pendingEmail = attendeeInput.trim().toLowerCase();
+    if (pendingEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(pendingEmail)) {
+        return setFormError("Please enter a valid attendee email address");
+      }
+      if (!finalAttendees.includes(pendingEmail)) {
+        finalAttendees.push(pendingEmail);
+      }
+    }
 
     let h = parseInt(selectedHour);
     const m = parseInt(selectedMinute);
@@ -262,12 +297,12 @@ export default function ScheduleView() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: title.trim(),
+          title: trimmedTitle,
           description: description.trim() || null,
           scheduledFor: utcDate.toISOString(),
           timezone,
           duration: finalDuration,
-          attendees: attendeeList,
+          attendees: finalAttendees,
           allowJoinBeforeHost,
           waitingRoom,
           muteOnJoin,
@@ -283,10 +318,13 @@ export default function ScheduleView() {
       const meeting = normalizeMeeting(payload.meeting);
       setMeetings((prev) => upsertMeeting(prev, meeting));
       setLastScheduled(meeting);
+      setLastInviteSummary(payload.invites ?? null);
 
+      const nextSlot = getDefaultScheduleSlot();
       // Reset fields
       setTitle("");
       setDescription("");
+      setAttendeeInput("");
       setAttendeeList([]);
       setAllowJoinBeforeHost(false);
       setWaitingRoom(true);
@@ -295,13 +333,35 @@ export default function ScheduleView() {
       setAllowScreenSharing(true);
       setHasPassword(false);
       setMeetingPassword("");
-      setSelectedHour("10");
-      setSelectedMinute("00");
-      setSelectedPeriod("AM");
+      setSelectedDate(nextSlot.date);
+      setSelectedHour(nextSlot.hour);
+      setSelectedMinute(nextSlot.minute);
+      setSelectedPeriod(nextSlot.period);
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Failed to schedule");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCancelMeeting = async (code: string) => {
+    setCancellingCode(code);
+    setGlobalError(null);
+    try {
+      const res = await fetch(`/api/meetings/${encodeURIComponent(code)}`, {
+        method: "DELETE",
+      });
+      const payload = await res.json();
+      if (!payload.success) throw new Error(payload.error || "Failed to cancel meeting");
+      if (payload.meeting) {
+        setMeetings((prev) => upsertMeeting(prev, normalizeMeeting(payload.meeting)));
+      } else {
+        await fetchMeetings();
+      }
+    } catch (err: unknown) {
+      setGlobalError(err instanceof Error ? err.message : "Failed to cancel meeting");
+    } finally {
+      setCancellingCode(null);
     }
   };
 
@@ -334,8 +394,10 @@ export default function ScheduleView() {
 
   /* ---------- CANCEL / RESET ---------- */
   const handleCancel = () => {
+    const nextSlot = getDefaultScheduleSlot();
     setTitle("");
     setDescription("");
+    setAttendeeInput("");
     setAttendeeList([]);
     setAllowJoinBeforeHost(false);
     setWaitingRoom(true);
@@ -344,9 +406,10 @@ export default function ScheduleView() {
     setAllowScreenSharing(true);
     setHasPassword(false);
     setMeetingPassword("");
-    setSelectedHour("10");
-    setSelectedMinute("00");
-    setSelectedPeriod("AM");
+    setSelectedDate(nextSlot.date);
+    setSelectedHour(nextSlot.hour);
+    setSelectedMinute(nextSlot.minute);
+    setSelectedPeriod(nextSlot.period);
     setFormError(null);
   };
 
@@ -537,16 +600,31 @@ export default function ScheduleView() {
                             {cardCopyState[m.code] === "copied" ? "Copied!" : "Copy link"}
                           </Button>
                           {m.status !== "Completed" && m.status !== "Cancelled" && (
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                window.location.href = `/meeting/join?room=${m.code}&host=true`;
-                              }}
-                              className="h-7 bg-blue-600 px-2.5 text-[11px] text-white hover:bg-blue-700"
-                            >
-                              <Video className="mr-1 h-3 w-3" />
-                              Join Host
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => {
+                                  window.location.href = `/meeting/join?room=${m.code}&host=true`;
+                                }}
+                                className="h-7 bg-blue-600 px-2.5 text-[11px] text-white hover:bg-blue-700"
+                              >
+                                <Video className="mr-1 h-3 w-3" />
+                                Join Host
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={cancellingCode === m.code}
+                                onClick={() => void handleCancelMeeting(m.code)}
+                                className="h-7 px-2 text-[11px] text-rose-500 hover:bg-rose-500/10 hover:text-rose-500"
+                              >
+                                {cancellingCode === m.code ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  "Cancel"
+                                )}
+                              </Button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -940,7 +1018,14 @@ export default function ScheduleView() {
                   </p>
                   {lastScheduled.notes && <p className="italic">&quot;{lastScheduled.notes}&quot;</p>}
                   {lastScheduled.attendees.length > 0 && (
-                    <p>Invites sent to: {lastScheduled.attendees.join(", ")}</p>
+                    <p>
+                      {lastInviteSummary && lastInviteSummary.sent > 0
+                        ? `Invites emailed (${lastInviteSummary.sent}): `
+                        : lastInviteSummary && lastInviteSummary.skipped > 0
+                          ? "Attendees added (email provider not configured yet — share link manually): "
+                          : "Attendees: "}
+                      {lastScheduled.attendees.join(", ")}
+                    </p>
                   )}
                   <p className="mt-2 select-all break-all border-t border-border/50 pt-2 font-mono text-[10px]">
                     {resolveLink(lastScheduled.link)}
